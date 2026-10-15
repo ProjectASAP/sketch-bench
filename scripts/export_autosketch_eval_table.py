@@ -339,10 +339,10 @@ SCHEMA_TEMPLATES = [
 ]
 
 
-def closed_labels(metric, grouping):
+def closed_labels(schema_labels, grouping):
     """`grouping`'s labels with every child's ancestors (a child value names
-    its parent), in schema order."""
-    labels = {label["name"]: label for label in SCHEMAS[metric]["labels"]}
+    its parent), in the order of `schema_labels` (SCHEMAS' format)."""
+    labels = {label["name"]: label for label in schema_labels}
     closed, todo = set(), list(grouping)
     while todo:
         name = todo.pop()
@@ -355,7 +355,12 @@ def closed_labels(metric, grouping):
 def grouping_cardinality(metric, grouping):
     """Groups of `grouping` on `metric`: the product of its labels' fan-outs,
     with every child's ancestors included."""
-    return math.prod(label["cardinality"] for label in closed_labels(metric, grouping))
+    return labels_cardinality(SCHEMAS[metric]["labels"], grouping)
+
+
+def labels_cardinality(schema_labels, grouping):
+    """grouping_cardinality() on `schema_labels` (SCHEMAS' format)."""
+    return math.prod(label["cardinality"] for label in closed_labels(schema_labels, grouping))
 
 
 def label_shares(metric, label):
@@ -377,7 +382,7 @@ def group_coverage(metric, grouping, covers_share):
     `covers_share`, plus always the largest group (None: every group). A group's share is the product of
     its labels' shares: labels are drawn independently given their parents."""
     marginals = [sorted(label_shares(metric, label), reverse=True)
-                 for label in closed_labels(metric, grouping)]
+                 for label in closed_labels(SCHEMAS[metric]["labels"], grouping)]
     largest = math.prod(m[0] for m in marginals)
     if covers_share is None:
         return (grouping_cardinality(metric, grouping), math.prod(m[-1] for m in marginals),
@@ -783,29 +788,31 @@ RANDOM_STREAMS = {"sum": "value", "quantile": "dist", "topk_by_value": "value"}
 # The fewest distinct keys the top-k curves measure; a heap over fewer keys
 # is read there, which overstates its error.
 TOPK_MIN_CURVE_KEYS = 1_000
-
-
-def random_groups(labels, grouping):
-    """Groups of `grouping` on a manifest's labels: the product of its
-    labels' fan-outs, every child's parent included."""
-    by_name = {label["name"]: label for label in labels}
-    for name in grouping:
-        parent = by_name[name].get("child_of")
-        assert parent is None or parent in grouping, (grouping, name)
-    return math.prod(by_name[name]["cardinality"] for name in grouping)
+# DEFAULT_TARGETS' accuracy level (the runner's p95), the only SLA exported.
+RANDOM_ACCURACY_SLA = 0.95
+# The one quantile shape random_workloads.py writes: an avg of per-series
+# quantiles, grouped by the RQE's grouping_labels.
+AVG_OF_SERIES_QUANTILES = re.compile(
+    r"^avg by \(([\w, ]+)\) \(quantile_over_time\([\d.]+, data\[\w+\]\)\)$")
 
 
 def random_manifest_table(manifest, revision, inputs):
     """The eval table of `manifest`'s RANDOM_SUPPORT queries: one RQE each
     on the schema metric `data`, its labels the manifest's. Every series is
     scraped at the same rate, so a grouping's groups hold equal shares. A
-    sum or top-k RQE is at its query's grouping, on one stream, so a fine
-    sum can serve a coarse one; a quantile is `avg by` of per-series
-    quantiles, so its RQE is per series. The e2e block holds the PromQL."""
+    sum RQE is at its query's grouping, and a top-k's heaps at its `topk by`
+    grouping, on one stream, so a fine sum can serve a coarse one; a
+    quantile is `avg by` of per-series quantiles, so its RQE is per series.
+    Queries of other capabilities are left out (logged). The e2e block holds
+    the PromQL."""
     labels = manifest["labels"]
     names = [label["name"] for label in labels]
-    series = random_groups(labels, names)
+    series = labels_cardinality(labels, names)
     per_sec = manifest["samples_per_sec_per_series"]
+    # The runner scrapes every 1000 / per_sec ms, a whole number.
+    if not isinstance(per_sec, int) or per_sec <= 0 or 1000 % per_sec:
+        raise ValueError(f"samples_per_sec_per_series {per_sec!r} must be an "
+                         "integer dividing 1000")
     rate = series * per_sec
     facts = manifest["data_facts"]
     theta = facts["series"]["ranking"]["exponent"]
@@ -817,10 +824,25 @@ def random_manifest_table(manifest, revision, inputs):
             continue
         [rqe] = query["rqes"]
         capability = rqe["capability"]
-        grouping = names if capability == "quantile" else rqe["grouping_labels"]
-        groups = random_groups(labels, grouping)
-        s, t = rqe["lookback_ms"] / 1000, rqe["interval_ms"] / 1000
+        if capability not in RANDOM_STREAMS:
+            print(f"left out {query['id']}: no RQE for capability {capability!r}",
+                  file=sys.stderr)
+            continue
+        if rqe["accuracy_sla"] != RANDOM_ACCURACY_SLA:
+            raise ValueError(f"{query['id']}: accuracy_sla {rqe['accuracy_sla']}; only "
+                             f"{RANDOM_ACCURACY_SLA} (DEFAULT_TARGETS) is exported")
+        grouping = rqe["grouping_labels"]
+        if capability == "quantile":
+            m = AVG_OF_SERIES_QUANTILES.match(query["promql"])
+            if not m or m[1].split(", ") != grouping:
+                raise ValueError(f"{query['id']}: a quantile must be avg by "
+                                 f"({', '.join(grouping)}) of per-series quantiles: "
+                                 f"{query['promql']!r}")
+            grouping = names
+        groups = labels_cardinality(labels, grouping)
+        ms, t = rqe["lookback_ms"], rqe["interval_ms"] / 1000
         assert t == int(t), f"{query['id']}: interval {t} s is not whole seconds"
+        s = ms / 1000
         n_items = rate * s / groups
         query_id, keys, assumptions = query["id"], None, []
         if capability == "topk_by_value":
@@ -833,7 +855,8 @@ def random_manifest_table(manifest, revision, inputs):
         kind = "values" if capability == "quantile" else "keys"
         q = {
             "dataset": dataset, "query_id": query_id, "kind": kind,
-            "range": f"{s:g}s", "range_s": s, "step_s": int(t), "theta": theta, "K": keys,
+            # Part of the RQE id, so exact.
+            "range": f"{ms // 1000}s" if ms % 1000 == 0 else f"{ms}ms", "range_s": s, "step_s": int(t), "theta": theta, "K": keys,
             "min_N": n_items, "max_N": n_items,
             "alpha_rank": alpha, "alpha_memory": alpha, "tail_class": "",
             "families": SYNTHETIC_FAMILIES["topk" if keys else capability],
@@ -850,6 +873,10 @@ def random_manifest_table(manifest, revision, inputs):
         qs.append(q)
         e2e.append({"promql": query["promql"], "interval_secs": int(t),
                     "rqes": [synthetic_entry(q)["id"]]})
+    rqes = [synthetic_entry(q) for q in qs]
+    ids = [r["id"] for r in rqes]
+    if len(ids) != len(set(ids)):
+        raise ValueError(f"duplicate RQE ids: {sorted(i for i in ids if ids.count(i) > 1)}")
     metrics = {"data": {
         "type": "gauge", "labels": labels, "samples_per_sec_per_series": per_sec,
         "values": {"value": {"zipf": theta, "keys": series}, "dist": {"pareto": alpha}},
@@ -861,7 +888,7 @@ def random_manifest_table(manifest, revision, inputs):
         "sketch_bench_revision": revision,
         "workloads": [{
             "dataset": dataset,
-            "rqes": [synthetic_entry(q) for q in qs],
+            "rqes": rqes,
             "e2e": {"queries": e2e, "metrics": metrics},
             "schemas": {"data": {"labels": labels}},
         }],
@@ -977,6 +1004,12 @@ def main(argv=None):
                              "to --out instead")
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
+    if args.random_manifest and (args.synthetic or args.summary
+                                 or args.samples_per_sec is not None
+                                 or args.keep_duplicate_queries):
+        parser.error("--random-manifest takes its rate and queries from the manifest: "
+                     "drop --synthetic, --summary, --samples-per-sec and "
+                     "--keep-duplicate-queries")
     # An instant query reads one scrape, 1000 / rate ms, which the runner keeps
     # in whole ms.
     rate = args.samples_per_sec

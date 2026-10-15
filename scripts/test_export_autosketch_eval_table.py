@@ -559,12 +559,15 @@ class DashboardAndSharedTest(unittest.TestCase):
 class RandomManifestTest(unittest.TestCase):
     """--random-manifest on a two-label manifest: 2 jobs x 500 series, 10/s."""
 
+    QUANTILE = "avg by (job) (quantile_over_time(0.90, data[100s]))"
+
     def manifest(self):
         def query(qid, capability, grouping, lookback_ms, interval_ms, support, **params):
-            return {"id": qid, "support": support, "promql": f"promql {qid}",
+            promql = self.QUANTILE if capability == "quantile" else f"promql {qid}"
+            return {"id": qid, "support": support, "promql": promql,
                     "rqes": [{"capability": capability, "grouping_labels": grouping,
                               "lookback_ms": lookback_ms, "interval_ms": interval_ms,
-                              **params}]}
+                              "accuracy_sla": 0.95, **params}]}
         return {
             "id": "workload-01", "seed": 7, "samples_per_sec_per_series": 10,
             "labels": [{"name": "job", "cardinality": 2},
@@ -601,9 +604,50 @@ class RandomManifestTest(unittest.TestCase):
         self.assertEqual(workload["schemas"]["data"]["labels"], self.manifest()["labels"])
         self.assertEqual(
             [(q["promql"], q["interval_secs"]) for q in workload["e2e"]["queries"]],
-            [("promql q1", 20), ("promql q2", 20), ("promql q3", 1), ("promql q4", 1)])
+            [("promql q1", 20), ("promql q2", 20), (self.QUANTILE, 1), ("promql q4", 1)])
         self.assertEqual([q["rqes"] for q in workload["e2e"]["queries"]],
                          [[r["id"]] for r in workload["rqes"]])
+
+    def table_with(self, **rqe):
+        """The table of the manifest's q1 with `rqe`'s fields changed."""
+        manifest = self.manifest()
+        manifest["queries"] = manifest["queries"][:1]
+        manifest["queries"][0]["rqes"][0].update(rqe)
+        return random_manifest_table(manifest, "test", {})["workloads"][0]["rqes"]
+
+    def test_a_child_only_grouping_counts_its_parents_groups(self):
+        # label_0 is a child of job: grouping by it alone keeps 2 x 500 groups.
+        [rqe] = self.table_with(grouping_labels=["label_0"])
+        self.assertEqual(rqe["label_set"]["groups"], 1_000)
+
+    def test_ranges_in_rqe_ids_are_exact(self):
+        [rqe] = self.table_with(lookback_ms=1_234_567, interval_ms=1_000)
+        self.assertEqual(rqe["range"], "1234567ms")
+
+    def test_other_capabilities_are_left_out(self):
+        manifest = self.manifest()
+        manifest["queries"][0]["rqes"][0]["capability"] = "rate"
+        with mock.patch("sys.stderr"):
+            workload = random_manifest_table(manifest, "test", {})["workloads"][0]
+        self.assertNotIn("q1", {r["query_id"] for r in workload["rqes"]})
+
+    def test_unexported_inputs_are_refused(self):
+        manifest = self.manifest()
+        manifest["queries"][2]["promql"] = "quantile by (job) (0.9, data)"
+        with self.assertRaisesRegex(ValueError, "per-series"):
+            random_manifest_table(manifest, "test", {})
+        with self.assertRaisesRegex(ValueError, "accuracy_sla"):
+            self.table_with(accuracy_sla=0.99)
+        for rate in (3, 10.0):
+            manifest = self.manifest()
+            manifest["samples_per_sec_per_series"] = rate
+            with self.assertRaisesRegex(ValueError, "dividing 1000"):
+                random_manifest_table(manifest, "test", {})
+
+    def test_cli_refuses_flags_the_manifest_overrides(self):
+        for flags in (["--synthetic"], ["--samples-per-sec", "10"]):
+            with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+                main(["--random-manifest", "m.json", "--out", "t.json", *flags])
 
 
 if __name__ == "__main__":
