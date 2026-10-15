@@ -429,15 +429,17 @@ def point_id(point):
     return base if metrics == 1 else f"{base}/metrics={metrics}"
 
 
-def rqe_leaf(rqe, metric, capability, lookback_s, grouping, phi=None, k=None, value=None):
+def rqe_leaf(rqe, metric, capability, lookback_s, grouping, phi=None, k=None, value=None,
+             topk_by=None):
     """An expression-tree leaf reading RQE `rqe`, whose output is grouped by
-    `grouping`; None for a capability no leaf reads (rate)."""
+    `grouping` (a top-k ranks within each `topk_by` group, else over all);
+    None for a capability no leaf reads (rate)."""
     if capability not in EXPR_CAPABILITY:
         return None
     leaf = {"id": rqe, "metric": metric, "capability": EXPR_CAPABILITY[capability],
             "lookback_ms": round(lookback_s * 1000), "grouping": list(grouping)}
-    leaf.update((key, v) for key, v in [("phi", phi), ("k", k), ("value", value)]
-                if v is not None)
+    leaf.update((key, v) for key, v in [("phi", phi), ("k", k), ("value", value),
+                                        ("topk_by", topk_by)] if v is not None)
     return {"rqe": leaf}
 
 
@@ -816,6 +818,60 @@ RANDOM_STREAMS = {"sum": "value", "quantile": "dist", "topk_by_value": "value"}
 TOPK_MIN_CURVE_KEYS = 1_000
 
 
+# The PromQL shapes random_expr() writes a tree for, by the capability of
+# their one RQE. A shape's `by` labels are the query's grouping.
+RANDOM_EXPR_SHAPES = {
+    "quantile": [
+        ("avg_quantile",
+         r"avg by \((?P<by>[\w, ]*)\) \(quantile_over_time\([\d.]+, data\[\w+\]\)\)"),
+        ("quantile", r"quantile by \((?P<by>[\w, ]*)\) \([\d.]+, data\)"),
+    ],
+    "sum": [("sum", r"sum by \((?P<by>[\w, ]*)\) \(sum_over_time\(data\[\w+\]\)\)")],
+    "topk_by_value": [
+        ("topk", r"topk(?: by \((?P<by>[\w, ]*)\) )?\(\d+, sum_over_time\(data\[\w+\]\)\)"),
+    ],
+}
+
+
+def random_expr(query, rqe_id, series_labels):
+    """The RQE expression tree of manifest `query`, whose one RQE is the
+    table's `rqe_id`, or None for any other shape (counter-gated top-k,
+    rate). Values come from the manifest's RQE; a leaf's grouping is its
+    output labels:
+    - `avg by (G) (quantile_over_time(phi, data[W]))`: avg by G of a
+      per-series quantile leaf;
+    - `quantile by (G) (phi, data)`, `sum by (G) (sum_over_time(data[W]))`:
+      a leaf grouped by G;
+    - `topk [by (G)] (k, sum_over_time(data[W]))`: a per-series top-k leaf
+      ranked within each G (`topk_by`, left out for a global top-k);
+    - SQL cardinality: a leaf on the RQE's table with its distinct `value`."""
+    [rqe] = query["rqes"]
+    capability, grouping = rqe["capability"], rqe["grouping_labels"]
+
+    def leaf(capability, grouping, **extra):
+        return rqe_leaf(rqe_id, rqe["metric"], capability, rqe["lookback_ms"] / 1000, grouping,
+                        **extra)
+
+    if capability == "cardinality" and query.get("sql") is not None:
+        return leaf("cardinality", grouping, value=rqe["value"])
+    for shape, pattern in RANDOM_EXPR_SHAPES.get(capability, []):
+        match = re.fullmatch(pattern, query.get("promql") or "")
+        if match:
+            break
+    else:
+        return None
+    by = [name.strip() for name in (match["by"] or "").split(",") if name.strip()]
+    assert by == grouping, f"{query['id']}: by {by} is not its grouping {grouping}"
+    if shape == "avg_quantile":
+        return {"agg": "avg", "by": grouping,
+                "of": leaf("quantile", series_labels, phi=rqe["phi"])}
+    if shape == "quantile":
+        return leaf("quantile", grouping, phi=rqe["phi"])
+    if shape == "topk":
+        return leaf("topk", series_labels, k=rqe["k"], topk_by=grouping or None)
+    return leaf("sum", grouping)
+
+
 def random_groups(labels, grouping):
     """Groups of `grouping` on a manifest's labels: the product of its
     labels' fan-outs, every child's parent included."""
@@ -832,7 +888,8 @@ def random_manifest_table(manifest, revision, inputs):
     scraped at the same rate, so a grouping's groups hold equal shares. A
     sum or top-k RQE is at its query's grouping, on one stream, so a fine
     sum can serve a coarse one; a quantile is `avg by` of per-series
-    quantiles, so its RQE is per series. The e2e block holds the PromQL."""
+    quantiles, so its RQE is per series. The e2e block holds the PromQL
+    and, where random_expr() has one, the query's RQE expression tree."""
     labels = manifest["labels"]
     names = [label["name"] for label in labels]
     series = random_groups(labels, names)
@@ -879,8 +936,10 @@ def random_manifest_table(manifest, revision, inputs):
             **DEFAULT_TARGETS,
         }
         qs.append(q)
-        e2e.append({"promql": query["promql"], "interval_secs": int(t),
-                    "rqes": [synthetic_entry(q)["id"]]})
+        rqe_id = synthetic_entry(q)["id"]
+        e2e_query = {"promql": query["promql"], "interval_secs": int(t), "rqes": [rqe_id]}
+        expr = random_expr(query, rqe_id, names)
+        e2e.append({**e2e_query, "expr": expr} if expr else e2e_query)
     metrics = {"data": {
         "type": "gauge", "labels": labels, "samples_per_sec_per_series": per_sec,
         "values": {"value": {"zipf": theta, "keys": series}, "dist": {"pareto": alpha}},

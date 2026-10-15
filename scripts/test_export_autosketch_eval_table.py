@@ -19,7 +19,7 @@ from study_saturation import COST_KEYS, COST_PARETO_ALPHA, COST_THETA  # noqa: E
 from export_autosketch_eval_table import (  # noqa: E402
     SCHEMA_TEMPLATES, SCHEMAS, SYNTHETIC_DEFAULT, SYNTHETIC_GRID, SYNTHETIC_TEMPLATE_SETS,
     all_subsets, boom_query, e2e_block, group_coverage, grouping_cardinality, label_shares, main,
-    metric_queries, queries_per_instance, random_manifest_table,
+    metric_queries, queries_per_instance, random_expr, random_manifest_table,
     shared_queries, synthetic_entry, synthetic_plan, synthetic_queries)
 from study_saturation import CURVE_COLUMNS, SUMMARY_COLUMNS  # noqa: E402
 
@@ -624,12 +624,24 @@ class DashboardAndSharedTest(unittest.TestCase):
 class RandomManifestTest(unittest.TestCase):
     """--random-manifest on a two-label manifest: 2 jobs x 500 series, 10/s."""
 
+    PROMQL = {
+        "q1": "sum by (job, label_0) (sum_over_time(data[10m]))",
+        "q2": "sum by (job) (sum_over_time(data[10m]))",
+        "q3": "avg by (job) (quantile_over_time(0.99, data[100s]))",
+        "q4": "topk by (job) (4, sum_over_time(data[1m]))",
+    }
+
+    @staticmethod
+    def query(qid, capability, grouping, lookback_ms, interval_ms, support, promql=None,
+              sql=None, metric="data", **params):
+        return {"id": qid, "support": support, "promql": promql, "sql": sql,
+                "rqes": [{"capability": capability, "grouping_labels": grouping,
+                          "lookback_ms": lookback_ms, "interval_ms": interval_ms,
+                          "metric": metric, **params}]}
+
     def manifest(self):
-        def query(qid, capability, grouping, lookback_ms, interval_ms, support, **params):
-            return {"id": qid, "support": support, "promql": f"promql {qid}",
-                    "rqes": [{"capability": capability, "grouping_labels": grouping,
-                              "lookback_ms": lookback_ms, "interval_ms": interval_ms,
-                              **params}]}
+        def query(qid, *args, **params):
+            return self.query(qid, *args, promql=self.PROMQL.get(qid), **params)
         return {
             "id": "workload-01", "seed": 7, "samples_per_sec_per_series": 10,
             "labels": [{"name": "job", "cardinality": 2},
@@ -639,9 +651,11 @@ class RandomManifestTest(unittest.TestCase):
             "queries": [
                 query("q1", "sum", ["job", "label_0"], 600_000, 20_000, "common-promql"),
                 query("q2", "sum", ["job"], 600_000, 20_000, "common-promql"),
-                query("q3", "quantile", ["job"], 100_000, 1_000, "common-promql"),
+                query("q3", "quantile", ["job"], 100_000, 1_000, "common-promql", phi=0.99),
                 query("q4", "topk_by_value", ["job"], 60_000, 1_000, "common-promql", k=4),
-                query("q5", "cardinality", ["job"], 60_000, 1_000, "sql-only"),
+                query("q5", "cardinality", ["job"], 60_000, 1_000, "sql-only",
+                      sql="SELECT job, COUNT(DISTINCT user_id) FROM events GROUP BY job",
+                      metric="events", value="user_id"),
             ],
         }
 
@@ -666,9 +680,87 @@ class RandomManifestTest(unittest.TestCase):
         self.assertEqual(workload["schemas"]["data"]["labels"], self.manifest()["labels"])
         self.assertEqual(
             [(q["promql"], q["interval_secs"]) for q in workload["e2e"]["queries"]],
-            [("promql q1", 20), ("promql q2", 20), ("promql q3", 1), ("promql q4", 1)])
+            [(self.PROMQL[q], t) for q, t in [("q1", 20), ("q2", 20), ("q3", 1), ("q4", 1)]])
         self.assertEqual([q["rqes"] for q in workload["e2e"]["queries"]],
                          [[r["id"]] for r in workload["rqes"]])
+
+    def test_e2e_queries_carry_trees_reading_their_table_rqes(self):
+        workload = random_manifest_table(self.manifest(), "test", {})["workloads"][0]
+        ids = {r["query_id"]: r["id"] for r in workload["rqes"]}
+        exprs = [q["expr"] for q in workload["e2e"]["queries"]]
+        series = ["job", "label_0"]
+        self.assertEqual(exprs, [
+            {"rqe": {"id": ids["q1"], "metric": "data", "capability": "sum",
+                     "lookback_ms": 600_000, "grouping": series}},
+            {"rqe": {"id": ids["q2"], "metric": "data", "capability": "sum",
+                     "lookback_ms": 600_000, "grouping": ["job"]}},
+            {"agg": "avg", "by": ["job"],
+             "of": {"rqe": {"id": ids["q3"], "metric": "data", "capability": "quantile",
+                            "lookback_ms": 100_000, "grouping": series, "phi": 0.99}}},
+            {"rqe": {"id": ids["topk4_q4"], "metric": "data", "capability": "topk_by_value",
+                     "lookback_ms": 60_000, "grouping": series, "k": 4, "topk_by": ["job"]}},
+        ])
+
+    def expr(self, *args, promql=None, sql=None, **params):
+        return random_expr(self.query("q", *args, 60_000, 1_000, "s", promql=promql, sql=sql,
+                                      **params), "rqe", ["job", "label_0"])
+
+    def test_avg_of_per_series_quantiles_is_an_avg_over_a_per_series_leaf(self):
+        self.assertEqual(
+            self.expr("quantile", ["job"], phi=0.5,
+                      promql="avg by (job) (quantile_over_time(0.5, data[1m]))"),
+            {"agg": "avg", "by": ["job"],
+             "of": {"rqe": {"id": "rqe", "metric": "data", "capability": "quantile",
+                            "lookback_ms": 60_000, "grouping": ["job", "label_0"],
+                            "phi": 0.5}}})
+
+    def test_spatial_quantile_is_a_leaf_at_its_grouping(self):
+        self.assertEqual(
+            self.expr("quantile", ["job"], phi=0.9, promql="quantile by (job) (0.9, data)"),
+            {"rqe": {"id": "rqe", "metric": "data", "capability": "quantile",
+                     "lookback_ms": 60_000, "grouping": ["job"], "phi": 0.9}})
+
+    def test_sum_is_a_leaf_at_its_grouping(self):
+        self.assertEqual(
+            self.expr("sum", ["job"], promql="sum by (job) (sum_over_time(data[1m]))"),
+            {"rqe": {"id": "rqe", "metric": "data", "capability": "sum",
+                     "lookback_ms": 60_000, "grouping": ["job"]}})
+
+    def test_topk_ranks_series_within_its_by_groups_or_globally(self):
+        leaf = {"id": "rqe", "metric": "data", "capability": "topk_by_value",
+                "lookback_ms": 60_000, "grouping": ["job", "label_0"], "k": 4}
+        self.assertEqual(
+            self.expr("topk_by_value", ["job"], k=4,
+                      promql="topk by (job) (4, sum_over_time(data[1m]))"),
+            {"rqe": {**leaf, "topk_by": ["job"]}})
+        self.assertEqual(
+            self.expr("topk_by_value", [], k=4, promql="topk(4, sum_over_time(data[1m]))"),
+            {"rqe": leaf})
+
+    def test_sql_cardinality_is_a_leaf_on_its_table(self):
+        self.assertEqual(
+            self.expr("cardinality", ["region", "service"], metric="events", value="user_id",
+                      sql="SELECT region, service, COUNT(DISTINCT user_id) FROM events "
+                          "GROUP BY region, service"),
+            {"rqe": {"id": "rqe", "metric": "events", "capability": "cardinality",
+                     "lookback_ms": 60_000, "grouping": ["region", "service"],
+                     "value": "user_id"}})
+
+    def test_counter_gated_and_unknown_shapes_have_no_tree(self):
+        for capability, promql in [
+                ("topk_by_count", "topk by (job) (8, increase(data_total[10m]))"),
+                ("rate", "topk by (job) (4, rate(data_total[20m]))"),
+                ("sum", "sum by (job) (rate(data[1m]))"),
+                ("quantile", "max by (job) (quantile_over_time(0.5, data[1m]))"),
+                ("topk_by_value", "bottomk by (job) (4, sum_over_time(data[1m]))")]:
+            with self.subTest(promql=promql):
+                self.assertIsNone(self.expr(capability, ["job"], k=4, phi=0.5, promql=promql))
+        # A cardinality without SQL text, too.
+        self.assertIsNone(self.expr("cardinality", ["job"], value="user_id"))
+
+    def test_by_labels_other_than_the_grouping_fail_loudly(self):
+        with self.assertRaises(AssertionError):
+            self.expr("sum", ["job"], promql="sum by (label_0) (sum_over_time(data[1m]))")
 
 
 if __name__ == "__main__":
