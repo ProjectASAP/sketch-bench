@@ -818,7 +818,7 @@ def random_manifest_table(manifest, revision, inputs):
     theta = facts["series"]["ranking"]["exponent"]
     alpha = facts["metrics"]["data"]["pareto_shape"]
     dataset = f"random/seed={manifest['seed']}/{manifest['id']}"
-    qs, e2e = [], []
+    qs, e2e, shared = [], [], {}
     for query in manifest["queries"]:
         if query["support"] != RANDOM_SUPPORT:
             continue
@@ -839,9 +839,16 @@ def random_manifest_table(manifest, revision, inputs):
                                  f"({', '.join(grouping)}) of per-series quantiles: "
                                  f"{query['promql']!r}")
             grouping = names
-        groups = labels_cardinality(labels, grouping)
         ms, t = rqe["lookback_ms"], rqe["interval_ms"] / 1000
         assert t == int(t), f"{query['id']}: interval {t} s is not whole seconds"
+        # Queries reading one RQE (per-series quantiles that differ only in
+        # their avg's grouping) share its id.
+        key = (capability, tuple(grouping), ms, t, rqe.get("phi"), rqe.get("k"))
+        if key in shared:
+            e2e.append({"promql": query["promql"], "interval_secs": int(t),
+                        "rqes": [shared[key]]})
+            continue
+        groups = labels_cardinality(labels, grouping)
         s = ms / 1000
         n_items = rate * s / groups
         query_id, keys, assumptions = query["id"], None, []
@@ -856,7 +863,8 @@ def random_manifest_table(manifest, revision, inputs):
         q = {
             "dataset": dataset, "query_id": query_id, "kind": kind,
             # Part of the RQE id, so exact.
-            "range": f"{ms // 1000}s" if ms % 1000 == 0 else f"{ms}ms", "range_s": s, "step_s": int(t), "theta": theta, "K": keys,
+            "range": f"{ms // 1000}s" if ms % 1000 == 0 else f"{ms}ms",
+            "range_s": s, "step_s": int(t), "theta": theta, "K": keys,
             "min_N": n_items, "max_N": n_items,
             "alpha_rank": alpha, "alpha_memory": alpha, "tail_class": "",
             "families": SYNTHETIC_FAMILIES["topk" if keys else capability],
@@ -871,8 +879,9 @@ def random_manifest_table(manifest, revision, inputs):
             **DEFAULT_TARGETS,
         }
         qs.append(q)
+        shared[key] = synthetic_entry(q)["id"]
         e2e.append({"promql": query["promql"], "interval_secs": int(t),
-                    "rqes": [synthetic_entry(q)["id"]]})
+                    "rqes": [shared[key]]})
     rqes = [synthetic_entry(q) for q in qs]
     ids = [r["id"] for r in rqes]
     if len(ids) != len(set(ids)):

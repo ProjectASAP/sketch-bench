@@ -620,6 +620,26 @@ class RandomManifestTest(unittest.TestCase):
         [rqe] = self.table_with(grouping_labels=["label_0"])
         self.assertEqual(rqe["label_set"]["groups"], 1_000)
 
+    def test_quantiles_differing_only_in_their_avg_grouping_share_an_rqe(self):
+        # Both read the per-series p90 over 100 s; ASAPQuery's converter
+        # refuses one leaf naming two RQEs.
+        def with_q6(phi):
+            manifest = self.manifest()
+            manifest["queries"][2]["rqes"][0]["phi"] = 0.9
+            q6 = json.loads(json.dumps(manifest["queries"][2]))
+            q6["id"] = "q6"
+            q6["promql"] = f"avg by (job, label_0) (quantile_over_time({phi}, data[100s]))"
+            q6["rqes"][0].update(grouping_labels=["job", "label_0"], phi=phi)
+            manifest["queries"].append(q6)
+            return random_manifest_table(manifest, "test", {})["workloads"][0]
+
+        workload = with_q6(0.9)
+        [q3] = [r for r in workload["rqes"] if r["query_id"] == "q3"]
+        self.assertNotIn("q6", {r["query_id"] for r in workload["rqes"]})
+        self.assertEqual(workload["e2e"]["queries"][-1]["rqes"], [q3["id"]])
+        # Another phi is another RQE.
+        self.assertIn("q6", {r["query_id"] for r in with_q6(0.5)["rqes"]})
+
     def test_ranges_in_rqe_ids_are_exact(self):
         [rqe] = self.table_with(lookback_ms=1_234_567, interval_ms=1_000)
         self.assertEqual(rqe["range"], "1234567ms")
