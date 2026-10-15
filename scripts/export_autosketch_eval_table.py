@@ -36,6 +36,7 @@ rate queries name exact accumulators.
 """
 
 import argparse
+import collections
 import csv
 import hashlib
 import itertools
@@ -301,6 +302,13 @@ SKIP_BELOW_CURVES = False
 # RQE. Otherwise only the strictest copy is, since the engine answers one
 # query string from one aggregation.
 KEEP_DUPLICATE_QUERIES = False
+
+
+def divides_1000(rate):
+    """Whether series scraped `rate` times a second are scraped every whole
+    number of ms, as the runner requires."""
+    return (isinstance(rate, int) and not isinstance(rate, bool) and rate > 0
+            and 1000 % rate == 0)
 
 
 def set_samples_per_sec(rate, skip_below_curves):
@@ -809,8 +817,7 @@ def random_manifest_table(manifest, revision, inputs):
     names = [label["name"] for label in labels]
     series = labels_cardinality(labels, names)
     per_sec = manifest["samples_per_sec_per_series"]
-    # The runner scrapes every 1000 / per_sec ms, a whole number.
-    if not isinstance(per_sec, int) or per_sec <= 0 or 1000 % per_sec:
+    if not divides_1000(per_sec):
         raise ValueError(f"samples_per_sec_per_series {per_sec!r} must be an "
                          "integer dividing 1000")
     rate = series * per_sec
@@ -818,7 +825,7 @@ def random_manifest_table(manifest, revision, inputs):
     theta = facts["series"]["ranking"]["exponent"]
     alpha = facts["metrics"]["data"]["pareto_shape"]
     dataset = f"random/seed={manifest['seed']}/{manifest['id']}"
-    qs, e2e, shared = [], [], {}
+    rqes, e2e, shared = [], [], {}
     for query in manifest["queries"]:
         if query["support"] != RANDOM_SUPPORT:
             continue
@@ -839,18 +846,27 @@ def random_manifest_table(manifest, revision, inputs):
                                  f"({', '.join(grouping)}) of per-series quantiles: "
                                  f"{query['promql']!r}")
             grouping = names
-        ms, t = rqe["lookback_ms"], rqe["interval_ms"] / 1000
-        assert t == int(t), f"{query['id']}: interval {t} s is not whole seconds"
+        ms, interval_ms = rqe["lookback_ms"], rqe["interval_ms"]
+        if interval_ms <= 0 or interval_ms % 1000:
+            raise ValueError(f"{query['id']}: interval {interval_ms} ms is not whole "
+                             "seconds")
+        t = interval_ms // 1000
         # Queries reading one RQE (per-series quantiles that differ only in
         # their avg's grouping) share its id.
         key = (capability, tuple(grouping), ms, t, rqe.get("phi"), rqe.get("k"))
         if key in shared:
-            e2e.append({"promql": query["promql"], "interval_secs": int(t),
-                        "rqes": [shared[key]]})
+            entry = {"promql": query["promql"], "interval_secs": t, "rqes": [shared[key]]}
+            if entry not in e2e:
+                e2e.append(entry)
             continue
         groups = labels_cardinality(labels, grouping)
         s = ms / 1000
         n_items = rate * s / groups
+        # Accuracy is read off the curves, which start at this N.
+        if n_items < SCHEMA_MIN_COVERED_N:
+            print(f"left out {query['id']}: {n_items:g} items per group per window, "
+                  f"below the curves' first N ({SCHEMA_MIN_COVERED_N:g})", file=sys.stderr)
+            continue
         query_id, keys, assumptions = query["id"], None, []
         if capability == "topk_by_value":
             query_id = f"topk{rqe['k']}_{query_id}"
@@ -864,7 +880,7 @@ def random_manifest_table(manifest, revision, inputs):
             "dataset": dataset, "query_id": query_id, "kind": kind,
             # Part of the RQE id, so exact.
             "range": f"{ms // 1000}s" if ms % 1000 == 0 else f"{ms}ms",
-            "range_s": s, "step_s": int(t), "theta": theta, "K": keys,
+            "range_s": s, "step_s": t, "theta": theta, "K": keys,
             "min_N": n_items, "max_N": n_items,
             "alpha_rank": alpha, "alpha_memory": alpha, "tail_class": "",
             "families": SYNTHETIC_FAMILIES["topk" if keys else capability],
@@ -878,14 +894,13 @@ def random_manifest_table(manifest, revision, inputs):
             "assumptions": assumptions,
             **DEFAULT_TARGETS,
         }
-        qs.append(q)
-        shared[key] = synthetic_entry(q)["id"]
-        e2e.append({"promql": query["promql"], "interval_secs": int(t),
-                    "rqes": [shared[key]]})
-    rqes = [synthetic_entry(q) for q in qs]
-    ids = [r["id"] for r in rqes]
-    if len(ids) != len(set(ids)):
-        raise ValueError(f"duplicate RQE ids: {sorted(i for i in ids if ids.count(i) > 1)}")
+        rqes.append(synthetic_entry(q))
+        shared[key] = rqes[-1]["id"]
+        e2e.append({"promql": query["promql"], "interval_secs": t, "rqes": [shared[key]]})
+    duplicates = sorted(i for i, n in collections.Counter(r["id"] for r in rqes).items()
+                        if n > 1)
+    if duplicates:
+        raise ValueError(f"duplicate RQE ids: {duplicates}")
     metrics = {"data": {
         "type": "gauge", "labels": labels, "samples_per_sec_per_series": per_sec,
         "values": {"value": {"zipf": theta, "keys": series}, "dist": {"pareto": alpha}},
@@ -1013,16 +1028,16 @@ def main(argv=None):
                              "to --out instead")
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
-    if args.random_manifest and (args.synthetic or args.summary
-                                 or args.samples_per_sec is not None
-                                 or args.keep_duplicate_queries):
-        parser.error("--random-manifest takes its rate and queries from the manifest: "
-                     "drop --synthetic, --summary, --samples-per-sec and "
-                     "--keep-duplicate-queries")
+    ignored = ["synthetic", "summary", "samples_per_sec", "keep_duplicate_queries",
+               "curves", "curves_big", "saturation", "saturation_big", "merge_curves"]
+    if args.random_manifest and any(getattr(args, name) not in (None, False)
+                                    for name in ignored):
+        parser.error("--random-manifest takes its rate and queries from the manifest and "
+                     "reads no curves: drop "
+                     + ", ".join("--" + name.replace("_", "-") for name in ignored))
     # An instant query reads one scrape, 1000 / rate ms, which the runner keeps
     # in whole ms.
-    rate = args.samples_per_sec
-    if rate is not None and (rate <= 0 or 1000 % rate):
+    if args.samples_per_sec is not None and not divides_1000(args.samples_per_sec):
         parser.error("--samples-per-sec must divide 1000")
     global KEEP_DUPLICATE_QUERIES
     KEEP_DUPLICATE_QUERIES = args.keep_duplicate_queries
@@ -1061,15 +1076,11 @@ def run(args, parser):
             manifest = json.load(f)
         inputs = {os.path.basename(args.random_manifest): sha256(args.random_manifest)}
         table = random_manifest_table(manifest, args.revision, inputs)
-        os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
-        with open(args.out, "w") as f:
-            json.dump(table, f, indent=1, sort_keys=True)
-            f.write("\n")
-        print(f"Done. {len(table['workloads'][0]['rqes'])} RQEs in {args.out}", file=sys.stderr)
-        return 0
-    if not (args.summary and args.curves and args.saturation):
-        parser.error("--summary, --curves and --saturation are required without --synthetic")
-    table = build(args)
+    else:
+        if not (args.summary and args.curves and args.saturation):
+            parser.error("--summary, --curves and --saturation are required without "
+                         "--synthetic or --random-manifest")
+        table = build(args)
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as f:
         json.dump(table, f, indent=1, sort_keys=True)

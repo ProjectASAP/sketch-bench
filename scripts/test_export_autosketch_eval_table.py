@@ -658,14 +658,36 @@ class RandomManifestTest(unittest.TestCase):
             random_manifest_table(manifest, "test", {})
         with self.assertRaisesRegex(ValueError, "accuracy_sla"):
             self.table_with(accuracy_sla=0.99)
-        for rate in (3, 10.0):
+        for rate in (3, 10.0, True):
             manifest = self.manifest()
             manifest["samples_per_sec_per_series"] = rate
             with self.assertRaisesRegex(ValueError, "dividing 1000"):
                 random_manifest_table(manifest, "test", {})
+        # 500 ms would round to a 0 s query interval.
+        with self.assertRaisesRegex(ValueError, "whole seconds"):
+            self.table_with(interval_ms=500)
+
+    def test_rqes_below_the_curves_are_left_out(self):
+        # A per-series quantile over 10 s at 10/s holds 100 samples.
+        manifest = self.manifest()
+        manifest["queries"][2]["promql"] = (
+            "avg by (job) (quantile_over_time(0.90, data[10s]))")
+        manifest["queries"][2]["rqes"][0]["lookback_ms"] = 10_000
+        with mock.patch("sys.stderr"):
+            workload = random_manifest_table(manifest, "test", {})["workloads"][0]
+        self.assertNotIn("q3", {r["query_id"] for r in workload["rqes"]})
+        self.assertNotIn(manifest["queries"][2]["promql"],
+                         [q["promql"] for q in workload["e2e"]["queries"]])
+
+    def test_a_repeated_query_is_one_e2e_entry(self):
+        manifest = self.manifest()
+        manifest["queries"].append(json.loads(json.dumps(manifest["queries"][0])))
+        workload = random_manifest_table(manifest, "test", {})["workloads"][0]
+        self.assertEqual([q["promql"] for q in workload["e2e"]["queries"]].count("promql q1"), 1)
 
     def test_cli_refuses_flags_the_manifest_overrides(self):
-        for flags in (["--synthetic"], ["--samples-per-sec", "10"]):
+        for flags in (["--synthetic"], ["--samples-per-sec", "10"], ["--curves", "c.csv"],
+                      ["--merge-curves", "m.csv"]):
             with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
                 main(["--random-manifest", "m.json", "--out", "t.json", *flags])
 
