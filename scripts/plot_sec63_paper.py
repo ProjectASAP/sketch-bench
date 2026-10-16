@@ -136,6 +136,90 @@ def cost_bars_wide(results, out):
             else:
                 ax.text(x, top * 1.08, text, ha="center", va="bottom", rotation=90,
                         fontsize=label_pt, weight="bold", color=color)
+        save(fig, out, "sec63_cost_bars_wide", tight=True)
+
+
+# The paper's names: the system, its no-sharing ablation, and the baseline.
+SINGLE_METHODS = [("asap", "LiteOlly", "#1f5fa8"),
+                  ("perquery", "LiteOllyPerQuery", "#8fb3de"),
+                  ("autosketch", "AutoSketch baseline", "#2e7d32")]
+SINGLE_WORKLOADS = [("classic", "W-RangeHeavy"), ("multigroup", "W-RollupHeavy"),
+                    ("all", "W-Mixed")]
+SINGLE_VARIANTS = [("shared1", "base"), ("shared8", "8U"), ("shared1-metrics16", "16M")]
+
+
+def cost_bars_single(results, out):
+    """One set of axes at one column's width (3.4 in, drawn at print size):
+    every workload and scale as a group of three bars (LiteOlly,
+    LiteOllyPerQuery, AutoSketch baseline), each at AutoSketch's batch
+    latency, CPU only, log scale. LiteOlly's cost sits on its bar; each other
+    bar names how many times LiteOlly's cost it is, inside the bar in white
+    when it fits, else just above it. The page is trimmed to the drawing."""
+    sizes = {"font.size": 8, "axes.labelsize": 8.5, "xtick.labelsize": 7.5,
+             "ytick.labelsize": 8, "legend.fontsize": 8}
+    label_pt = 6.5
+    with plt.rc_context(sizes):
+        fig, ax = plt.subplots(figsize=(3.4, 2.5))
+        width, gap, block = 0.32, 1.02, 0.35  # bar, group spacing, extra between workloads
+        x0, ticks, ticklabels, spans, to_place = 0.0, [], [], [], []
+        for templates, title in SINGLE_WORKLOADS:
+            start = x0
+            for variant, name in SINGLE_VARIANTS:
+                data = load(results, f"{templates}-{variant}")
+                limit = data["frontier"]["autosketch_latency_ms"]
+                cost = {m: cheapest(data, m, max_latency_ms=limit) for m, _, _ in SINGLE_METHODS}
+                for k, (method, label, color) in enumerate(SINGLE_METHODS):
+                    x = x0 + (k - 1) * width
+                    ax.bar(x, cost[method], width * 0.92, color=color,
+                           label=label if not ticks else None)
+                    if method == "asap":
+                        ax.text(x, cost[method] * 1.1, short(cost[method]), ha="center",
+                                va="bottom", rotation=90, fontsize=label_pt, weight="bold",
+                                color=color)
+                    else:
+                        ratio = cost[method] / cost["asap"]
+                        text = f"{ratio:.0f}×" if ratio >= 10 else f"{ratio:.1f}×"
+                        to_place.append((x, cost[method], text, color))
+                ticks.append(x0)
+                ticklabels.append(name)
+                x0 += gap
+            spans.append((start, x0 - gap, title))
+            x0 += block
+        ax.set_yscale("log")
+        ax.set_xticks(ticks)
+        ax.set_xticklabels(ticklabels, rotation=0)
+        ax.set_xlim(-0.55, x0 - block - gap + 0.55)
+        ax.set_ylim(top=ax.get_ylim()[1] * 6)
+        ax.yaxis.set_major_locator(matplotlib.ticker.LogLocator(numticks=5))
+        ax.grid(axis="y", alpha=0.3, lw=0.4)
+        ax.tick_params(axis="x", length=0, pad=2)
+        ax.set_ylabel("cost (vCPU)")
+        # Workload names under their three groups; thin separators between them.
+        for start, end, title in spans:
+            ax.text((start + end) / 2, -0.11, title, transform=ax.get_xaxis_transform(),
+                    ha="center", va="top", fontsize=8)
+        for (_, end, _), (start, _, _) in zip(spans, spans[1:]):
+            ax.axvline((end + start) / 2, color="0.6", lw=0.6, ls=":")
+        handles, names = ax.get_legend_handles_labels()
+        fig.tight_layout(rect=(0, 0, 1, 0.9))
+        # Placed after the layout, so it does not narrow the axes.
+        fig.legend(handles, names, loc="upper center", bbox_to_anchor=(0.5, 1.0), ncol=3,
+                   frameon=False, fontsize=7.5, handlelength=0.9, handletextpad=0.4,
+                   columnspacing=0.7)
+        fig.canvas.draw()
+        for x, top, text, color in to_place:
+            bottom = ax.get_ylim()[0]
+            to_pt = ax.transData.transform
+            height_pt = (to_pt((x, top))[1] - to_pt((x, bottom))[1]) * 72 / fig.dpi
+            inside = height_pt > label_pt * 0.62 * len(text) + 5
+            ax.text(x, top / 1.12 if inside else top * 1.1, text, ha="center",
+                    va="top" if inside else "bottom", rotation=90, fontsize=label_pt,
+                    weight="bold",
+                    # White inside dark bars; the light LiteOllyPerQuery bar
+                    # takes dark blue inside and above it, where its own
+                    # colour would not read.
+                    color=("#0b2e59" if color == "#8fb3de" else
+                           "white" if inside else color))
         save(fig, out, "sec63_cost_bars", tight=True)
 
 
@@ -272,6 +356,7 @@ def main():
     results, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
     cost_bars_wide(results, out)
+    cost_bars_single(results, out)
     cost_bars(results, out, "column")
     frontier(results, out)
     rollups(results, out)
