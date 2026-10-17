@@ -148,11 +148,11 @@ SINGLE_WORKLOADS = [("classic", "W-RangeHeavy"), ("multigroup", "W-RollupHeavy")
 SINGLE_VARIANTS = [("shared1", "base"), ("shared8", "8U"), ("shared1-metrics16", "16M")]
 
 
-def cost_bars_single(results, out):
+def cost_bars_single(results, out, weights="cpu"):
     """One set of axes at one column's width (3.4 in, drawn at print size):
     every workload and scale as a group of three bars (LiteOlly,
     LiteOllyPerQuery, AutoSketch baseline), each at AutoSketch's batch
-    latency, CPU only, log scale. LiteOlly's cost sits on its bar; each other
+    latency, log scale, under `weights` (CPU only, or Fargate's prices). LiteOlly's cost sits on its bar; each other
     bar names how many times LiteOlly's cost it is, inside the bar in white
     when it fits, else just above it. The page is trimmed to the drawing."""
     sizes = {"font.size": 8, "axes.labelsize": 8.5, "xtick.labelsize": 7.5,
@@ -167,7 +167,8 @@ def cost_bars_single(results, out):
             for variant, name in SINGLE_VARIANTS:
                 data = load(results, f"{templates}-{variant}")
                 limit = data["frontier"]["autosketch_latency_ms"]
-                cost = {m: cheapest(data, m, max_latency_ms=limit) for m, _, _ in SINGLE_METHODS}
+                cost = {m: cheapest(data, m, weights, max_latency_ms=limit)
+                        for m, _, _ in SINGLE_METHODS}
                 for k, (method, label, color) in enumerate(SINGLE_METHODS):
                     x = x0 + (k - 1) * width
                     ax.bar(x, cost[method], width * 0.92, color=color,
@@ -193,7 +194,7 @@ def cost_bars_single(results, out):
         ax.yaxis.set_major_locator(matplotlib.ticker.LogLocator(numticks=5))
         ax.grid(axis="y", alpha=0.3, lw=0.4)
         ax.tick_params(axis="x", length=0, pad=2)
-        ax.set_ylabel("cost (vCPU)")
+        ax.set_ylabel("cost (vCPU)" if weights == "cpu" else "cost ($/hour)")
         # Workload names under their three groups; thin separators between them.
         for start, end, title in spans:
             ax.text((start + end) / 2, -0.11, title, transform=ax.get_xaxis_transform(),
@@ -220,7 +221,8 @@ def cost_bars_single(results, out):
                     # colour would not read.
                     color=("#0b2e59" if color == "#8fb3de" else
                            "white" if inside else color))
-        save(fig, out, "sec63_cost_bars", tight=True)
+        save(fig, out, "sec63_cost_bars" + ("" if weights == "cpu" else f"_{weights}"),
+             tight=True)
 
 
 def cost_bars(results, out, layout):
@@ -357,6 +359,7 @@ def main():
     os.makedirs(out, exist_ok=True)
     cost_bars_wide(results, out)
     cost_bars_single(results, out)
+    cost_bars_single(results, out, "fargate")
     cost_bars(results, out, "column")
     frontier(results, out)
     rollups(results, out)
