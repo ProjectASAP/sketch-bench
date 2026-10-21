@@ -64,6 +64,17 @@ struct Args {
     /// Keep each arm's Prometheus TSDB directory instead of deleting it.
     #[arg(long)]
     keep_tsdb: bool,
+    /// Override the source's `series_count` (and the arrival rate) in the
+    /// workload; the patched workload is written to the output directory.
+    #[arg(long)]
+    series: Option<usize>,
+    /// Seconds each closed-loop query-load step runs.
+    #[arg(long, default_value_t = 5)]
+    load_seconds: u64,
+    /// Concurrent clients of one load step; repeat for several steps. The
+    /// steps run at the last evaluation time, after its normal queries.
+    #[arg(long = "load-concurrency", default_values_t = vec![1, 4, 16])]
+    load_concurrency: Vec<usize>,
 }
 
 /// The one query the run supports, read from the workload.
@@ -230,6 +241,92 @@ struct Ingest {
     samples: u64,
     /// Sum of Remote Write round trips, ms.
     send_ms: f64,
+    /// Time until the samples were absorbed, summed over the replay
+    /// segments, ms. Prometheus: its Remote Write round trips (it answers
+    /// after the TSDB append). Data plane: its round trips (it answers once
+    /// samples are queued) plus each segment's watermark call, which returns
+    /// only after every queued sample is ingested and the panes are built.
+    absorb_ms: f64,
+    /// `samples / absorb_ms`, from one sequential writer.
+    samples_per_second: f64,
+}
+
+/// One closed-loop load step: `concurrency` clients, each sending the query
+/// back to back for the step's duration.
+#[derive(Debug, Clone, Serialize)]
+struct LoadStep {
+    arm: String,
+    system: String,
+    concurrency: usize,
+    seconds: f64,
+    requests: usize,
+    ok: usize,
+    /// Answers whose `x-asap-execution` is set and is not `plan`.
+    not_plan: usize,
+    qps: f64,
+    p50_ms: Option<f64>,
+    p99_ms: Option<f64>,
+}
+
+fn percentile(sorted: &[f64], p: f64) -> Option<f64> {
+    (!sorted.is_empty()).then(|| sorted[((sorted.len() - 1) as f64 * p).round() as usize])
+}
+
+fn load_step(
+    arm: &str,
+    system: &str,
+    base: &str,
+    query: &str,
+    time_ms: i64,
+    concurrency: usize,
+    duration: Duration,
+) -> LoadStep {
+    let clock = WallClock::start();
+    let deadline = std::time::Instant::now() + duration;
+    let results: Vec<(bool, bool, f64)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..concurrency)
+            .map(|_| {
+                scope.spawn(move || {
+                    let client = reqwest::blocking::Client::builder()
+                        .timeout(Duration::from_secs(300))
+                        .build()
+                        .expect("http client");
+                    let mut out = Vec::new();
+                    while std::time::Instant::now() < deadline {
+                        out.push(match promapi::instant_query(&client, base, query, time_ms) {
+                            Ok(a) => (
+                                a.status == 200,
+                                a.execution.as_deref().is_some_and(|e| e != "plan"),
+                                a.latency_ms,
+                            ),
+                            Err(_) => (false, false, f64::NAN),
+                        });
+                    }
+                    out
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().expect("load client"))
+            .collect()
+    });
+    let seconds = clock.elapsed_ns() as f64 / 1e9;
+    let mut latencies: Vec<f64> = results.iter().filter(|r| r.0).map(|r| r.2).collect();
+    latencies.sort_by(f64::total_cmp);
+    let ok = latencies.len();
+    LoadStep {
+        arm: arm.into(),
+        system: system.into(),
+        concurrency,
+        seconds,
+        requests: results.len(),
+        ok,
+        not_plan: results.iter().filter(|r| r.1).count(),
+        qps: ok as f64 / seconds,
+        p50_ms: percentile(&latencies, 0.5),
+        p99_ms: percentile(&latencies, 0.99),
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -293,6 +390,7 @@ struct ArmReport {
     prometheus_tsdb_status: Value,
     queries_answered_by_plan: usize,
     queries: usize,
+    load: Vec<LoadStep>,
 }
 
 fn median(v: &mut [f64]) -> f64 {
@@ -308,6 +406,7 @@ fn median(v: &mut [f64]) -> f64 {
 /// What every arm shares: the run's arguments, query, samples and times.
 struct Run<'a> {
     args: &'a Args,
+    workload: &'a Path,
     q: &'a QuerySpec,
     data: &'a Dataset,
     tl: &'a Timeline,
@@ -320,8 +419,13 @@ fn run_arm(
     queries: &mut Vec<QueryRow>,
     answers: &mut Vec<AnswerRow>,
 ) -> anyhow::Result<ArmReport> {
-    let Run { args, q, data, tl } = *run;
-    let workload = args.workload.as_path();
+    let Run {
+        args,
+        workload,
+        q,
+        data,
+        tl,
+    } = *run;
     let dir = args.out_dir.join(name);
     fs::create_dir_all(&dir)?;
     let client = reqwest::blocking::Client::builder()
@@ -384,27 +488,45 @@ fn run_arm(
     let batch_ms = args.batch_seconds * 1000;
     let mut cursor = tl.origin_ms; // everything at or before it is written
     let mut answered = 0;
+    let last_eval = *tl.evaluations_ms.last().unwrap();
+    let mut load = Vec::new();
     for &eval in &tl.evaluations_ms {
+        // The segment up to `eval`, encoded once and sent to each system as
+        // one block, so one system's timing never overlaps the other's work.
+        let mut bodies = Vec::new();
+        let mut segment_samples = 0u64;
         while cursor < eval {
             let hi = (cursor + batch_ms).min(eval);
             let request = data.write_request(cursor, hi);
-            let samples: u64 = request
+            segment_samples += request
                 .timeseries
                 .iter()
                 .map(|s| s.samples.len() as u64)
-                .sum();
-            let body = remote_write::encode(&request);
-            for (url, stats) in [
-                (format!("{prom_url}/api/v1/write"), &mut ingest_prom),
-                (format!("{dp_url}/api/v1/write"), &mut ingest_dp),
-            ] {
-                let clock = WallClock::start();
-                remote_write::send(&client, &url, &body)?;
-                stats.send_ms += clock.elapsed_ns() as f64 / 1e6;
-                stats.requests += 1;
-                stats.samples += samples;
-            }
+                .sum::<u64>();
+            bodies.push(remote_write::encode(&request));
             cursor = hi;
+        }
+        let mut dp_send_ms = 0.0;
+        for (url, stats, send_ms) in [
+            (format!("{prom_url}/api/v1/write"), &mut ingest_prom, None),
+            (
+                format!("{dp_url}/api/v1/write"),
+                &mut ingest_dp,
+                Some(&mut dp_send_ms),
+            ),
+        ] {
+            let clock = WallClock::start();
+            for body in &bodies {
+                remote_write::send(&client, &url, body)?;
+                stats.requests += 1;
+            }
+            let ms = clock.elapsed_ns() as f64 / 1e6;
+            stats.send_ms += ms;
+            stats.samples += segment_samples;
+            match send_ms {
+                Some(out) => *out = ms,
+                None => stats.absorb_ms += ms,
+            }
         }
         prom.check_alive()?;
         dp.check_alive()?;
@@ -417,6 +539,7 @@ fn run_arm(
             ))
             .send()?;
         let watermark_ms = clock.elapsed_ns() as f64 / 1e6;
+        ingest_dp.absorb_ms += dp_send_ms + watermark_ms;
         let status = response.status();
         let body: Value = response.json().unwrap_or(Value::Null);
         ensure!(status.is_success(), "watermark at {eval}: {status}: {body}");
@@ -503,6 +626,27 @@ fn run_arm(
             row.asap_latency_ms_median
         );
         queries.push(row);
+
+        if eval == last_eval {
+            let duration = Duration::from_secs(args.load_seconds);
+            for &concurrency in &args.load_concurrency {
+                for (system, base) in [("prometheus", &prom_url), ("asap", &dp_url)] {
+                    let step = load_step(name, system, base, &q.text, eval, concurrency, duration);
+                    eprintln!(
+                        "[{name}] load {system} x{concurrency}: {} ok of {} in {:.1}s, {:.1} qps, p50 {:?} ms, p99 {:?} ms",
+                        step.ok, step.requests, step.seconds, step.qps, step.p50_ms, step.p99_ms
+                    );
+                    load.push(step);
+                }
+                prom_rss_max = prom_rss_max.max(procs::sample(prom.pid()).rss_kb);
+                dp_rss_max = dp_rss_max.max(procs::sample(dp.pid()).rss_kb);
+            }
+        }
+    }
+    for stats in [&mut ingest_prom, &mut ingest_dp] {
+        if stats.absorb_ms > 0.0 {
+            stats.samples_per_second = stats.samples as f64 / (stats.absorb_ms / 1e3);
+        }
     }
 
     let prometheus_end = procs::sample(prom.pid());
@@ -545,6 +689,7 @@ fn run_arm(
         prometheus_tsdb_status,
         queries_answered_by_plan: answered,
         queries: tl.evaluations_ms.len(),
+        load,
     })
 }
 
@@ -573,6 +718,21 @@ fn main() -> anyhow::Result<()> {
         &fs::read_to_string(&args.workload)
             .with_context(|| format!("reading {}", args.workload.display()))?,
     )?;
+    let mut workload = workload;
+    let mut workload_path = args.workload.clone();
+    if let Some(series) = args.series {
+        let base = read_query(&workload)?;
+        let source = workload
+            .pointer_mut(&format!("/data_workload/sources/{}", base.metric))
+            .context("workload source")?;
+        source["series_count"] = json!(series);
+        let rows_per_second = series as f64 * 1000.0 / base.sample_interval_ms as f64;
+        if let Some(rate) = workload.pointer_mut("/data_workload/arrival/ingesting/rows_per_second") {
+            *rate = json!(rows_per_second);
+        }
+        workload_path = args.out_dir.join("workload.json");
+        fs::write(&workload_path, serde_json::to_string_pretty(&workload)? + "\n")?;
+    }
     let q = read_query(&workload)?;
     let tl = timeline(&q, args.evaluations);
     let points = ((tl.last_sample_ms - tl.first_sample_ms) / q.sample_interval_ms + 1) as usize;
@@ -591,6 +751,7 @@ fn main() -> anyhow::Result<()> {
 
     let run = Run {
         args: &args,
+        workload: &workload_path,
         q: &q,
         data: &data,
         tl: &tl,
@@ -622,6 +783,11 @@ fn main() -> anyhow::Result<()> {
         w.serialize(row)?;
     }
     w.flush()?;
+    let mut w = csv::Writer::from_path(args.out_dir.join("load.csv"))?;
+    for step in arms.iter().flat_map(|a| &a.load) {
+        w.serialize(step)?;
+    }
+    w.flush()?;
     let summary = json!({
         "pins": args.pins.as_deref().map(read_pins).transpose()?,
         "binaries": {
@@ -629,7 +795,7 @@ fn main() -> anyhow::Result<()> {
             "control_plane": args.control_plane_bin,
             "data_plane": args.data_plane_bin,
         },
-        "workload": args.workload,
+        "workload": workload_path,
         "query": q,
         "timeline": tl,
         "dataset": data.spec,
@@ -665,13 +831,13 @@ fn main() -> anyhow::Result<()> {
     }
     println!();
     println!(
-        "| arm | plan | plan ms | CP peak RSS MB | Prom RSS idle/peak MB | DP RSS idle/peak MB | Prom CPU s | DP CPU s | Prom write ms | DP write ms |"
+        "| arm | plan | plan ms | CP peak RSS MB | Prom RSS idle/peak MB | DP RSS idle/peak MB | Prom CPU s | DP CPU s |"
     );
-    println!("|---|---|---|---|---|---|---|---|---|---|");
+    println!("|---|---|---|---|---|---|---|---|");
     let mb = |kb: Option<u64>| fmt_opt(kb.map(|k| k as f64 / 1024.0), 1);
     for a in &arms {
         println!(
-            "| {} | {} | {:.1} | {} | {} / {} | {} / {} | {} | {} | {:.1} | {:.1} |",
+            "| {} | {} | {:.1} | {} | {} / {} | {} / {} | {} | {} |",
             a.name,
             a.planning.selected_candidate["selected_candidate_id"]
                 .as_str()
@@ -684,8 +850,36 @@ fn main() -> anyhow::Result<()> {
             mb(a.data_plane_rss_max_sampled_kb),
             fmt_opt(a.prometheus_end.cpu_seconds, 2),
             fmt_opt(a.data_plane_end.cpu_seconds, 2),
-            a.ingest_prometheus.send_ms,
-            a.ingest_data_plane.send_ms
+        );
+    }
+    println!();
+    println!("| arm | samples | Prom absorb ms | Prom samples/s | DP absorb ms | DP samples/s |");
+    println!("|---|---|---|---|---|---|");
+    for a in &arms {
+        println!(
+            "| {} | {} | {:.1} | {:.0} | {:.1} | {:.0} |",
+            a.name,
+            a.ingest_prometheus.samples,
+            a.ingest_prometheus.absorb_ms,
+            a.ingest_prometheus.samples_per_second,
+            a.ingest_data_plane.absorb_ms,
+            a.ingest_data_plane.samples_per_second
+        );
+    }
+    println!();
+    println!("| arm | system | clients | ok / requests | QPS | p50 ms | p99 ms |");
+    println!("|---|---|---|---|---|---|---|");
+    for step in arms.iter().flat_map(|a| &a.load) {
+        println!(
+            "| {} | {} | {} | {} / {} | {:.1} | {} | {} |",
+            step.arm,
+            step.system,
+            step.concurrency,
+            step.ok,
+            step.requests,
+            step.qps,
+            fmt_opt(step.p50_ms, 2),
+            fmt_opt(step.p99_ms, 2)
         );
     }
     eprintln!("results in {}", args.out_dir.display());
@@ -699,5 +893,7 @@ fn main() -> anyhow::Result<()> {
         "{} of {all} ASAP queries were not answered by the plan",
         all - by_plan
     );
+    let not_plan: usize = arms.iter().flat_map(|a| &a.load).map(|s| s.not_plan).sum();
+    ensure!(not_plan == 0, "{not_plan} load-test answers were not the plan's");
     Ok(())
 }

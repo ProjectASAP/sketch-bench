@@ -30,7 +30,11 @@ fetch, and adds about 1.4 GB to `target/`. A run takes about
 20 s. Needs Rust, git, curl, and Linux on x86-64; no Docker.
 
 Extra flags after the output directory go to `aqpbm-e2e`, for example
-`--evaluations 12 --repeats 20 --seed 7`. See `aqpbm-e2e --help`.
+`--evaluations 12 --repeats 20 --seed 7`, or `--series 1000` to scale the
+dataset (the workload's `series_count` and arrival rate are patched to
+match and the patched workload is written to the output directory). The
+load test is set with `--load-seconds` (default 5) and repeated
+`--load-concurrency` (default 1, 4, 16). See `aqpbm-e2e --help`.
 
 ## Pinned
 
@@ -67,7 +71,9 @@ backend's binaries, built from the backend's lockfile.
     (`capabilities/no_raw.json`). The planner picks P3-m1: one KLL per series
     per 10 min pane, built at ingestion, with six panes merged at query time.
 - **Replay.** Samples are sent in event-time order, 60 s of samples per
-  Remote Write request, first to Prometheus and then to the data plane. When
+  Remote Write request. Each segment up to the next evaluation time is sent
+  to Prometheus as one block, then to the data plane as one block, so one
+  system's timing never overlaps the other's work. When
   the replay reaches an evaluation time `T`, the harness calls
   `POST /api/v1/precompute/watermark?time_ms=T`, so the pane ending at `T`
   closes. Then it sends the query to each system 5 times at `T`. The data plane
@@ -101,11 +107,25 @@ Per arm and evaluation time (`queries.csv`):
   `WallClock`);
 - watermark call latency.
 
+Per arm and system, at the last evaluation time (`load.csv`):
+- **Query throughput.** A closed-loop load step per concurrency level:
+  that many clients, each with its own connection, send the query at `T`
+  back to back for `--load-seconds`. The step reports successful queries
+  per second and their p50 and p99 latency. The clients run on the same
+  machine as both systems.
+
 Per arm (`summary.json`):
 - control-plane wall time and peak RSS (from `wait4`);
 - the selected plan;
 - startup time of each process;
-- Remote Write request count and summed round-trip time per system;
+- **Ingest throughput**, samples absorbed per second by one sequential
+  writer. For Prometheus the time is its Remote Write round trips, which
+  return after the TSDB append. For the data plane it is its round trips,
+  which return once samples are queued, plus each segment's watermark call,
+  which returns only after every sample queued before it is ingested and
+  the panes up to `T` are built (it is queued behind those writes on the
+  data plane's engine thread). One writer gives a lower bound on what each
+  system can absorb;
 - RSS and CPU for each process, read from `/proc/<pid>` at idle (after
   startup), after each evaluation and at the end;
 - the data plane's `/api/v1/status/asap` counters and Prometheus's
@@ -113,6 +133,10 @@ Per arm (`summary.json`):
 - the pins, the dataset description and the timeline.
 
 ## Results of one run (2026-10-21, this machine: 40 cores, 251 GB RAM)
+
+These tables are the output of commit `a62325d`, before the throughput
+measurements were added. Later versions print ingest and load tables in
+place of the two write-ms columns.
 
 All 12 ASAP answers came from the plan (`200`, `x-asap-execution: plan`), and
 both systems returned all 16 series each time. Prometheus matched the
@@ -142,6 +166,19 @@ samples of the first pane and dropped no samples as late.
 
 `curl` against the same Prometheus gave the same 35 to 40 ms query time, so
 that number is not an artifact of the harness's HTTP client.
+
+## Findings from the throughput runs (2026-10-21)
+
+- **The data plane answers queries on one engine thread.** Ingestion,
+  watermarks and query evaluations are commands on one queue
+  (`data_plane/src/engine.rs`), so its query throughput stops rising with
+  more clients and its latency grows with them instead.
+- **At 1,000 series the query-time plan is refused.** Every
+  `query_time_raw` query got `422`, `execution failed: execution memory
+  limit exceeded`. The data plane runs each plan with the executor's
+  default `Limits` (`max_bytes` = 64 MiB, `data_plane/src/precompute.rs`),
+  which no flag changes at c1ec0c2, and a 60 min raw window of 1,000
+  series is larger. The run exits non-zero for that arm by design.
 
 ## Known limits
 
