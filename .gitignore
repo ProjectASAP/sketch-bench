@@ -75,3 +75,7 @@ throughput/.mplconfig
 visualization/plots/.mplconfig/
 # 本地计划文件（不入库）
 PLAN.md
+
+# E2E harness: downloaded Prometheus, backend checkout, run outputs
+e2e/.cache/
+e2e/results/
