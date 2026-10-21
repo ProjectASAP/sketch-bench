@@ -293,14 +293,16 @@ fn load_step(
                         .expect("http client");
                     let mut out = Vec::new();
                     while std::time::Instant::now() < deadline {
-                        out.push(match promapi::instant_query(&client, base, query, time_ms) {
-                            Ok(a) => (
-                                a.status == 200,
-                                a.execution.as_deref().is_some_and(|e| e != "plan"),
-                                a.latency_ms,
-                            ),
-                            Err(_) => (false, false, f64::NAN),
-                        });
+                        out.push(
+                            match promapi::instant_query(&client, base, query, time_ms) {
+                                Ok(a) => (
+                                    a.status == 200,
+                                    a.execution.as_deref().is_some_and(|e| e != "plan"),
+                                    a.latency_ms,
+                                ),
+                                Err(_) => (false, false, f64::NAN),
+                            },
+                        );
                     }
                     out
                 })
@@ -727,11 +729,15 @@ fn main() -> anyhow::Result<()> {
             .context("workload source")?;
         source["series_count"] = json!(series);
         let rows_per_second = series as f64 * 1000.0 / base.sample_interval_ms as f64;
-        if let Some(rate) = workload.pointer_mut("/data_workload/arrival/ingesting/rows_per_second") {
+        if let Some(rate) = workload.pointer_mut("/data_workload/arrival/ingesting/rows_per_second")
+        {
             *rate = json!(rows_per_second);
         }
         workload_path = args.out_dir.join("workload.json");
-        fs::write(&workload_path, serde_json::to_string_pretty(&workload)? + "\n")?;
+        fs::write(
+            &workload_path,
+            serde_json::to_string_pretty(&workload)? + "\n",
+        )?;
     }
     let q = read_query(&workload)?;
     let tl = timeline(&q, args.evaluations);
@@ -894,6 +900,9 @@ fn main() -> anyhow::Result<()> {
         all - by_plan
     );
     let not_plan: usize = arms.iter().flat_map(|a| &a.load).map(|s| s.not_plan).sum();
-    ensure!(not_plan == 0, "{not_plan} load-test answers were not the plan's");
+    ensure!(
+        not_plan == 0,
+        "{not_plan} load-test answers were not the plan's"
+    );
     Ok(())
 }
