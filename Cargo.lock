@@ -15,6 +15,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
 dependencies = [
  "cfg-if",
+ "const-random",
  "getrandom 0.3.4",
  "once_cell",
  "version_check",
@@ -177,16 +178,20 @@ dependencies = [
  "aqpbm-core",
  "aqpbm-datagen",
  "asap-aware-mapping",
- "asap-frontend-promql",
- "asap-types",
+ "asap-executor",
+ "asap-frontend-promql 0.1.0 (git+https://github.com/ProjectASAP/ASAPPlanner?rev=3c31338d6fa28e31acaf0a11626a05f4d04df9b0)",
+ "asap-planner",
+ "asap-types 0.1.0 (git+https://github.com/ProjectASAP/ASAPPlanner?rev=3c31338d6fa28e31acaf0a11626a05f4d04df9b0)",
  "asap_sketchlib 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "blake3",
  "clap",
  "csv",
+ "futures",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -220,14 +225,201 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
+name = "arrow"
+version = "58.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6cfdd0833e32a9874d2b55089333ad310c0be208aafa277385ce2461dec90be3"
+dependencies = [
+ "arrow-arith",
+ "arrow-array",
+ "arrow-buffer",
+ "arrow-cast",
+ "arrow-data",
+ "arrow-ord",
+ "arrow-row",
+ "arrow-schema",
+ "arrow-select",
+ "arrow-string",
+]
+
+[[package]]
+name = "arrow-arith"
+version = "58.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a41203398f0eaa6f7ec8e62c0da742a21abf282c148fc157f6c35c90e29981a"
+dependencies = [
+ "arrow-array",
+ "arrow-buffer",
+ "arrow-data",
+ "arrow-schema",
+ "chrono",
+ "num-traits",
+]
+
+[[package]]
+name = "arrow-array"
+version = "58.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae33dad492b7df00a217563a7b0ef2874df68a0deea1b1a3acf628152f7f7a69"
+dependencies = [
+ "ahash",
+ "arrow-buffer",
+ "arrow-data",
+ "arrow-schema",
+ "chrono",
+ "half",
+ "hashbrown 0.17.1",
+ "num-complex",
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
+name = "arrow-buffer"
+version = "58.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9552f96391c005e6ab449fa941420935e7e062489b12b8b1b08879b2163f5b5"
+dependencies = [
+ "bytes",
+ "half",
+ "num-bigint",
+ "num-traits",
+]
+
+[[package]]
+name = "arrow-cast"
+version = "58.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a8a327c9649f30d8406995f27642b68df354713cca3baaaf100f076f18d5f34"
+dependencies = [
+ "arrow-array",
+ "arrow-buffer",
+ "arrow-data",
+ "arrow-ord",
+ "arrow-schema",
+ "arrow-select",
+ "atoi",
+ "base64 0.22.1",
+ "chrono",
+ "half",
+ "lexical-core",
+ "num-traits",
+ "ryu",
+]
+
+[[package]]
+name = "arrow-data"
+version = "58.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b24852db04738907e06c04ea61e42fe7fda962a34513022dc0d0e754fb7976b"
+dependencies = [
+ "arrow-buffer",
+ "arrow-schema",
+ "half",
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
+name = "arrow-ord"
+version = "58.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63a083ec750f5c043f02946b4baf05fcdbb55f4560a3277055caca5cc99f3eb0"
+dependencies = [
+ "arrow-array",
+ "arrow-buffer",
+ "arrow-data",
+ "arrow-schema",
+ "arrow-select",
+]
+
+[[package]]
+name = "arrow-row"
+version = "58.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "514ba0ef0d4c5896202dae736251ce415abb43a950bed570fb7981b8716c0e4c"
+dependencies = [
+ "arrow-array",
+ "arrow-buffer",
+ "arrow-data",
+ "arrow-schema",
+ "half",
+]
+
+[[package]]
+name = "arrow-schema"
+version = "58.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21ca356ad6425cecb6eb7b28e4f659f1ee7880fbb1a16127de7dd62901efee9e"
+
+[[package]]
+name = "arrow-select"
+version = "58.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c58da39eb3d8350ad4a549e5c2bc49284dac554016c69829310350f1731b0aad"
+dependencies = [
+ "ahash",
+ "arrow-array",
+ "arrow-buffer",
+ "arrow-data",
+ "arrow-schema",
+ "num-traits",
+]
+
+[[package]]
+name = "arrow-string"
+version = "58.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6789b388467525e3271326b6b4915666ecfdf5142aef09779445c954b67543c"
+dependencies = [
+ "arrow-array",
+ "arrow-buffer",
+ "arrow-data",
+ "arrow-schema",
+ "arrow-select",
+ "memchr",
+ "num-traits",
+ "regex",
+ "regex-syntax",
+]
+
+[[package]]
 name = "asap-aware-mapping"
 version = "0.1.0"
 source = "git+https://github.com/ProjectASAP/ASAPPlanner?rev=3c31338d6fa28e31acaf0a11626a05f4d04df9b0#3c31338d6fa28e31acaf0a11626a05f4d04df9b0"
 dependencies = [
- "asap-types",
+ "asap-types 0.1.0 (git+https://github.com/ProjectASAP/ASAPPlanner?rev=3c31338d6fa28e31acaf0a11626a05f4d04df9b0)",
  "asap_sketchlib 0.3.0 (git+https://github.com/ProjectASAP/asap_sketchlib?rev=da3635a80f8f854d47b772d49d5a9e5fb6927d8e)",
  "serde",
  "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "asap-executor"
+version = "0.1.0"
+source = "git+https://github.com/ProjectASAP/ASAPPlanner?rev=7565c47e30609d9571d8a9a372bf5e195754b2bb#7565c47e30609d9571d8a9a372bf5e195754b2bb"
+dependencies = [
+ "ahash",
+ "arrow",
+ "asap-types 0.1.0 (git+https://github.com/ProjectASAP/ASAPPlanner?rev=7565c47e30609d9571d8a9a372bf5e195754b2bb)",
+ "asap_sketchlib 0.3.0 (git+https://github.com/ProjectASAP/asap_sketchlib?rev=3f44cf1c2d823b844c17796f24408e03863149ee)",
+ "chrono",
+ "futures",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "asap-frontend-common"
+version = "0.1.0"
+source = "git+https://github.com/ProjectASAP/ASAPPlanner?rev=7565c47e30609d9571d8a9a372bf5e195754b2bb#7565c47e30609d9571d8a9a372bf5e195754b2bb"
+dependencies = [
+ "asap-types 0.1.0 (git+https://github.com/ProjectASAP/ASAPPlanner?rev=7565c47e30609d9571d8a9a372bf5e195754b2bb)",
+ "serde",
  "thiserror",
 ]
 
@@ -236,14 +428,85 @@ name = "asap-frontend-promql"
 version = "0.1.0"
 source = "git+https://github.com/ProjectASAP/ASAPPlanner?rev=3c31338d6fa28e31acaf0a11626a05f4d04df9b0#3c31338d6fa28e31acaf0a11626a05f4d04df9b0"
 dependencies = [
- "asap-types",
+ "asap-types 0.1.0 (git+https://github.com/ProjectASAP/ASAPPlanner?rev=3c31338d6fa28e31acaf0a11626a05f4d04df9b0)",
  "promql-parser",
+]
+
+[[package]]
+name = "asap-frontend-promql"
+version = "0.1.0"
+source = "git+https://github.com/ProjectASAP/ASAPPlanner?rev=7565c47e30609d9571d8a9a372bf5e195754b2bb#7565c47e30609d9571d8a9a372bf5e195754b2bb"
+dependencies = [
+ "asap-frontend-common",
+ "asap-types 0.1.0 (git+https://github.com/ProjectASAP/ASAPPlanner?rev=7565c47e30609d9571d8a9a372bf5e195754b2bb)",
+ "promql-parser",
+]
+
+[[package]]
+name = "asap-logical-asap-optimization"
+version = "0.1.0"
+source = "git+https://github.com/ProjectASAP/ASAPPlanner?rev=7565c47e30609d9571d8a9a372bf5e195754b2bb#7565c47e30609d9571d8a9a372bf5e195754b2bb"
+dependencies = [
+ "asap-types 0.1.0 (git+https://github.com/ProjectASAP/ASAPPlanner?rev=7565c47e30609d9571d8a9a372bf5e195754b2bb)",
+ "asap_sketchlib 0.3.0 (git+https://github.com/ProjectASAP/asap_sketchlib?rev=3f44cf1c2d823b844c17796f24408e03863149ee)",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "asap-physical-asap-optimization"
+version = "0.1.0"
+source = "git+https://github.com/ProjectASAP/ASAPPlanner?rev=7565c47e30609d9571d8a9a372bf5e195754b2bb#7565c47e30609d9571d8a9a372bf5e195754b2bb"
+dependencies = [
+ "asap-logical-asap-optimization",
+ "asap-types 0.1.0 (git+https://github.com/ProjectASAP/ASAPPlanner?rev=7565c47e30609d9571d8a9a372bf5e195754b2bb)",
+ "thiserror",
+]
+
+[[package]]
+name = "asap-plan-selection"
+version = "0.1.0"
+source = "git+https://github.com/ProjectASAP/ASAPPlanner?rev=7565c47e30609d9571d8a9a372bf5e195754b2bb#7565c47e30609d9571d8a9a372bf5e195754b2bb"
+dependencies = [
+ "asap-logical-asap-optimization",
+ "asap-physical-asap-optimization",
+ "asap-types 0.1.0 (git+https://github.com/ProjectASAP/ASAPPlanner?rev=7565c47e30609d9571d8a9a372bf5e195754b2bb)",
+ "asap_sketchlib 0.3.0 (git+https://github.com/ProjectASAP/asap_sketchlib?rev=3f44cf1c2d823b844c17796f24408e03863149ee)",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "asap-planner"
+version = "0.1.0"
+source = "git+https://github.com/ProjectASAP/ASAPPlanner?rev=7565c47e30609d9571d8a9a372bf5e195754b2bb#7565c47e30609d9571d8a9a372bf5e195754b2bb"
+dependencies = [
+ "asap-executor",
+ "asap-frontend-promql 0.1.0 (git+https://github.com/ProjectASAP/ASAPPlanner?rev=7565c47e30609d9571d8a9a372bf5e195754b2bb)",
+ "asap-logical-asap-optimization",
+ "asap-plan-selection",
+ "asap-types 0.1.0 (git+https://github.com/ProjectASAP/ASAPPlanner?rev=7565c47e30609d9571d8a9a372bf5e195754b2bb)",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
 name = "asap-types"
 version = "0.1.0"
 source = "git+https://github.com/ProjectASAP/ASAPPlanner?rev=3c31338d6fa28e31acaf0a11626a05f4d04df9b0#3c31338d6fa28e31acaf0a11626a05f4d04df9b0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "asap-types"
+version = "0.1.0"
+source = "git+https://github.com/ProjectASAP/ASAPPlanner?rev=7565c47e30609d9571d8a9a372bf5e195754b2bb#7565c47e30609d9571d8a9a372bf5e195754b2bb"
 dependencies = [
  "serde",
  "serde_json",
@@ -273,6 +536,24 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9bc12e89b57bf83e7148b0d71a113af0764bd1d727a594483af08eac556d2233"
 dependencies = [
+ "bytes",
+ "prost",
+ "rand 0.9.4",
+ "rmp-serde",
+ "serde",
+ "serde-big-array",
+ "serde_bytes",
+ "smallvec",
+ "twox-hash",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "asap_sketchlib"
+version = "0.3.0"
+source = "git+https://github.com/ProjectASAP/asap_sketchlib?rev=3f44cf1c2d823b844c17796f24408e03863149ee#3f44cf1c2d823b844c17796f24408e03863149ee"
+dependencies = [
+ "bincode",
  "bytes",
  "prost",
  "rand 0.9.4",
@@ -333,6 +614,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "atoi"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f28d99ec8bfea296261ca1af174f24225171fea9664ba9003cbebee704810528"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]
@@ -588,6 +878,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "const-random"
+version = "0.1.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87e00182fe74b066627d63b85fd550ac2998d4b0bd86bfed477a0ae4c7c71359"
+dependencies = [
+ "const-random-macro",
+]
+
+[[package]]
+name = "const-random-macro"
+version = "0.1.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9d839f2a20b0aee515dc581a6172f2321f96cab76c1a38a4c584a194955390e"
+dependencies = [
+ "getrandom 0.2.17",
+ "once_cell",
+ "tiny-keccak",
+]
+
+[[package]]
 name = "constant_time_eq"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -682,6 +992,12 @@ checksum = "acdd7c62a3665c7f6830a51635d9ac9b23ed385797f70a83bb8bafe9c572ab2b"
 dependencies = [
  "winapi",
 ]
+
+[[package]]
+name = "crunchy"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "csv"
@@ -993,6 +1309,18 @@ name = "glob"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
+
+[[package]]
+name = "half"
+version = "2.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ea2d84b969582b4b1864a92dc5d27cd2b77b622a8d79306834f1be5ba20d84b"
+dependencies = [
+ "cfg-if",
+ "crunchy",
+ "num-traits",
+ "zerocopy",
+]
 
 [[package]]
 name = "hashbrown"
@@ -1349,6 +1677,63 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
+name = "lexical-core"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d8d125a277f807e55a77304455eb7b1cb52f2b18c143b60e766c120bd64a594"
+dependencies = [
+ "lexical-parse-float",
+ "lexical-parse-integer",
+ "lexical-util",
+ "lexical-write-float",
+ "lexical-write-integer",
+]
+
+[[package]]
+name = "lexical-parse-float"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52a9f232fbd6f550bc0137dcb5f99ab674071ac2d690ac69704593cb4abbea56"
+dependencies = [
+ "lexical-parse-integer",
+ "lexical-util",
+]
+
+[[package]]
+name = "lexical-parse-integer"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a7a039f8fb9c19c996cd7b2fcce303c1b2874fe1aca544edc85c4a5f8489b34"
+dependencies = [
+ "lexical-util",
+]
+
+[[package]]
+name = "lexical-util"
+version = "1.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2604dd126bb14f13fb5d1bd6a66155079cb9fa655b37f875b3a742c705dbed17"
+
+[[package]]
+name = "lexical-write-float"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50c438c87c013188d415fbabbb1dceb44249ab81664efbd31b14ae55dabb6361"
+dependencies = [
+ "lexical-util",
+ "lexical-write-integer",
+]
+
+[[package]]
+name = "lexical-write-integer"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "409851a618475d2d5796377cad353802345cba92c867d9fbcde9cf4eac4e14df"
+dependencies = [
+ "lexical-util",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1537,10 +1922,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-bigint"
+version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367"
+dependencies = [
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
+name = "num-complex"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "num-conv"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "521739c6d2bac4aa25192232afe6841231376b2b26d4d9fae5ecf8ca5772e441"
+
+[[package]]
+name = "num-integer"
+version = "0.1.47"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ce2d95d4b3734dc35aa2f45e1aa22cd416814592a4f9d9205e11affd5b8e10b"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "num-traits"
@@ -3004,6 +3417,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tiny-keccak"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
+dependencies = [
+ "crunchy",
+]
+
+[[package]]
 name = "tinystr"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3039,7 +3461,19 @@ dependencies = [
  "mio",
  "pin-project-lite",
  "socket2",
+ "tokio-macros",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "tokio-macros"
+version = "2.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78773a2a397f451582ce068015985c33193cf6dea8b74d2a639fe457b2f07b0e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -3107,7 +3541,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100"
 dependencies = [
  "pin-project-lite",
+ "tracing-attributes",
  "tracing-core",
+]
+
+[[package]]
+name = "tracing-attributes"
+version = "0.1.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7490cfa5ec963746568740651ac6781f701c9c5ea257c58e057f3ba8cf69e8da"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]

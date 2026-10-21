@@ -35,3 +35,11 @@ blake3 = "1"
 
 [dev-dependencies]
 tempfile = "3"
+
+# Demo prototype only (examples/asapplanner_demo.rs): ASAPPlanner as the
+# runtime, at the rev ASAPQuery-backend pins. The lib above still uses
+# 3c31338; the two revs resolve as separate packages.
+asap-planner = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "7565c47e30609d9571d8a9a372bf5e195754b2bb", default-features = false, features = ["promql"] }
+asap-executor = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "7565c47e30609d9571d8a9a372bf5e195754b2bb" }
+futures = "0.3"
+tokio = { version = "1", features = ["rt", "macros"] }
