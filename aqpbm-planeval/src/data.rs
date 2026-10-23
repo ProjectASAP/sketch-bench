@@ -1,7 +1,7 @@
 //! The dataset: series laid out on a label hierarchy, one gauge sample and
 //! (optionally) one counter sample per series every `interval_ms`, values
-//! drawn by `aqpbm-datagen`, plus the exact answers the comparison is scored
-//! against.
+//! drawn by `aqpbm-datagen`, and the quantile and rank-error arithmetic the
+//! comparison scores quantiles with.
 //!
 //! `aqpbm-datagen` produces typed value columns with no time axis or labels,
 //! so the harness lays each `f64` column onto a time grid: row `i` is series
@@ -307,12 +307,6 @@ impl Dataset {
         self.spec.start_ms + j as i64 * self.spec.interval_ms
     }
 
-    /// Series `s`'s key ([`label_key`]), which matches it to both systems'
-    /// answers.
-    pub fn series_key(&self, s: usize) -> String {
-        label_key(self.labels[s].iter().map(|(n, v)| (n.as_str(), v.as_str())))
-    }
-
     /// Index range of points with `lo < t <= hi`.
     pub fn points_in(&self, lo_ms: i64, hi_ms: i64) -> std::ops::Range<usize> {
         let idx = |t: i64| -> usize {
@@ -375,13 +369,6 @@ impl Dataset {
             }
         }
         WriteRequest { timeseries }
-    }
-
-    /// Sorted gauge values of series `s` in the PromQL range `(end - window, end]`.
-    pub fn window(&self, s: usize, end_ms: i64, window_ms: i64) -> Vec<f64> {
-        let mut v = self.values[s][self.points_in(end_ms - window_ms, end_ms)].to_vec();
-        v.sort_by(f64::total_cmp);
-        v
     }
 }
 
@@ -446,7 +433,6 @@ mod tests {
         let d = Dataset::generate("m", None, flat(2), None, 1000, 1000, 10, 7).unwrap();
         // Points at 1000..=10000; (3000, 6000] holds 4000, 5000, 6000.
         assert_eq!(d.points_in(3000, 6000), 3..6);
-        assert_eq!(d.window(0, 6000, 3000).len(), 3);
     }
 
     /// Each child has one parent, and a level's values run across the level.

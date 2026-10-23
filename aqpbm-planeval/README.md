@@ -9,7 +9,9 @@ query latency, ingest and query throughput, and memory and CPU.
 One run takes a workload of queries, each with its own repeat interval. Per
 deployment configuration it first plans every query alone, which tells
 which queries the backend supports there, then plans the supported ones
-jointly and runs them. Accuracy is measured against Prometheus.
+jointly and runs them. Prometheus is the one reference: PromQL's semantics
+are Prometheus's, and it answers from the raw samples with no
+approximation. Each query is judged against its own accuracy requirement.
 
 ## Run
 
@@ -158,7 +160,27 @@ lockfile.
 
 Accuracy is measured against Prometheus, series by series. Both systems'
 output series are matched by their full label set, so a `by (service)`
-aggregation or a `topk` is compared group by group.
+aggregation or a `topk` is compared group by group. The harness does not
+evaluate PromQL itself.
+
+A quantile's requirement is a rank error, and Prometheus's answer, one
+interpolated value, does not give ASAP's rank. So for the two quantile
+shapes the harness asks Prometheus, at the same time, for the raw samples
+the quantile is taken over (its *rank basis*), and measures ASAP's rank in
+them:
+- `quantile_over_time(q, X[W])`: `X[W]`, one multiset per series;
+- `quantile [by|without (...)] (q, E)`: `E`, one multiset per group.
+
+As a check, it recomputes Prometheus's quantile from those samples
+(`prom_vs_raw_quantile_max_abs`); zero shows they are the samples
+Prometheus's answer came from. The rank-basis request is not timed.
+
+Each query is judged by its own requirement metric: rank error for `rank`,
+relative error to Prometheus for `relative`, absolute error for `absolute`.
+A query **meets** its requirement when the plan answered every evaluation,
+with the same series as Prometheus, and no value's error exceeded
+`max_error`. The planner's guarantee allows a failure probability, so one
+value over the bound is a miss here even when the guarantee holds.
 
 Per arm and query (`per_query.csv`, the one to read first):
 - whether the query is supported alone, why not, and its planning time and
@@ -170,21 +192,23 @@ Per arm and query (`per_query.csv`, the one to read first):
 - evaluations, how many the plan answered, and series only Prometheus
   answered (`missing`) or only ASAP (`extra`). For a `topk` these say
   whether the two systems picked the same series;
-- maximum and mean relative error, maximum absolute error, and for
-  `quantile_over_time(q, latency_ms[W])` the maximum rank error, measured on
-  the window's generated samples (the planner's own metric for it);
+- maximum and mean relative error, maximum absolute error, and for a
+  quantile the maximum rank error in its rank basis;
+- the requirement: ASAP's largest error in its metric, how many values were
+  checked and how many exceeded `max_error`, and whether the query met it
+  (`requirement_met`);
 - the median over its evaluations of each evaluation's median latency on
   each side (`--repeats` requests per evaluation, timed by the client).
 
 Per arm, query and evaluation time (`queries.csv`): HTTP status and
 `x-asap-execution`; series counts; matched, missing and extra series;
-errors; for a rank-checked quantile, `prom_vs_truth_max_abs`, which checks
-Prometheus against the harness's exact quantile; the latencies; and the
+errors; for a quantile, `prom_vs_raw_quantile_max_abs`; the requirement's
+largest error, values checked and violations; the latencies; and the
 watermark call's latency.
 
-Per output series (`answers.csv`): both values and their errors, and for a
-rank-checked quantile the window's sample count, the exact quantile and
-ASAP's rank error.
+Per output series (`answers.csv`): both values and their errors, the error
+in the requirement metric, and for a quantile the size of its multiset,
+Prometheus's quantile recomputed from it, and ASAP's rank error in it.
 
 Per arm and query alone (`probes.csv`): supported or not, the reason, the
 planning time, and the method and guarantee of the query's plan alone.
@@ -214,45 +238,52 @@ Per arm and batch (`summary.json`):
 Labels `region:2,service:4,instance:2`, services scaled in [1, 10], gauge
 and counter, 211,200 samples per system and batch. Every query a joint plan
 covered was answered by the plan at every evaluation, and no output series
-was missing or extra on either side. Errors are maxima over a query's
-evaluations against Prometheus; latencies are medians over its evaluations
-of each evaluation's median single-client latency. Prometheus's latency is
-from the `default` arm (the others agree within 0.1 ms, q01 within 0.8 ms).
+was missing or extra on either side. Every requirement is 0.01: rank error
+for the quantiles, relative error for the rest. "Max err" is ASAP's largest
+error in that metric over all the query's evaluations and series. Latencies
+are medians over its evaluations of each evaluation's median single-client
+latency. Prometheus's latency is from the `default` arm (the others agree
+within 0.3 ms).
 
-| Query | Every | `default`: method | max rel err | ASAP ms | `no_raw`: method | max rel err | ASAP ms | `no_raw_ignore_guarantees`: method | max rel err | max rank err | ASAP ms | Prom ms |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| q01 | 10m | KLL k=361, query time | 0.0059 | 116.8 | KLL k=361, ingestion | 0.0064 | 3.8 | DDSketch α=0.01, ingestion | 0.0094 | 0.0117 | 1.1 | 36.1 |
-| q02 | 1m | KLL k=361, query time | 0.0201 | 18.7 | KLL k=361, ingestion | 0.0227 | 3.6 | DDSketch α=0.01, ingestion | 0.0099 | 0.0150 | 1.3 | 5.8 |
-| q03 | 1m | exact Max, query time | 0 | 0.9 | exact Max, ingestion | 0 | 0.9 | same as `no_raw` | 0 | - | 0.9 | 2.9 |
-| q04 | 5m | exact Sum, Count, query time | 0 | 1.5 | exact Sum, Count, ingestion | 0 | 1.5 | same as `no_raw` | 0 | - | 1.5 | 7.1 |
-| q05 | 1m | exact Rate, Sum, query time | 0 | 0.8 | exact Rate at ingestion, Sum at query | 0 | 0.8 | same as `no_raw` | 0 | - | 0.8 | 1.9 |
-| q06 | 5m | exact Rate, Sum, query time | 0 | 0.8 | exact Rate at ingestion, Sum at query | 0 | 0.7 | same as `no_raw` | 0 | - | 0.8 | 2.9 |
-| q07 | 10m | exact Increase, query time | 0 | 0.9 | exact Increase, ingestion | 0 | 0.8 | same as `no_raw` | 0 | - | 0.8 | 13.2 |
-| q08 | 5m | exact Count, Sum, query time | 0 | 0.7 | exact Count at ingestion, Sum at query | 0 | 0.7 | same as `no_raw` | 0 | - | 0.7 | 2.8 |
-| q09 | 10m | exact Max, query time | 0 | 0.7 | exact Max at ingestion and query | 0 | 0.6 | same as `no_raw` | 0 | - | 0.6 | 7.0 |
-| q10 | 1m | KLL k=361, query time | 0.0491 | 1.3 | unsupported | - | - | unsupported | - | - | - | 1.3 |
+| Query | Every | Metric | `default`: method | max err | met | ASAP ms | `no_raw`: method | max err | met | ASAP ms | `no_raw_ignore_guarantees`: method | max err | over / checked | met | ASAP ms | Prom ms |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| q01 | 10m | rank | KLL k=361, query time | 0.0058 | yes | 115.8 | KLL k=361, ingestion | 0.0044 | yes | 3.8 | DDSketch α=0.01, ingestion | 0.0117 | 1 / 96 | **no** | 1.1 | 35.8 |
+| q02 | 1m | rank | KLL k=361, query time | 0.0017 | yes | 18.5 | KLL k=361, ingestion | 0.0017 | yes | 3.7 | DDSketch α=0.01, ingestion | 0.0150 | 29 / 1,616 | **no** | 1.3 | 5.8 |
+| q03 | 1m | relative | exact Max, query time | 0 | yes | 0.9 | exact Max, ingestion | 0 | yes | 0.9 | same as `no_raw` | 0 | 0 / 1,616 | yes | 0.9 | 2.8 |
+| q04 | 5m | relative | exact Sum, Count, query time | 0 | yes | 1.5 | exact Sum, Count, ingestion | 0 | yes | 1.5 | same as `no_raw` | 0 | 0 / 272 | yes | 1.5 | 7.1 |
+| q05 | 1m | relative | exact Rate, Sum, query time | 0 | yes | 0.8 | exact Rate at ingestion, Sum at query | 0 | yes | 0.8 | same as `no_raw` | 0 | 0 / 848 | yes | 0.8 | 1.9 |
+| q06 | 5m | relative | exact Rate, Sum, query time | 0 | yes | 0.8 | exact Rate at ingestion, Sum at query | 0 | yes | 0.8 | same as `no_raw` | 0 | 0 / 63 | yes | 0.8 | 2.9 |
+| q07 | 10m | relative | exact Increase, query time | 0 | yes | 0.9 | exact Increase, ingestion | 0 | yes | 0.8 | same as `no_raw` | 0 | 0 / 96 | yes | 0.8 | 13.3 |
+| q08 | 5m | relative | exact Count, Sum, query time | 0 | yes | 0.7 | exact Count at ingestion, Sum at query | 0 | yes | 0.7 | same as `no_raw` | 0 | 0 / 42 | yes | 0.7 | 2.8 |
+| q09 | 10m | relative | exact Max, query time | 0 | yes | 0.7 | exact Max at ingestion and query | 0 | yes | 0.7 | same as `no_raw` | 0 | 0 / 18 | yes | 0.7 | 7.0 |
+| q10 | 1m | rank | KLL k=361, query time | 0 | yes | 1.3 | unsupported | - | - | - | unsupported | - | - | - | - | 1.3 |
 
-`default_ignore_guarantees` selected the same methods as `default`, with
-the same errors and latencies up to sketch randomness. The rank error of
-q01 and q02 in the `default` and `no_raw` arms was at most 0.0061, within
-the planner's 0.0099. The joint plans:
+"0" for an exact plan is at most 3e-16, floating-point rounding.
+`default_ignore_guarantees` selected the same methods as `default` and met
+every requirement too. For every quantile, Prometheus's answer equals the
+quantile of the raw samples it returned for the rank basis
+(`prom_vs_raw_quantile_max_abs` is 0), so the rank errors are measured on
+the samples Prometheus used. The joint plans:
 
 | Arm | Batch | Queries | Plan time | Control-plane peak RSS |
 |---|---|---|---|---|
 | `default` | b1 | q01–q06 | 3.5 s | 58 MB |
-| `default` | b2 | q07–q10 | 0.5 s | 14 MB |
-| `no_raw` | b1 | q01–q06 | 0.1 s | 18 MB |
-| `no_raw` | b2 | q07–q09 | 0.0 s | 18 MB |
+| `default` | b2 | q07–q10 | 0.5 s | 27 MB |
+| `no_raw` | b1 | q01–q06 | 0.1 s | 31 MB |
+| `no_raw` | b2 | q07–q09 | 0.0 s | 34 MB |
 
-With 16 clients, the data plane served q01 at 92 queries per second in
-`default` and 698 in `no_raw`, against about 330 for Prometheus. It served
-more than Prometheus on q07, q08 and q09 (q09: about 6,100 against 2,200).
-On the other queries Prometheus served more (q03: 5,300 against 4,100;
-q05: 7,800 against 4,900), although the data plane's single-client latency
+With 16 clients, the data plane served q01 at 88 queries per second in
+`default` and 701 in `no_raw`, against about 340 for Prometheus. It served
+more than Prometheus on q07, q08 and q09 (q09: about 5,900 against 2,200).
+On the other queries Prometheus served more (q03: 5,200 against 4,200;
+q05: 8,300 against 4,500), although the data plane's single-client latency
 is lower on every exact query.
 
 ## Findings
 
+- **Every plan with a guarantee met its requirement, at every evaluation.**
+  That is 9 queries in `no_raw` and 10 in `default`, sketches and exact
+  plans alike.
 - **Ten of ten queries are supported alone with raw data kept, nine of ten
   without.** `quantile by (region) (0.99, latency_ms)`, an aggregation over
   an instant vector, has only query-time candidates, so without raw data it
@@ -266,17 +297,21 @@ is lower on every exact query.
   included, so the backend's pane-merged rate follows Prometheus's
   extrapolation on this data. The `topk` picks the same three services as
   Prometheus at every evaluation.
-- **The quantiles' relative error to Prometheus is not the guaranteed
-  metric.** q02 (p50 over 10 min, 600 samples) has a rank error of at most
-  0.0017, one sample, within the 0.0099 guarantee, yet a relative error of
-  up to 0.02. q10's p99 over 8 instant values per region differs from
-  Prometheus by up to 0.049, because Prometheus interpolates between the
-  values and KLL returns one of them; its rank error is not measured yet.
+- **A quantile's relative error to Prometheus says little about its
+  requirement.** q02 (p50 over 10 min, 600 samples) has a rank error of at
+  most 0.0017, one sample, yet a relative error of up to 0.020. q10's p99
+  over 8 instant values per region differs from Prometheus by up to 0.049,
+  yet its rank error is 0: KLL returns the largest of the 8 values, a
+  correct 0.99 quantile by rank, while Prometheus interpolates between the
+  two largest.
 - **With guarantees ignored and raw data not kept, the planner selects
-  DDSketch** for both quantiles. It bounds relative value error, not the
-  rank error asked for, and the measured rank error reached 0.0150.
+  DDSketch** for both `quantile_over_time` queries, and both miss their
+  requirement. DDSketch bounds relative value error, not the rank error
+  asked for: q01 exceeded 0.01 in 1 of 96 values (up to 0.0117) and q02 in
+  29 of 1,616 (up to 0.0150), while their relative error to Prometheus
+  stayed under 0.01.
 - **A query-time sketch is slower than Prometheus; an ingestion-time one is
-  faster.** q01 takes 117 ms with KLL built at query time from a 60 min raw
+  faster.** q01 takes 116 ms with KLL built at query time from a 60 min raw
   window read from Prometheus, against 36 ms for Prometheus and 3.8 ms with
   KLL built at ingestion.
 - **The data plane answers queries on one engine thread.** Ingestion,
@@ -293,9 +328,10 @@ is lower on every exact query.
 
 ## Known limits
 
-- **Accuracy is measured against Prometheus only**, plus rank error for
-  `quantile_over_time` over the gauge. The harness does not yet compute
-  every query's exact answer from the generated samples.
+- **Prometheus is the only reference.** If Prometheus and ASAP agree on a
+  wrong answer, the run cannot tell. Rank error is measured only for the two
+  quantile shapes above; another query whose requirement is a rank error is
+  not judged.
 - **Ten queries, one small dataset.** The numbers show the pipeline works and
   the order of magnitude, nothing more.
 - **ASAP answers are not bit-reproducible.** Samples and evaluation times
@@ -318,8 +354,9 @@ is lower on every exact query.
   `workloads/latency_p99_60m.json`: q01 alone.
 - `capabilities/no_raw.json`: DeploymentCapabilities of the `no_raw` arms.
 - `src/`: the `planeval` binary. It includes its own Remote Write v1 sender
-  (prost + snap, so it does not link the code under test), the dataset and
-  exact answers, the workload's queries, what a plan does per query,
+  (prost + snap, so it does not link the code under test), the dataset,
+  quantile and rank-error arithmetic, the workload's queries and their
+  rank bases, what a plan does per query,
   process management, and query timing.
 - `examples/asapplanner_demo.rs`: ASAPPlanner on its own, planner and
   executor in process with no backend or Prometheus

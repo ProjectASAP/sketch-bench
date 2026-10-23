@@ -18,6 +18,9 @@ pub struct Answer {
     /// Series key ([`crate::data::label_key`]: every label but `__name__`)
     /// -> value, for a vector result.
     pub values: BTreeMap<String, f64>,
+    /// Every result series' labels (with `__name__`, if any) and its values:
+    /// one for a vector, every sample's for a matrix (a range selector).
+    pub raw: Vec<(BTreeMap<String, String>, Vec<f64>)>,
     /// Request sent to body fully read, client side.
     pub latency_ms: f64,
 }
@@ -55,24 +58,40 @@ pub fn instant_query(
         .and_then(|e| e.as_str())
         .map(str::to_owned);
     let mut values = BTreeMap::new();
+    let mut raw = Vec::new();
+    // `[time, "value"]` -> value.
+    let parse = |point: &serde_json::Value| {
+        point
+            .get(1)
+            .and_then(|v| v.as_str())
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(f64::NAN)
+    };
     if let Some(result) = json.pointer("/data/result").and_then(|r| r.as_array()) {
         for item in result {
-            let key = item
+            let labels: BTreeMap<String, String> = item
                 .get("metric")
                 .and_then(|m| m.as_object())
                 .map(|m| {
-                    crate::data::label_key(
-                        m.iter()
-                            .filter_map(|(name, value)| Some((name.as_str(), value.as_str()?))),
-                    )
+                    m.iter()
+                        .filter_map(|(name, value)| {
+                            Some((name.clone(), value.as_str()?.to_owned()))
+                        })
+                        .collect()
                 })
                 .unwrap_or_default();
-            let value = item
-                .pointer("/value/1")
-                .and_then(|v| v.as_str())
-                .and_then(|v| v.parse::<f64>().ok())
-                .unwrap_or(f64::NAN);
-            values.insert(key, value);
+            let key = crate::data::label_key(labels.iter().map(|(n, v)| (n.as_str(), v.as_str())));
+            let points: Vec<f64> = match (item.get("value"), item.get("values")) {
+                (Some(point), _) => vec![parse(point)],
+                (None, Some(serde_json::Value::Array(series))) => {
+                    series.iter().map(parse).collect()
+                }
+                _ => Vec::new(),
+            };
+            if let Some(&value) = points.first().filter(|_| item.get("value").is_some()) {
+                values.insert(key, value);
+            }
+            raw.push((labels, points));
         }
     }
     Ok(Answer {
@@ -80,6 +99,7 @@ pub fn instant_query(
         execution,
         error,
         values,
+        raw,
         latency_ms,
     })
 }

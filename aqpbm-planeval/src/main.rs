@@ -18,7 +18,7 @@ mod promapi;
 mod queries;
 mod remote_write;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -457,7 +457,16 @@ struct QueryRow {
     rel_error_mean: Option<f64>,
     abs_error_max: Option<f64>,
     rank_error_max: Option<f64>,
-    prom_vs_truth_max_abs: Option<f64>,
+    /// For a quantile: Prometheus's answer against the quantile of the raw
+    /// samples it returned for the rank basis, the largest gap. Zero shows the
+    /// rank error is measured on the samples Prometheus's answer came from.
+    prom_vs_raw_quantile_max_abs: Option<f64>,
+    /// ASAP's error in the query's own requirement metric (rank, relative or
+    /// absolute, against Prometheus), the largest over the series; how many
+    /// series had one; and how many exceeded `max_error`.
+    requirement_error_max: Option<f64>,
+    requirement_checked: usize,
+    requirement_violations: usize,
     prom_latency_ms_first: f64,
     prom_latency_ms_median: f64,
     asap_latency_ms_first: f64,
@@ -480,11 +489,14 @@ struct AnswerRow {
     asap_value: Option<f64>,
     abs_error: Option<f64>,
     rel_error: Option<f64>,
-    /// For a rank-checked quantile: the window's sample count, the exact
-    /// Prometheus-style quantile, and ASAP's rank error.
-    window_samples: Option<usize>,
-    truth: Option<f64>,
+    /// For a quantile: how many raw samples Prometheus returned for this
+    /// series' multiset, their quantile computed the way Prometheus does, and
+    /// ASAP's rank error in them.
+    rank_basis_samples: Option<usize>,
+    prom_raw_quantile: Option<f64>,
     asap_rank_error: Option<f64>,
+    /// ASAP's error in the query's requirement metric.
+    requirement_error: Option<f64>,
 }
 
 /// One query's results in one arm, over all its evaluations.
@@ -517,6 +529,16 @@ struct PerQueryRow {
     rel_error_mean: Option<f64>,
     abs_error_max: Option<f64>,
     rank_error_max: Option<f64>,
+    prom_vs_raw_quantile_max_abs: Option<f64>,
+    /// ASAP's largest error in the requirement metric, the values checked,
+    /// and how many exceeded `max_error`.
+    requirement_error_max: Option<f64>,
+    requirement_checked: usize,
+    requirement_violations: usize,
+    /// Every evaluation answered by the plan with the same series as
+    /// Prometheus, at least one value checked, and none over `max_error`.
+    /// `None` when the query never ran or has no measurable requirement.
+    requirement_met: Option<bool>,
     /// Median over its evaluations of each evaluation's median latency.
     prom_latency_ms: Option<f64>,
     asap_latency_ms: Option<f64>,
@@ -580,8 +602,6 @@ struct Run<'a> {
     args: &'a Args,
     workload: &'a Value,
     data: &'a Dataset,
-    /// Series key -> series index.
-    series_index: HashMap<String, usize>,
     tl: &'a Timeline,
 }
 
@@ -601,16 +621,34 @@ struct Accuracy {
     rel_errors: Vec<f64>,
     abs_errors: Vec<f64>,
     rank_errors: Vec<f64>,
-    prom_vs_truth: Vec<f64>,
+    prom_vs_raw_quantile: Vec<f64>,
+    requirement_errors: Vec<f64>,
 }
 
+/// A quantile's raw samples from Prometheus, as one sorted multiset per
+/// output series ([`queries::RankBasis`]).
+fn rank_multisets(basis: &queries::RankBasis, raw: &promapi::Answer) -> BTreeMap<String, Vec<f64>> {
+    let mut sets: BTreeMap<String, Vec<f64>> = BTreeMap::new();
+    for (labels, values) in &raw.raw {
+        sets.entry(basis.grouping.key(labels))
+            .or_default()
+            .extend(values.iter().copied().filter(|v| v.is_finite()));
+    }
+    for set in sets.values_mut() {
+        set.sort_by(f64::total_cmp);
+    }
+    sets
+}
+
+/// Compares ASAP's answer with Prometheus's series by series. `rank` holds a
+/// quantile's multisets, which give its rank error.
 fn compare(
-    run: &Run,
     arm: &str,
     q: &QuerySpec,
     eval: i64,
     prom: &promapi::Answer,
     asap: &promapi::Answer,
+    rank: Option<&BTreeMap<String, Vec<f64>>>,
     answers: &mut Vec<AnswerRow>,
 ) -> Accuracy {
     let mut acc = Accuracy {
@@ -620,7 +658,8 @@ fn compare(
         rel_errors: Vec::new(),
         abs_errors: Vec::new(),
         rank_errors: Vec::new(),
-        prom_vs_truth: Vec::new(),
+        prom_vs_raw_quantile: Vec::new(),
+        requirement_errors: Vec::new(),
     };
     let keys: BTreeSet<&String> = prom.values.keys().chain(asap.values.keys()).collect();
     for key in keys {
@@ -643,19 +682,26 @@ fn compare(
             }
             _ => (None, None),
         };
-        let (mut window_samples, mut truth, mut asap_rank_error) = (None, None, None);
-        if let (Some((quantile, window_ms)), Some(&s)) = (q.rank_check, run.series_index.get(key)) {
-            let window = run.data.window(s, eval, window_ms);
-            window_samples = Some(window.len());
-            truth = prometheus_quantile(&window, quantile);
-            asap_rank_error = asap_value.and_then(|a| rank_error(&window, quantile, a));
-            if let (Some(p), Some(t)) = (prom_value, truth) {
-                acc.prom_vs_truth.push((p - t).abs());
+        let (mut rank_basis_samples, mut prom_raw_quantile, mut asap_rank_error) =
+            (None, None, None);
+        if let (Some(basis), Some(set)) = (&q.rank_basis, rank.and_then(|r| r.get(key))) {
+            rank_basis_samples = Some(set.len());
+            prom_raw_quantile = prometheus_quantile(set, basis.quantile);
+            asap_rank_error = asap_value.and_then(|a| rank_error(set, basis.quantile, a));
+            if let (Some(p), Some(r)) = (prom_value, prom_raw_quantile) {
+                acc.prom_vs_raw_quantile.push((p - r).abs());
             }
         }
+        let requirement_error = match q.accuracy_metric.as_deref() {
+            Some("rank") => asap_rank_error,
+            Some("relative") => rel_error,
+            Some("absolute") => abs_error,
+            _ => None,
+        };
         acc.abs_errors.extend(abs_error);
         acc.rel_errors.extend(rel_error);
         acc.rank_errors.extend(asap_rank_error);
+        acc.requirement_errors.extend(requirement_error);
         answers.push(AnswerRow {
             arm: arm.into(),
             query_id: q.id.clone(),
@@ -665,9 +711,10 @@ fn compare(
             asap_value,
             abs_error,
             rel_error,
-            window_samples,
-            truth,
+            rank_basis_samples,
+            prom_raw_quantile,
             asap_rank_error,
+            requirement_error,
         });
     }
     acc
@@ -822,13 +869,39 @@ fn run_batch(
             for _ in 0..args.repeats.max(1) {
                 asap_answers.push(promapi::instant_query(&client, &dp_url, &q.text, eval)?);
             }
+            // A quantile's raw samples, which its rank error is measured on:
+            // asked after the timed requests, so they do not count in latency.
+            let rank = match &q.rank_basis {
+                Some(basis) => {
+                    let raw = promapi::instant_query(&client, &prom_url, &basis.query, eval)?;
+                    ensure!(
+                        raw.status == 200,
+                        "{} rank basis {:?} at {eval}: {} {:?}",
+                        q.id,
+                        basis.query,
+                        raw.status,
+                        raw.error
+                    );
+                    Some(rank_multisets(basis, &raw))
+                }
+                None => None,
+            };
             let prom_first = &prom_answers[0];
             let asap_first = &asap_answers[0];
             asked += 1;
             if asap_first.execution.as_deref() == Some("plan") {
                 answered += 1;
             }
-            let acc = compare(run, arm, q, eval, prom_first, asap_first, &mut rows.answers);
+            let acc = compare(
+                arm,
+                q,
+                eval,
+                prom_first,
+                asap_first,
+                rank.as_ref(),
+                &mut rows.answers,
+            );
+            let limit = q.max_error.unwrap_or(f64::INFINITY);
             let mut prom_lat: Vec<f64> = prom_answers.iter().map(|a| a.latency_ms).collect();
             let mut asap_lat: Vec<f64> = asap_answers.iter().map(|a| a.latency_ms).collect();
             let row = QueryRow {
@@ -849,7 +922,14 @@ fn run_batch(
                 rel_error_mean: mean(&acc.rel_errors),
                 abs_error_max: max(&acc.abs_errors),
                 rank_error_max: max(&acc.rank_errors),
-                prom_vs_truth_max_abs: max(&acc.prom_vs_truth),
+                prom_vs_raw_quantile_max_abs: max(&acc.prom_vs_raw_quantile),
+                requirement_error_max: max(&acc.requirement_errors),
+                requirement_checked: acc.requirement_errors.len(),
+                requirement_violations: acc
+                    .requirement_errors
+                    .iter()
+                    .filter(|&&e| e > limit)
+                    .count(),
                 prom_latency_ms_first: prom_lat[0],
                 prom_latency_ms_median: median(&mut prom_lat),
                 asap_latency_ms_first: asap_lat[0],
@@ -1081,6 +1161,18 @@ fn per_query_rows(all: &[QuerySpec], arms: &[ArmReport], rows: &Rows) -> Vec<Per
                 .sum();
             let mut prom_lat: Vec<f64> = evals.iter().map(|r| r.prom_latency_ms_median).collect();
             let mut asap_lat: Vec<f64> = evals.iter().map(|r| r.asap_latency_ms_median).collect();
+            let answered_by_plan = evals.iter().filter(|r| r.asap_execution == "plan").count();
+            let missing: usize = evals.iter().map(|r| r.missing).sum();
+            let extra: usize = evals.iter().map(|r| r.extra).sum();
+            let requirement_checked: usize = evals.iter().map(|r| r.requirement_checked).sum();
+            let requirement_violations: usize =
+                evals.iter().map(|r| r.requirement_violations).sum();
+            let requirement_met = (!evals.is_empty() && requirement_checked > 0).then_some(
+                answered_by_plan == evals.len()
+                    && missing == 0
+                    && extra == 0
+                    && requirement_violations == 0,
+            );
             out.push(PerQueryRow {
                 arm: arm.name.clone(),
                 query_id: q.id.clone(),
@@ -1100,13 +1192,18 @@ fn per_query_rows(all: &[QuerySpec], arms: &[ArmReport], rows: &Rows) -> Vec<Per
                 joint_guarantee: joint.map(|m| m.guarantee.clone()).unwrap_or_default(),
                 accepted_without_guarantee: joint.map(|m| m.accepted_without_guarantee),
                 evaluations: evals.len(),
-                answered_by_plan: evals.iter().filter(|r| r.asap_execution == "plan").count(),
-                missing: evals.iter().map(|r| r.missing).sum(),
-                extra: evals.iter().map(|r| r.extra).sum(),
+                answered_by_plan,
+                missing,
+                extra,
                 rel_error_max: max(&collect(|r| r.rel_error_max)),
                 rel_error_mean: (rel_n > 0).then(|| rel_sum / rel_n as f64),
                 abs_error_max: max(&collect(|r| r.abs_error_max)),
                 rank_error_max: max(&collect(|r| r.rank_error_max)),
+                prom_vs_raw_quantile_max_abs: max(&collect(|r| r.prom_vs_raw_quantile_max_abs)),
+                requirement_error_max: max(&collect(|r| r.requirement_error_max)),
+                requirement_checked,
+                requirement_violations,
+                requirement_met,
                 prom_latency_ms: (!prom_lat.is_empty()).then(|| median(&mut prom_lat)),
                 asap_latency_ms: (!asap_lat.is_empty()).then(|| median(&mut asap_lat)),
             });
@@ -1149,7 +1246,7 @@ fn main() -> anyhow::Result<()> {
         &fs::read_to_string(&args.workload)
             .with_context(|| format!("reading {}", args.workload.display()))?,
     )?;
-    let mut all = queries::read_queries(&workload, &args.gauge_metric)?;
+    let mut all = queries::read_queries(&workload)?;
     if !args.only.is_empty() {
         for id in &args.only {
             ensure!(
@@ -1266,7 +1363,6 @@ fn main() -> anyhow::Result<()> {
         args: &args,
         workload: &workload,
         data: &data,
-        series_index: (0..series).map(|s| (data.series_key(s), s)).collect(),
         tl: &tl,
     };
     let mut rows = Rows::default();
@@ -1312,12 +1408,12 @@ fn main() -> anyhow::Result<()> {
     )?;
 
     println!(
-        "| arm | query | alone | batch | method | guarantee | evals | by plan | miss/extra | max rel err | mean rel err | max rank err | Prom ms | ASAP ms |"
+        "| arm | query | alone | batch | method | guarantee | evals | by plan | miss/extra | max rel err | mean rel err | max rank err | required | max err | over / checked | met | Prom ms | ASAP ms |"
     );
-    println!("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+    println!("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
     for r in &per_query {
         println!(
-            "| {} | {} `{}` | {} | {} | {} | {} | {} | {} | {}/{} | {} | {} | {} | {} | {} |",
+            "| {} | {} `{}` | {} | {} | {} | {} | {} | {} | {}/{} | {} | {} | {} | {} <= {} | {} | {} / {} | {} | {} | {} |",
             r.arm,
             r.query_id,
             r.query,
@@ -1342,6 +1438,16 @@ fn main() -> anyhow::Result<()> {
             fmt_opt(r.rel_error_max, 5),
             fmt_opt(r.rel_error_mean, 5),
             fmt_opt(r.rank_error_max, 5),
+            r.accuracy_metric,
+            fmt_opt(r.max_error, 3),
+            fmt_opt(r.requirement_error_max, 5),
+            r.requirement_violations,
+            r.requirement_checked,
+            match r.requirement_met {
+                Some(true) => "yes",
+                Some(false) => "no",
+                None => "-",
+            },
             fmt_opt(r.prom_latency_ms, 2),
             fmt_opt(r.asap_latency_ms, 2),
         );

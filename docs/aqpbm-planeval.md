@@ -27,8 +27,11 @@ in [`aqpbm-planeval/README.md`](../aqpbm-planeval/README.md).
   which tells whether the backend supports it; the supported ones are then
   planned jointly in batches, each batch run on a fresh pair of systems.
 - **Reference.** Prometheus's answer, series by series, matched by label
-  set. For `quantile_over_time` over the gauge the harness also computes
-  the exact answer and the rank error from the generated samples.
+  set: PromQL's semantics are Prometheus's, and it answers from raw samples.
+  The harness does not evaluate PromQL. For a quantile, whose requirement
+  is a rank error, it also asks Prometheus for the raw samples the quantile
+  is taken over and measures ASAP's rank in them. Each query is judged
+  against its own requirement metric.
 - **Measurement.** Query latency and throughput are timed by the client;
   ingest throughput, memory and CPU are read from outside each process with
   `aqpbm-core`'s timer and `/proc`.
@@ -38,9 +41,6 @@ in [`aqpbm-planeval/README.md`](../aqpbm-planeval/README.md).
 
 ## Next
 
-- The harness's own exact answer for every query type, from the generated
-  samples by PromQL semantics, compared with Prometheus's type by type, so
-  each query has two references and their agreement is known.
 - A report per query that a user can read without the raw tables.
 
 The earlier in-process design of this crate, which interpreted ASAPPlanner's
