@@ -7,8 +7,8 @@ use std::rc::Rc;
 
 use sketch_bench::request::{Dtype, Requirement};
 use sketch_bench::wrappers::{
-    BuildError, Folds, InsertBody, InsertStepBody, ParallelInsertBody, PrepareBody, QueryBody,
-    QueryPass, StepPass,
+    interleave, BuildError, Folds, InsertBody, InsertStepBody, MergeSplit, ParallelInsertBody,
+    PrepareBody, QueryBody, QueryPass, StepPass,
 };
 
 /// A row that cannot be built at the requested config says so in its own words;
@@ -21,14 +21,14 @@ use aqpbm_core::accuracy::frequency::FrequencyGT;
 use aqpbm_core::accuracy::keyed::{
     KeyedCardinalityGT, KeyedEntropyGT, KeyedL1NormGT, KeyedL2NormGT,
 };
-use aqpbm_core::accuracy::quantile::RankErrorGT;
+use aqpbm_core::accuracy::quantile::{RankErrorGT, RelativeValueErrorGT};
 use aqpbm_core::accuracy::subpopulation::{
-    SubpopCardinalityGT, SubpopEntropyGT, SubpopFrequencyGT, SubpopL1NormGT, SubpopL2NormGT,
-    SubpopRankErrorGT,
+    GroupKey, SubpopCardinalityGT, SubpopCdfErrorGT, SubpopEntropyGT, SubpopFrequencyGT,
+    SubpopL1NormGT, SubpopL2NormGT, SubpopRankErrorGT, SubpopSumGT,
 };
 use aqpbm_core::accuracy::topk::TopkGT;
 use aqpbm_core::accuracy::Score;
-use aqpbm_core::accuracy::{questions, CountedValue, GroundTruth};
+use aqpbm_core::accuracy::{questions, CountedValue, GroundTruth, PerGroup};
 use aqpbm_core::error::RunError;
 use aqpbm_core::measure::{
     record_calls, runs_for, Measurement, Pass as CorePass, Report, RunOutcome, MIN_MERGE_SHARDS,
@@ -36,9 +36,6 @@ use aqpbm_core::measure::{
 use aqpbm_core::metrics::{Metric, Operation};
 use aqpbm_datagen::{ColumnItem, GeneratedTable, TableDescription};
 use sketch_bench::wrappers::frequency_value::FrequencyValue;
-
-/// The label column every subpopulation comparator scores over.
-const SCORED_LABEL_COLUMN: usize = 0;
 
 const KEYED_KEY_COLUMN: usize = 0;
 
@@ -130,6 +127,8 @@ fn binding(variant: &str, library: &str) -> Option<RowBinding> {
         ("hydra-hll", "polars") => row_hydra_hll_polars,
         ("hydra-kll", "lib") => row_hydra_kll_lib,
         ("hydra-kll", "polars") => row_hydra_kll_polars,
+        ("hydra-kll-cdf", "lib") => row_hydra_kll_cdf_lib,
+        ("hydra-kll-cdf", "polars") => row_hydra_kll_cdf_polars,
         ("hydra-univmon-cardinality", "lib") => row_hydra_univmon_cardinality_lib,
         ("hydra-univmon-cardinality", "polars") => row_hydra_univmon_cardinality_polars,
         ("hydra-univmon-l1-norm", "lib") => row_hydra_univmon_l1_norm_lib,
@@ -138,6 +137,8 @@ fn binding(variant: &str, library: &str) -> Option<RowBinding> {
         ("hydra-univmon-l2-norm", "polars") => row_hydra_univmon_l2_norm_polars,
         ("hydra-univmon-entropy", "lib") => row_hydra_univmon_entropy_lib,
         ("hydra-univmon-entropy", "polars") => row_hydra_univmon_entropy_polars,
+        ("hydra-univmon-sum", "lib") => row_hydra_univmon_sum_lib,
+        ("hydra-univmon-sum", "polars") => row_hydra_univmon_sum_polars,
         ("univmon-cardinality", "lib") => row_univmon_cardinality_lib,
         ("univmon-l1-norm", "lib") => row_univmon_l1_norm_lib,
         ("univmon-l1-norm", "oxide") => row_univmon_l1_norm_oxide,
@@ -145,6 +146,15 @@ fn binding(variant: &str, library: &str) -> Option<RowBinding> {
         ("univmon-l2-norm", "oxide") => row_univmon_l2_norm_oxide,
         ("univmon-entropy", "lib") => row_univmon_entropy_lib,
         ("univmon-entropy", "oxide") => row_univmon_entropy_oxide,
+        ("univmon-topk", "lib") => row_univmon_topk_lib,
+        ("countsketch-heap-topk-fastpath-vector2d", "lib") => {
+            row_countsketch_heap_topk_fastpath_vector2d_lib
+        }
+        ("exact-sum", "exact") => row_exact_sum,
+        ("exact-min", "exact") => row_exact_min,
+        ("exact-max", "exact") => row_exact_max,
+        ("exact-increase", "exact") => row_exact_increase,
+        ("exact-delta-set", "exact") => row_exact_delta_set,
         _ => return None,
     })
 }
@@ -153,6 +163,7 @@ mod cms;
 mod cms_heap;
 mod cs;
 mod dd;
+mod exact;
 mod fixed_matrix;
 mod hll;
 mod hydra;
@@ -167,6 +178,7 @@ use cms::*;
 use cms_heap::*;
 use cs::*;
 use dd::*;
+use exact::*;
 use fixed_matrix::*;
 use hll::*;
 use hydra::*;

@@ -2,22 +2,66 @@
 //! `FastPath`/`RegularPath` hashing — no `FixedMatrix` or parallel-insert
 //! variant, see the follow-up issue linked from #95.
 
-use crate::params::{CmsHeapParams, ParamSet};
+use crate::params::{CmsHeapParams, CsHeapParams, ParamSet};
 use crate::wrappers::frequency_value::FrequencyValue;
 use crate::wrappers::{require_positive, BuildError, Pass, QueryPass, Shared, StepPass};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use asap_sketchlib::input::HHItem;
 use asap_sketchlib::{heap_item_to_sketch_input, CMSHeap, FastPath, RegularPath, Vector2D};
 
-/// The heap's fixed capacity, and the `k` every TopK-capability row grades
-/// against. The two are the same constant on purpose (see #95's design-decision
-/// comment): a `CMSHeap` cannot answer a `k` bigger than its own capacity, so
-/// letting grading `k` and construction capacity diverge — whether by a
-/// `--config` field or a second constant — would let them silently disagree.
-/// Changing this means editing it and rebuilding, not a config sweep; the
-/// follow-up issue tracks loosening that.
-pub const CMS_HEAP_TOP_K: usize = 32;
+/// The `k` a top-k row answers and is graded at when `--config` sets no
+/// `topk_k`, and the heap's capacity when it sets no `heap`. A larger heap
+/// (`heap=`) keeps more candidates, so a merge of `m` heaps of `m · k` loses
+/// fewer of the true top `k`; the answer is still its heaviest `k`. A heap
+/// smaller than `k` couldn't answer, and is refused at build.
+pub const TOPK_K: usize = 32;
+
+/// `(heap capacity, answered k)` for `heap` and `topk_k`: `k` defaults to
+/// `TOPK_K`, the heap to `k`; a heap smaller than `k` is refused.
+pub fn heap_capacity(
+    name: &str,
+    heap: Option<usize>,
+    topk_k: Option<usize>,
+) -> Result<(usize, usize), BuildError> {
+    let k = topk_k.unwrap_or(TOPK_K);
+    if k == 0 {
+        return Err(BuildError(format!("{name}: topk_k must be positive")));
+    }
+    let heap = heap.unwrap_or(k);
+    if heap < k {
+        return Err(BuildError(format!(
+            "{name}: heap={heap} is smaller than the k={k} it answers"
+        )));
+    }
+    Ok((heap, k))
+}
+
+/// The `k` a top-k row with `params` answers: its `topk_k`, else `TOPK_K`.
+/// Rows without the knob (UnivMon, exact) answer `TOPK_K`.
+pub fn answered_k(params: &ParamSet) -> usize {
+    params
+        .parse::<CmsHeapParams>()
+        .ok()
+        .and_then(|p| p.topk_k)
+        .or_else(|| params.parse::<CsHeapParams>().ok().and_then(|p| p.topk_k))
+        .unwrap_or(TOPK_K)
+}
+
+/// A heap's contents, heaviest first, cut to the `k` a top-k query answers.
+pub fn top_k<'a>(items: impl Iterator<Item = &'a HHItem>, k: usize) -> Vec<&'a HHItem> {
+    let mut items: Vec<&HHItem> = items.collect();
+    let heaviest = |item: &&HHItem| std::cmp::Reverse(item.count);
+    // Select the heaviest k without sorting the rest: the query's cost is
+    // what's benchmarked.
+    if items.len() > k {
+        items.select_nth_unstable_by_key(k, heaviest);
+        items.truncate(k);
+    }
+    items.sort_unstable_by_key(heaviest);
+    items
+}
 
 /// One key read off the heap, paired with its estimated count. `TopkGT<T>`
 /// scores a `Vec` of these against the exact top-k.
@@ -32,6 +76,8 @@ pub struct CmsHeapLibVector2dFast {
     inner: CMSHeap<Vector2D<i32>, FastPath>,
     rows: usize,
     cols: usize,
+    heap: usize,
+    k: usize,
 }
 
 pub fn build_cms_heap_lib_vector2d_fast(
@@ -40,18 +86,21 @@ pub fn build_cms_heap_lib_vector2d_fast(
     let p: CmsHeapParams = config.parse()?;
     require_positive("asap CMSHeap Vector2D FastPath", "rows", p.rows)?;
     require_positive("asap CMSHeap Vector2D FastPath", "cols", p.cols)?;
+    let (heap, k) = heap_capacity("asap CMSHeap Vector2D FastPath", p.heap, p.topk_k)?;
     Ok(CmsHeapLibVector2dFast {
-        inner: CMSHeap::<Vector2D<i32>, FastPath>::new(p.rows, p.cols, CMS_HEAP_TOP_K),
+        inner: CMSHeap::<Vector2D<i32>, FastPath>::new(p.rows, p.cols, heap),
         rows: p.rows,
         cols: p.cols,
+        heap,
+        k,
     })
 }
 
+/// The counter matrix plus a full heap of `heap` `HHItem`s, counted the way
+/// UnivMon counts its heaps so the TopK rows compare like for like.
 pub fn memory_cms_heap_lib_vector2d_fast(sketch: &CmsHeapLibVector2dFast) -> usize {
-    // The heap holds at most `CMS_HEAP_TOP_K` items — negligible next to the
-    // counter matrix, and not counted here, matching how the plain CMS rows
-    // don't count their own bookkeeping fields either.
     sketch.rows * sketch.cols * std::mem::size_of::<i32>()
+        + crate::wrappers::hh_heap_footprint(sketch.heap)
 }
 
 // ---------- asap_sketchlib: Vector2D + RegularPath ----------
@@ -59,6 +108,8 @@ pub struct CmsHeapLibVector2dRegular {
     inner: CMSHeap<Vector2D<i32>, RegularPath>,
     rows: usize,
     cols: usize,
+    heap: usize,
+    k: usize,
 }
 
 pub fn build_cms_heap_lib_vector2d_regular(
@@ -67,15 +118,20 @@ pub fn build_cms_heap_lib_vector2d_regular(
     let p: CmsHeapParams = config.parse()?;
     require_positive("asap CMSHeap Vector2D RegularPath", "rows", p.rows)?;
     require_positive("asap CMSHeap Vector2D RegularPath", "cols", p.cols)?;
+    let (heap, k) = heap_capacity("asap CMSHeap Vector2D RegularPath", p.heap, p.topk_k)?;
     Ok(CmsHeapLibVector2dRegular {
-        inner: CMSHeap::<Vector2D<i32>, RegularPath>::new(p.rows, p.cols, CMS_HEAP_TOP_K),
+        inner: CMSHeap::<Vector2D<i32>, RegularPath>::new(p.rows, p.cols, heap),
         rows: p.rows,
         cols: p.cols,
+        heap,
+        k,
     })
 }
 
+/// As [`memory_cms_heap_lib_vector2d_fast`].
 pub fn memory_cms_heap_lib_vector2d_regular(sketch: &CmsHeapLibVector2dRegular) -> usize {
     sketch.rows * sketch.cols * std::mem::size_of::<i32>()
+        + crate::wrappers::hh_heap_footprint(sketch.heap)
 }
 
 // ---------- insert / insert_step (FastPath) ----------
@@ -174,11 +230,24 @@ pub fn query_cms_heap_lib_vector2d_fast_estimate<T: FrequencyValue>(
     probes: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<u64>>, BuildError> {
+    merge_query_cms_heap_lib_vector2d_fast_estimate(params, items, probes, 1, passes)
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_cms_heap_lib_vector2d_fast_estimate<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<T>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<u64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let mut sketch = build_cms_heap_lib_vector2d_fast(params)?;
-        for v in items.iter() {
-            sketch.inner.insert(&v.data_input());
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = cms_heap_lib_vector2d_fast_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch.inner.merge(&other.inner);
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
@@ -199,11 +268,24 @@ pub fn query_cms_heap_lib_vector2d_regular_estimate<T: FrequencyValue>(
     probes: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<u64>>, BuildError> {
+    merge_query_cms_heap_lib_vector2d_regular_estimate(params, items, probes, 1, passes)
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_cms_heap_lib_vector2d_regular_estimate<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<T>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<u64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let mut sketch = build_cms_heap_lib_vector2d_regular(params)?;
-        for v in items.iter() {
-            sketch.inner.insert(&v.data_input());
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = cms_heap_lib_vector2d_regular_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch.inner.merge(&other.inner);
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
@@ -220,38 +302,52 @@ pub fn query_cms_heap_lib_vector2d_regular_estimate<T: FrequencyValue>(
 
 // ---------- query: heap dump (TopK capability) ----------
 //
-// One `()` probe, one answer: the whole ranked heap, read off in one call.
-// `TopkGT`'s `probes()` hands back `vec![()]`, so `probes` here is always
-// length 1 — there is nothing per-item to loop over the way the estimate
-// queries do.
+// One answer per `()` probe: the whole ranked heap, read off in one call.
+// Every probe is the same question; `TopkGT` repeats it so a pass's timed
+// region sits well above the timer floor, as `CardinalityGT` does for HLL.
 
 pub fn query_cms_heap_lib_vector2d_fast_topk<T: FrequencyValue>(
     params: &ParamSet,
     items: Rc<Vec<T>>,
-    _probes: Rc<Vec<()>>,
+    probes: Rc<Vec<()>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<TopkAnswer<T>>>, BuildError> {
+    merge_query_cms_heap_lib_vector2d_fast_topk(params, items, probes, 1, passes)
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_cms_heap_lib_vector2d_fast_topk<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<()>>,
+    shards: usize,
     passes: usize,
 ) -> Result<Vec<QueryPass<TopkAnswer<T>>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let mut sketch = build_cms_heap_lib_vector2d_fast(params)?;
-        for v in items.iter() {
-            sketch.inner.insert(&v.data_input());
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = cms_heap_lib_vector2d_fast_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch.inner.merge(&other.inner);
         }
+        let probes = probes.clone();
         out.push(Box::new(move || {
-            let ranked: TopkAnswer<T> = sketch
-                .inner
-                .heap()
-                .heap()
-                .iter()
-                .map(|item| {
-                    (
-                        T::from_data_input(&heap_item_to_sketch_input(&item.key)),
-                        item.count as u64,
-                    )
-                })
-                .collect();
+            let mut answers = Vec::with_capacity(probes.len());
+            for _p in probes.iter() {
+                let ranked: TopkAnswer<T> = top_k(sketch.inner.heap().heap().iter(), sketch.k)
+                    .into_iter()
+                    .map(|item| {
+                        (
+                            T::from_data_input(&heap_item_to_sketch_input(&item.key)),
+                            item.count as u64,
+                        )
+                    })
+                    .collect();
+                answers.push(ranked);
+            }
             let footprint = memory_cms_heap_lib_vector2d_fast(&sketch);
-            (vec![ranked], footprint)
+            (answers, footprint)
         }) as QueryPass<TopkAnswer<T>>);
     }
     Ok(out)
@@ -260,30 +356,45 @@ pub fn query_cms_heap_lib_vector2d_fast_topk<T: FrequencyValue>(
 pub fn query_cms_heap_lib_vector2d_regular_topk<T: FrequencyValue>(
     params: &ParamSet,
     items: Rc<Vec<T>>,
-    _probes: Rc<Vec<()>>,
+    probes: Rc<Vec<()>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<TopkAnswer<T>>>, BuildError> {
+    merge_query_cms_heap_lib_vector2d_regular_topk(params, items, probes, 1, passes)
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_cms_heap_lib_vector2d_regular_topk<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<()>>,
+    shards: usize,
     passes: usize,
 ) -> Result<Vec<QueryPass<TopkAnswer<T>>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let mut sketch = build_cms_heap_lib_vector2d_regular(params)?;
-        for v in items.iter() {
-            sketch.inner.insert(&v.data_input());
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = cms_heap_lib_vector2d_regular_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch.inner.merge(&other.inner);
         }
+        let probes = probes.clone();
         out.push(Box::new(move || {
-            let ranked: TopkAnswer<T> = sketch
-                .inner
-                .heap()
-                .heap()
-                .iter()
-                .map(|item| {
-                    (
-                        T::from_data_input(&heap_item_to_sketch_input(&item.key)),
-                        item.count as u64,
-                    )
-                })
-                .collect();
+            let mut answers = Vec::with_capacity(probes.len());
+            for _p in probes.iter() {
+                let ranked: TopkAnswer<T> = top_k(sketch.inner.heap().heap().iter(), sketch.k)
+                    .into_iter()
+                    .map(|item| {
+                        (
+                            T::from_data_input(&heap_item_to_sketch_input(&item.key)),
+                            item.count as u64,
+                        )
+                    })
+                    .collect();
+                answers.push(ranked);
+            }
             let footprint = memory_cms_heap_lib_vector2d_regular(&sketch);
-            (vec![ranked], footprint)
+            (answers, footprint)
         }) as QueryPass<TopkAnswer<T>>);
     }
     Ok(out)
@@ -293,7 +404,7 @@ pub fn query_cms_heap_lib_vector2d_regular_topk<T: FrequencyValue>(
 //
 // Heavier than plain CMS's merge: after folding the counter matrices,
 // `CMSHeap::merge` re-estimates every heap candidate from both sides (up to
-// 2 * CMS_HEAP_TOP_K `estimate()` calls) to rebuild the merged heap. Not a
+// 2 * heap `estimate()` calls) to rebuild the merged heap. Not a
 // pure cell-fold the way plain CMS merge is — see the registry description.
 
 pub fn merge_cms_heap_lib_vector2d_fast<T: FrequencyValue>(

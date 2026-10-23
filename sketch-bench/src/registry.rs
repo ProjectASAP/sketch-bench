@@ -143,8 +143,9 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::MEMORY),
     },
     // -------- CMS + heap (frequency, and top-k) --------
-    // A separate algorithm from `cms`: `CmsHeapParams` has no `top_k` (it's a
-    // compile-time constant, see wrappers::cms_heap::sketchlib::CMS_HEAP_TOP_K),
+    // A separate algorithm from `cms`: `CmsHeapParams` adds the heap's
+    // capacity (`heap`) and the answered k (`topk_k`, default
+    // wrappers::cms_heap::sketchlib::TOPK_K),
     // so it's a different knob set, and `CMSHeap` answers two different
     // questions (per-key frequency, and top-k), so it gets two rows per
     // backend instead of one. Only `Vector2D` x {FastPath, RegularPath}: no
@@ -311,6 +312,23 @@ pub const REGISTRY: &[SketchId] = &[
         metrics: MetricsMask::THROUGHPUT
             .union(MetricsMask::CPU)
             .union(MetricsMask::MEMORY),
+    },
+    // -------- CountSketch + heap (top-k) --------
+    SketchId {
+        algorithm: "countsketch-heap",
+        variant: "countsketch-heap-topk-fastpath-vector2d",
+        library: "lib",
+        description: "asap CSHeap, Vector2D, FastPath — heap dump, top-k query",
+        capability: Capability::TopK,
+        comparator: Some("topk"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
     },
     // -------- HLL (cardinality) --------
     // The three `lib` precisions are one entry: one variant at one library, with
@@ -502,7 +520,7 @@ pub const REGISTRY: &[SketchId] = &[
         library: "lib",
         description: "asap_sketchlib::DDSketch: relative-error buckets, alpha in (0, 1)",
         capability: Capability::Quantile,
-        comparator: Some("rank-error"),
+        comparator: Some("relative-value-error"),
         operations: OperationMask::INSERT
             .union(OperationMask::QUERY)
             .union(OperationMask::MERGE),
@@ -518,7 +536,7 @@ pub const REGISTRY: &[SketchId] = &[
         library: "oxide",
         description: "sketch_oxide::quantiles::DDSketch: relative-error buckets, alpha in (0, 1)",
         capability: Capability::Quantile,
-        comparator: Some("rank-error"),
+        comparator: Some("relative-value-error"),
         operations: OperationMask::INSERT
             .union(OperationMask::QUERY)
             .union(OperationMask::MERGE),
@@ -661,6 +679,38 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
+        algorithm: "hydra-kll",
+        variant: "hydra-kll-cdf",
+        library: "lib",
+        description: "asap_sketchlib::Hydra over KLL cells: Cdf(x) per subpopulation",
+        capability: Capability::SubpopCdf,
+        comparator: Some("subpop-cdf-error"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "hydra-kll",
+        variant: "hydra-kll-cdf",
+        library: "polars",
+        description: "polars exact: sorted values per label subset, share at or below x",
+        capability: Capability::SubpopCdf,
+        comparator: Some("subpop-cdf-error"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::PREPARE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
         algorithm: "hydra-univmon",
         variant: "hydra-univmon-cardinality",
         library: "lib",
@@ -789,6 +839,38 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
+        algorithm: "hydra-univmon",
+        variant: "hydra-univmon-sum",
+        library: "lib",
+        description: "asap_sketchlib::Hydra over UnivMon cells, each value inserted with itself as count: calc_l1 per subpopulation",
+        capability: Capability::SubpopSum,
+        comparator: Some("subpop-sum"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "hydra-univmon",
+        variant: "hydra-univmon-sum",
+        library: "polars",
+        description: "polars exact: group_by(subset).agg(v.sum()) over every label subset",
+        capability: Capability::SubpopSum,
+        comparator: Some("subpop-sum"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::PREPARE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
         algorithm: "univmon",
         variant: "univmon-cardinality",
         library: "lib",
@@ -891,6 +973,108 @@ pub const REGISTRY: &[SketchId] = &[
         description: "sketch_oxide::universal::UnivMon: estimate_entropy, over its sampled layers",
         capability: Capability::KeyedEntropy,
         comparator: Some("keyed-entropy"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "univmon",
+        variant: "univmon-topk",
+        library: "lib",
+        description:
+            "asap_sketchlib::UnivMon: layer-0 heap, top-k over a one-column stream (weight 1)",
+        capability: Capability::TopK,
+        comparator: Some("topk"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    // -------- exact multi-subpopulation accumulators (as ASAPQuery's) --------
+    // Grouped input: every column before the value is a label. `exact-sum`
+    // also serves count (fed 1 per sample). Min and max are separate rows, as
+    // ASAPQuery's MinMax sub-types, so neither can answer for the other.
+    SketchId {
+        algorithm: "exact",
+        variant: "exact-sum",
+        library: "exact",
+        description: "per-group sum (count: sum of 1s)",
+        capability: Capability::SumOrCount,
+        comparator: Some("sum-or-count"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "exact",
+        variant: "exact-min",
+        library: "exact",
+        description: "per-group min (ASAPQuery MinMax, sub_type min)",
+        capability: Capability::Min,
+        comparator: Some("min"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "exact",
+        variant: "exact-max",
+        library: "exact",
+        description: "per-group max (ASAPQuery MinMax, sub_type max)",
+        capability: Capability::Max,
+        comparator: Some("max"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "exact",
+        variant: "exact-increase",
+        library: "exact",
+        description:
+            "per-group counter increase, ASAPQuery IncreaseAccumulator (resets, timestamps)",
+        capability: Capability::RateOrIncrease,
+        comparator: Some("rate-or-increase"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "exact",
+        variant: "exact-delta-set",
+        library: "exact",
+        description: "key set per window, ASAPQuery DeltaSetAggregator (no churn: added only)",
+        capability: Capability::KeySet,
+        comparator: Some("key-set"),
         operations: OperationMask::INSERT
             .union(OperationMask::QUERY)
             .union(OperationMask::MERGE),
@@ -1235,17 +1419,25 @@ mod tests {
             "cardinality",
             "frequency",
             "rank-error",
+            "relative-value-error",
             "topk",
             "subpop-cardinality",
             "subpop-frequency",
             "subpop-rank-error",
+            "subpop-cdf-error",
             "subpop-l1-norm",
             "subpop-l2-norm",
             "subpop-entropy",
+            "subpop-sum",
             "keyed-cardinality",
             "keyed-l1-norm",
             "keyed-l2-norm",
             "keyed-entropy",
+            "sum-or-count",
+            "min",
+            "max",
+            "rate-or-increase",
+            "key-set",
         ];
         for e in REGISTRY {
             if let Some(name) = e.comparator {

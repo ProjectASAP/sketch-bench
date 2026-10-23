@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use aqpbm_datagen::DataDistribution;
 
-use crate::{reduce_one, MergedRecord, SkipReason, WorkloadDescription};
+use crate::atomic_costs::reduce_scores;
+use crate::{MergedRecord, SkipReason, WorkloadDescription};
 
 pub const ERP_SCHEMA_VERSION: u32 = 1;
 
@@ -79,6 +80,13 @@ fn distribution_descriptor(workload: &WorkloadDescription) -> serde_json::Value 
                             ("standard_deviation".into(), value.standard_deviation),
                         ]),
                     ),
+                    DataDistribution::Pareto(value) => (
+                        "pareto",
+                        BTreeMap::from([
+                            ("alpha".into(), value.alpha),
+                            ("scale".into(), value.scale),
+                        ]),
+                    ),
                 };
                 Some(ErpDataShape {
                     cardinality,
@@ -104,7 +112,7 @@ fn distribution_descriptor(workload: &WorkloadDescription) -> serde_json::Value 
 /// row. The caller supplies an artifact-local ID and producer revision so an
 /// export remains auditable.
 pub fn erp_record(id: impl Into<String>, record: &MergedRecord) -> Result<ErpRecord, SkipReason> {
-    let atomic = reduce_one(record)?;
+    let atomic = reduce_scores(record)?;
     Ok(ErpRecord {
         id: id.into(),
         sketch: atomic.sketch,
@@ -173,6 +181,10 @@ mod tests {
                     special_rule: 0,
                     data_type: "u64".into(),
                     string: None,
+                    child_of: None,
+                    fan_out: None,
+                    scale_by: None,
+                    scale_range: None,
                 },
                 100_000,
             ),

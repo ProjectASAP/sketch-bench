@@ -35,6 +35,10 @@ pub(crate) fn column(distribution: DataDistribution, data_type: &str) -> ColumnS
         special_rule: RULE_NONE,
         data_type: data_type.into(),
         string: None,
+        child_of: None,
+        fan_out: None,
+        scale_by: None,
+        scale_range: None,
     }
 }
 

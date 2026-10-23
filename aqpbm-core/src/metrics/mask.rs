@@ -124,8 +124,8 @@ pub fn is_measurable(operation: Operation, metric: Metric) -> bool {
         (Insert, Accuracy) => false,
         (Query, Throughput) | (Query, Accuracy) => true,
         (Query, Latency) => false,
-        (Merge, Throughput) | (Merge, Latency) => true,
-        (Merge, Accuracy) => false,
+        // Accuracy of the sketch the fold leaves, asked the query's questions.
+        (Merge, Throughput) | (Merge, Latency) | (Merge, Accuracy) => true,
         (Prepare, Throughput) => false,
         (Prepare, Latency) => true,
         (Prepare, Accuracy) => false,
@@ -172,7 +172,7 @@ mod tests {
     }
 
     #[test]
-    fn five_of_the_twelve_pairs_are_permanently_empty() {
+    fn four_of_the_twelve_pairs_are_permanently_empty() {
         // Four operations by three metrics is the whole of what this crate can
         // be asked for, whatever it happens to implement.
         let pairs: Vec<_> = Operation::ALL
@@ -191,7 +191,6 @@ mod tests {
             vec![
                 ("insert", "accuracy"),
                 ("query", "latency"),
-                ("merge", "accuracy"),
                 ("prepare", "throughput"),
                 ("prepare", "accuracy"),
             ]

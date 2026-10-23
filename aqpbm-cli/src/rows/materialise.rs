@@ -21,6 +21,43 @@ pub(super) fn peel_labeled<V: ColumnItem>(
     description: &TableDescription,
     table: GeneratedTable,
 ) -> Result<Rc<Vec<(String, V)>>, RunError> {
+    let (labels, values) = label_columns::<V>(description, table)?;
+    let mut items = Vec::with_capacity(values.len());
+    for (row, value) in values.into_iter().enumerate() {
+        let mut key = String::new();
+        for (column, labels) in labels.iter().enumerate() {
+            if column > 0 {
+                key.push(';');
+            }
+            key.push_str(&labels[row]);
+        }
+        items.push((key, value));
+    }
+    Ok(Rc::new(items))
+}
+
+#[allow(clippy::type_complexity)]
+/// The same records with the label values kept apart, as ASAPQuery's
+/// `KeyByLabelValues` holds them.
+pub(super) fn peel_grouped<V: ColumnItem>(
+    description: &TableDescription,
+    table: GeneratedTable,
+) -> Result<Rc<Vec<(Vec<String>, V)>>, RunError> {
+    let (labels, values) = label_columns::<V>(description, table)?;
+    let items = values
+        .into_iter()
+        .enumerate()
+        .map(|(row, value)| (labels.iter().map(|c| c[row].clone()).collect(), value))
+        .collect();
+    Ok(Rc::new(items))
+}
+
+/// The label columns, and the value column at the row's width.
+#[allow(clippy::type_complexity)]
+fn label_columns<V: ColumnItem>(
+    description: &TableDescription,
+    table: GeneratedTable,
+) -> Result<(Vec<Vec<String>>, Vec<V>), RunError> {
     let value_column = value_column(description);
     if value_column == 0 {
         return Err(RunError::Sketch(format!(
@@ -58,19 +95,7 @@ pub(super) fn peel_labeled<V: ColumnItem>(
             })
         })
         .collect::<Result<_, RunError>>()?;
-
-    let mut items = Vec::with_capacity(values.len());
-    for (row, value) in values.into_iter().enumerate() {
-        let mut key = String::new();
-        for (column, labels) in labels.iter().enumerate() {
-            if column > 0 {
-                key.push(';');
-            }
-            key.push_str(&labels[row]);
-        }
-        items.push((key, value));
-    }
-    Ok(Rc::new(items))
+    Ok((labels, values))
 }
 
 pub(super) fn peel_keyed<K: ColumnItem>(

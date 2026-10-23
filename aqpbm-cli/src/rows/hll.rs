@@ -21,7 +21,11 @@ pub(crate) fn row_hll_oxide(
                 ho::insert_hll_oxide::<$t>,
                 ho::insert_step_hll_oxide::<$t>,
                 ho::query_hll_oxide::<$t>,
-                Some((ho::merge_hll_oxide::<$t>, ho::merge_step_hll_oxide::<$t>)),
+                Some((
+                    ho::merge_hll_oxide::<$t>,
+                    ho::merge_step_hll_oxide::<$t>,
+                    ho::merge_query_hll_oxide::<$t>,
+                )),
                 None,
             )
         };
@@ -53,6 +57,7 @@ pub(crate) fn row_hll_datasketches(
                 Some((
                     hd::merge_hll_datasketches::<$t>,
                     hd::merge_step_hll_datasketches::<$t>,
+                    hd::merge_query_hll_datasketches::<$t>,
                 )),
                 None,
             )
@@ -149,6 +154,7 @@ pub(crate) fn row_hll_lib(
                 Some((
                     hl::merge_hll_lib::<$r, $t>,
                     hl::merge_step_hll_lib::<$r, $t>,
+                    hl::merge_query_hll_lib::<$r, $t>,
                 )),
                 None,
             )

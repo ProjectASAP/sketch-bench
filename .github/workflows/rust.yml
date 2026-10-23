@@ -20,6 +20,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Overrides target-cpu=native from .cargo/config.toml: cached build scripts
+  # compiled on one runner's CPU die with SIGILL on an older runner.
+  RUSTFLAGS: -C target-cpu=x86-64
 
 jobs:
   format-and-lint:

@@ -21,6 +21,7 @@ pub(crate) fn row_univmon_cardinality_lib(
                 Some((
                     ul::merge_univmon_lib::<$k>,
                     ul::merge_step_univmon_lib::<$k>,
+                    ul::merge_query_univmon_lib_cardinality::<$k>,
                 )),
                 None,
             )
@@ -54,6 +55,7 @@ pub(crate) fn row_univmon_l1_norm_lib(
                 Some((
                     ul::merge_univmon_lib::<$k>,
                     ul::merge_step_univmon_lib::<$k>,
+                    ul::merge_query_univmon_lib_l1_norm::<$k>,
                 )),
                 None,
             )
@@ -87,6 +89,7 @@ pub(crate) fn row_univmon_l1_norm_oxide(
                 Some((
                     uo::merge_univmon_oxide::<$k>,
                     uo::merge_step_univmon_oxide::<$k>,
+                    uo::merge_query_univmon_oxide_l1_norm::<$k>,
                 )),
                 None,
             )
@@ -120,6 +123,7 @@ pub(crate) fn row_univmon_l2_norm_lib(
                 Some((
                     ul::merge_univmon_lib::<$k>,
                     ul::merge_step_univmon_lib::<$k>,
+                    ul::merge_query_univmon_lib_l2_norm::<$k>,
                 )),
                 None,
             )
@@ -153,6 +157,7 @@ pub(crate) fn row_univmon_l2_norm_oxide(
                 Some((
                     uo::merge_univmon_oxide::<$k>,
                     uo::merge_step_univmon_oxide::<$k>,
+                    uo::merge_query_univmon_oxide_l2_norm::<$k>,
                 )),
                 None,
             )
@@ -186,6 +191,7 @@ pub(crate) fn row_univmon_entropy_lib(
                 Some((
                     ul::merge_univmon_lib::<$k>,
                     ul::merge_step_univmon_lib::<$k>,
+                    ul::merge_query_univmon_lib_entropy::<$k>,
                 )),
                 None,
             )
@@ -219,6 +225,7 @@ pub(crate) fn row_univmon_entropy_oxide(
                 Some((
                     uo::merge_univmon_oxide::<$k>,
                     uo::merge_step_univmon_oxide::<$k>,
+                    uo::merge_query_univmon_oxide_entropy::<$k>,
                 )),
                 None,
             )

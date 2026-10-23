@@ -8,7 +8,7 @@ use crate::params::ParamSet;
 use crate::wrappers::frequency_value::FrequencyValue;
 use crate::wrappers::partition;
 use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
-use asap_sketchlib::input::HydraCounter;
+use asap_sketchlib::input::{HydraCounter, HydraQuery};
 use asap_sketchlib::{Count, FastPath, Hydra, Vector2D};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -18,7 +18,8 @@ pub struct HydraCs {
     params: HydraCsParams,
 }
 
-pub fn build_hydra_cs(config: &ParamSet) -> Result<HydraCs, BuildError> {
+/// `label_columns`: the key columns every record carries.
+pub fn build_hydra_cs(config: &ParamSet, label_columns: usize) -> Result<HydraCs, BuildError> {
     let p: HydraCsParams = config.parse()?;
     check_grid(p.rows, p.cols, "hydra-cs")?;
     for (name, v) in [("cell_rows", p.cell_rows), ("cell_cols", p.cell_cols)] {
@@ -31,16 +32,24 @@ pub fn build_hydra_cs(config: &ParamSet) -> Result<HydraCs, BuildError> {
         p.cell_cols,
     ));
     Ok(HydraCs {
-        inner: Hydra::with_dimensions(p.rows, p.cols, cell),
+        inner: new_hydra(p.rows, p.cols, label_columns, cell, "hydra-cs")?,
         params: p,
     })
 }
 
 impl HydraCs {
     #[inline]
-    pub fn estimate_subpop_frequency<V: FrequencyValue>(&self, labels: &[&str], value: &V) -> f64 {
-        self.inner
-            .query_frequency(labels.to_vec(), &value.data_input())
+    pub fn estimate_subpop_frequency<V: FrequencyValue>(
+        &self,
+        labels: &[Option<&str>],
+        value: &V,
+    ) -> f64 {
+        query(
+            &self.inner,
+            labels,
+            &HydraQuery::Frequency(value.data_input()),
+            "hydra-cs",
+        )
     }
 }
 
@@ -60,11 +69,11 @@ pub fn insert_hydra_cs<V: FrequencyValue>(
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built here, so calling the closure is the insert and nothing else.
-        let mut sketch = build_hydra_cs(params)?;
+        let mut sketch = build_hydra_cs(params, label_columns(&items, "hydra-cs")?)?;
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.update(&v.0, &v.1.data_input(), None);
+                update(&mut sketch.inner, &v.0, &v.1.data_input(), "hydra-cs");
             }
             memory_hydra_cs(&sketch)
         }) as Pass);
@@ -79,7 +88,10 @@ pub fn insert_step_hydra_cs<V: FrequencyValue>(
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let sketch: Shared<_> = Rc::new(RefCell::new(build_hydra_cs(params)?));
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_hydra_cs(
+            params,
+            label_columns(&items, "hydra-cs")?,
+        )?));
         let (driven, read) = (sketch.clone(), sketch);
         let stream = items.clone();
         out.push(StepPass {
@@ -87,7 +99,7 @@ pub fn insert_step_hydra_cs<V: FrequencyValue>(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.update(&v.0, &v.1.data_input(), None);
+                update(&mut sketch.inner, &v.0, &v.1.data_input(), "hydra-cs");
             }),
             footprint: Box::new(move || memory_hydra_cs(&read.borrow())),
         });
@@ -98,15 +110,30 @@ pub fn insert_step_hydra_cs<V: FrequencyValue>(
 pub fn query_hydra_cs<V: FrequencyValue>(
     params: &ParamSet,
     items: Rc<Vec<(String, V)>>,
-    probes: Rc<Vec<(Vec<String>, V)>>,
+    probes: Rc<Vec<(Vec<Option<String>>, V)>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    merge_query_hydra_cs(params, items, probes, 1, passes)
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_hydra_cs<V: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<(String, V)>>,
+    probes: Rc<Vec<(Vec<Option<String>>, V)>>,
+    shards: usize,
     passes: usize,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        // Built and fed here: the closure below asks, and only asks.
-        let mut sketch = build_hydra_cs(params)?;
-        for v in items.iter() {
-            sketch.inner.update(&v.0, &v.1.data_input(), None);
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = hydra_cs_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch
+                .inner
+                .merge(&other.inner)
+                .expect("both operands built from one ParamSet, so grid and cell shapes match");
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
@@ -178,9 +205,9 @@ fn hydra_cs_shards<V: FrequencyValue>(
 ) -> Result<(HydraCs, Vec<HydraCs>), BuildError> {
     let mut parts: Vec<HydraCs> = Vec::new();
     for shard in partition(items, shards) {
-        let mut sketch = build_hydra_cs(params)?;
+        let mut sketch = build_hydra_cs(params, label_columns(items, "hydra-cs")?)?;
         for v in shard {
-            sketch.inner.update(&v.0, &v.1.data_input(), None);
+            update(&mut sketch.inner, &v.0, &v.1.data_input(), "hydra-cs");
         }
         parts.push(sketch);
     }

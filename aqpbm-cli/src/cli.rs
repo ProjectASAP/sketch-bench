@@ -2,6 +2,8 @@
 //! `main.rs`. Option help and grouping track `docs/aqpbm-cli-reference.md`, which
 //! `scripts/dump_cli_reference.sh` diffs the built binary against.
 
+use aqpbm_core::MergeSplit;
+use clap::builder::TypedValueParser;
 use clap::{Parser, Subcommand};
 
 use crate::atomic_costs_cmd;
@@ -89,7 +91,7 @@ pub struct SketchbenchArgs {
     /// A *list* of specs is a multi-column stream, which only `hydra-*` targets take.
     #[arg(long, help_heading = "Dataset")]
     pub spec: Option<String>,
-    /// Inline shape: "uniform" or "zipf". Ignored when `--spec` is
+    /// Inline shape: "uniform", "zipf" or "pareto". Ignored when `--spec` is
     /// set. Required unless `--spec` or `--list-impls` is given: a run either
     /// names its shape or names its file, never falls back to one unasked.
     #[arg(
@@ -106,7 +108,8 @@ pub struct SketchbenchArgs {
         help_heading = "Dataset"
     )]
     pub size: Option<usize>,
-    /// Cardinality (uniform: max key; zipf: key-space size). Required unless
+    /// Cardinality (uniform: max key; zipf: key-space size; pareto: ignored,
+    /// it is unbounded). Required unless
     /// `--spec` or `--list-impls` is given.
     #[arg(
         long,
@@ -118,6 +121,13 @@ pub struct SketchbenchArgs {
     /// otherwise.
     #[arg(long, required_if_eq("dataset", "zipf"), help_heading = "Dataset")]
     pub zipf_s: Option<f64>,
+    /// Pareto shape `alpha`. Required when `--dataset pareto` is given;
+    /// ignored otherwise.
+    #[arg(long, required_if_eq("dataset", "pareto"), help_heading = "Dataset")]
+    pub pareto_alpha: Option<f64>,
+    /// Pareto scale (the minimum value). Only read by `--dataset pareto`.
+    #[arg(long, default_value_t = 1.0, help_heading = "Dataset")]
+    pub pareto_scale: f64,
     /// Item type the value column is generated at: `i64`, `u64`, `f64` or
     /// `string`
     /// Required unless `--list-impls` is given: read regardless of `--spec`.
@@ -220,14 +230,47 @@ pub struct SketchbenchArgs {
     )]
     pub operations: Option<String>,
     /// How many shards the merge operation folds. A knob, never a selector:
-    /// measuring merge is asked for with `--operations merge`. Linear sketches
+    /// measuring merge is asked for with `--operations merge`. With
+    /// `--metrics accuracy` the folded sketch is asked the query's questions and
+    /// scored against the whole stream, as `merge_accuracy`. Linear sketches
     /// merge exactly, so a gap is a defect; for KLL it is the result.
     #[arg(long, default_value_t = 2, help_heading = "Measurement content")]
     pub merge_shards: usize,
+    /// Which label columns the `hydra-*` rows group by, comma-separated
+    /// indices into the columns before the value column: any non-empty subset
+    /// (`0`, `1`, `0,1`). The grid stores every subset, so this picks the one
+    /// asked and scored. Every other target ignores it.
+    #[arg(
+        long,
+        value_delimiter = ',',
+        default_value = "0",
+        help_heading = "Measurement content"
+    )]
+    pub group_columns: Vec<usize>,
+    /// How the merge operation splits the stream into its shards: `contiguous`
+    /// cuts it into stretches, `interleaved` deals it round-robin by record, so
+    /// each shard is a sample of the whole stream. The shard sizes are the same
+    /// either way.
+    #[arg(
+        long,
+        default_value = "contiguous",
+        value_parser = clap::builder::PossibleValuesParser::new(["contiguous", "interleaved"])
+            .try_map(|s| s.parse::<MergeSplit>()),
+        help_heading = "Measurement content"
+    )]
+    pub merge_split: MergeSplit,
 
     /// Path to append JSONL records to. `-` or omitted sends them to stdout.
     #[arg(long, help_heading = "Output")]
     pub report: Option<String>,
+    /// Write a `hydra-*` row's per-group errors to this CSV, one row per group:
+    /// `group_key,n_q,error` (`n_q` is the group's record count, `error` the
+    /// row's own metric, empty for a group that cannot be scored, such as one
+    /// with zero entropy). The `n_q` sum to the stream's records; the record's
+    /// `err_*` fields summarise the scored rows. Takes exactly one accuracy
+    /// measurement: query or merge.
+    #[arg(long, help_heading = "Output")]
+    pub per_group_out: Option<String>,
     /// Write one line for the whole invocation instead of one per measurement,
     /// folding its records into a single flattened row: one slot per operation,
     /// one field per metric. One record per measurement is the default; this is the

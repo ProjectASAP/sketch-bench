@@ -9,7 +9,9 @@
 pub mod cms;
 pub mod cms_heap;
 pub mod cs;
+pub mod cs_heap;
 pub mod dd;
+pub mod exact;
 pub mod hll;
 pub mod hydra_cms;
 pub mod hydra_cs;
@@ -103,9 +105,14 @@ pub type MergeBody<I> = fn(&ParamSet, Rc<Vec<I>>, usize, usize) -> Result<Vec<Pa
 pub type MergeStepBody<I> =
     fn(&ParamSet, Rc<Vec<I>>, usize, usize) -> Result<Vec<StepPass>, BuildError>;
 
-/// Both forms of a row's fold: as one pass, and one shard at a time. A row
-/// either supplies both or has no merge at all.
-pub type Folds<I> = (MergeBody<I>, MergeStepBody<I>);
+/// Prime `passes` runs of the row's query, asked of the sketch a fold over
+/// `shards` sketches leaves, so its answers can be scored like the query's.
+pub type MergeQueryBody<I, P, A> =
+    fn(&ParamSet, Rc<Vec<I>>, Rc<Vec<P>>, usize, usize) -> Result<Vec<QueryPass<A>>, BuildError>;
+
+/// Every form of a row's fold: as one pass, one shard at a time, and asked
+/// afterwards. A row either supplies all three or has no merge at all.
+pub type Folds<I, P, A> = (MergeBody<I>, MergeStepBody<I>, MergeQueryBody<I, P, A>);
 
 /// Prime `passes` runs of the step that makes a fed sketch ready to answer.
 pub type PrepareBody<I> = fn(&ParamSet, Rc<Vec<I>>, usize) -> Result<Vec<Pass>, BuildError>;
@@ -139,6 +146,29 @@ pub fn partition<T>(items: &[T], n: usize) -> Vec<&[T]> {
         return vec![items];
     }
     items.chunks(chunk).collect()
+}
+
+/// How a merge run splits the stream into its shards: `Contiguous` as
+/// [`partition`] cuts it, `Interleaved` reordered first by [`interleave`].
+pub use aqpbm_core::MergeSplit;
+
+/// The stream reordered so that [`partition`] into `n` hands out a round-robin
+/// split: record `j` goes to the next shard with room, so each shard holds
+/// every `n`-th record, in stream order, and the shard sizes are exactly the
+/// contiguous split's.
+pub fn interleave<T: Clone>(items: &[T], n: usize) -> Vec<T> {
+    let sizes: Vec<usize> = partition(items, n).iter().map(|p| p.len()).collect();
+    let mut shards: Vec<Vec<T>> = sizes.iter().map(|&len| Vec::with_capacity(len)).collect();
+    let mut next = 0;
+    for item in items {
+        // Only the last shard can be short, so this skips at most once a round.
+        while shards[next].len() == sizes[next] {
+            next = (next + 1) % sizes.len();
+        }
+        shards[next].push(item.clone());
+        next = (next + 1) % sizes.len();
+    }
+    shards.concat()
 }
 
 // All four helpers below exist for one rule: a row that cannot build at the
@@ -214,4 +244,44 @@ pub(crate) fn require_resolved_shape(
         )));
     }
     Ok(())
+}
+
+/// Bytes a top-k heap of `capacity` residents holds in asap_sketchlib 0.3:
+/// the `HHItem` array, the digest column and the position index
+/// ([`aqpbm_core::hh_heap_bytes`]). Integer keys own no further bytes.
+pub fn hh_heap_footprint(capacity: usize) -> usize {
+    aqpbm_core::hh_heap_bytes(
+        capacity,
+        std::mem::size_of::<asap_sketchlib::input::HHItem>(),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Cut by [`partition`], the interleaved stream deals record `j` to shard
+    /// `j mod n` while every shard has room, and keeps the contiguous split's
+    /// sizes, including its short last shard.
+    #[test]
+    fn interleave_deals_round_robin_at_the_contiguous_sizes() {
+        let items: Vec<usize> = (0..10).collect();
+        let shards: Vec<Vec<usize>> = partition(&interleave(&items, 4), 4)
+            .iter()
+            .map(|s| s.to_vec())
+            .collect();
+        // Contiguous: chunks of 3, so sizes 3, 3, 3, 1; record 7 skips the
+        // full last shard.
+        assert_eq!(
+            shards,
+            vec![vec![0, 4, 7], vec![1, 5, 8], vec![2, 6, 9], vec![3]]
+        );
+        // Divisible: every shard is one residue class.
+        let shards = partition(&interleave(&items, 5), 5)
+            .iter()
+            .map(|s| s.to_vec())
+            .collect::<Vec<_>>();
+        assert_eq!(shards, (0..5).map(|r| vec![r, r + 5]).collect::<Vec<_>>());
+        assert!(interleave::<usize>(&[], 4).is_empty());
+    }
 }

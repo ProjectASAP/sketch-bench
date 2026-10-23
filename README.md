@@ -122,6 +122,9 @@ In this case, `hll` takes a `lg_k` which describes the size of register list.
 
 **`--zipf-s`:** Some distribution requires parameter, like `zipf-s`.
 `zipf-s` means skewness, a parameter for zipf distribution.
+`--dataset pareto` instead takes `--pareto-alpha` (shape) and `--pareto-scale`
+(minimum value, default 1.0); it is unbounded, so it needs `--dtype f64` (or
+`i64`, which floors each draw) and ignores `--cardinality`.
 
 **`--cardinality`:** Another parameter required by zipf distribution.
 `cardinality` means the size of key-space of this synthesized zipf dataset.
@@ -389,6 +392,7 @@ approxbench: hydra-cms/lib config={"cell_cols":1024,"cell_rows":3,"cols":1024,"r
     ]
   },
   "merge_shards": 8,
+  "merge_split": "contiguous",
   "merge_supported": true,
   "merge_cpu_time_ms": {
     "user_ms": {
@@ -444,7 +448,32 @@ approxbench: hydra-cms/lib config={"cell_cols":1024,"cell_rows":3,"cols":1024,"r
 `--spec configs/datagen/hydra_columns.yaml` is how user can define the synthetic table for insertion.
 The file can be found [under configs directory](./configs/datagen/hydra_columns.yaml).
 
+**`--merge-shards`**: how many shards `merge` folds: the stream is split that
+many ways, one sketch is fed per shard, and the sketches are folded into one.
+
+**`--merge-split`**: how the stream is split into those shards. `contiguous`
+(the default) cuts it into consecutive stretches; `interleaved` deals it
+round-robin by record, so each shard is a sample of the whole stream. The
+round-robin runs over the contiguous split's shard sizes (`ceil(N/k)` each,
+the last one short), skipping a shard once it is full. So when `k` divides
+`N`, shard 0 gets records `0, k, 2k, ...`; with a short last shard the
+pattern shifts once that shard fills (N = 10, k = 4: shard 0 gets `0, 4, 7`).
+The record's `merge_split` says which split ran. CMS, CountSketch and HLL cells (and their Hydra grids) merge
+exactly, so they answer identically under both; KLL and UnivMon merges are
+lossy and can differ.
+
 **`--flat`**: flatten record such that output data of multiple experiments is flatten into one json file.
+
+**`--group-columns`** (Hydra rows only): which label columns the subpopulation is taken over, as comma-separated indices into the columns before the value column, e.g. `1` or `0,1`; default `0`.
+Any non-empty subset works, since the grid stores every subset of a record's labels; it picks the one the `hydra-*` row (`lib` and `polars`) asks and scores.
+With `--metrics accuracy`, the record also summarises each scored group's error in the row's own metric (relative error; mean rank error for `hydra-kll`; mean absolute CDF error for `hydra-kll-cdf`): `err_mean`, `err_p50`, `err_p90`, `err_max`, `groups_scored`, plus `schema_width` (`d`), `records` (`N`) and `fanned_mass` (`N·(2^d − 1)`).
+
+Two Hydra rows ask a second statistic of an existing cell: `hydra-kll-cdf` asks the KLL grid `Cdf(x)`, the share of a group at or below `x`, at each group's own values at `phi` = 0.01..0.99; `hydra-univmon-sum` inserts each value counted by itself (i64 or u64, within an `i32` count), so the UnivMon grid's L1 is the group's sum.
+Both have a `polars` exact baseline.
+
+**`--per-group-out PATH`** (Hydra rows only): write those per-group errors as a CSV, `group_key,n_q,error`, one row per group (`n_q` is its record count, `group_key` its tagged labels such as `label0:a;label1:x`, with `\`, `:` and `;` in a label escaped by `\`).
+Every group is listed, so the `n_q` sum to the stream's records; a group that cannot be scored (its true statistic is zero, e.g. zero entropy) has an empty `error` and is left out of the `err_*` summary.
+It takes exactly one accuracy measurement (query or merge).
 
 #### General Explanation
 
@@ -489,3 +518,5 @@ separate by crates may not be necessary at this moments -->
 [Data Generation](./docs/aqpbm-datagen.md)
 
 [Sketch benchmark wrapper](./docs/sketch-bench.md)
+
+[End-to-end planning flow: traces to an rqe-optimizer plan](./docs/e2e_planning_flow.md)

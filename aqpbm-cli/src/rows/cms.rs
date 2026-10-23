@@ -19,7 +19,11 @@ pub(crate) fn row_cms_oxide(
                 co::insert_cms_oxide::<$t>,
                 co::insert_step_cms_oxide::<$t>,
                 co::query_cms_oxide::<$t>,
-                Some((co::merge_cms_oxide::<$t>, co::merge_step_cms_oxide)),
+                Some((
+                    co::merge_cms_oxide::<$t>,
+                    co::merge_step_cms_oxide,
+                    co::merge_query_cms_oxide::<$t>,
+                )),
                 None,
             )
         };
@@ -51,6 +55,7 @@ pub(crate) fn row_cms_datasketches(
                 Some((
                     cd::merge_cms_datasketches::<$t>,
                     cd::merge_step_cms_datasketches,
+                    cd::merge_query_cms_datasketches::<$t>,
                 )),
                 None,
             )
@@ -112,6 +117,7 @@ pub(crate) fn row_cms_fastpath_vector2d_lib(
                 Some((
                     cl::merge_cms_lib_vector2d_fast::<$t>,
                     cl::merge_step_cms_lib_vector2d_fast::<$t>,
+                    cl::merge_query_cms_lib_vector2d_fast::<$t>,
                 )),
                 None,
             )
@@ -144,6 +150,7 @@ pub(crate) fn row_cms_regularpath_vector2d_lib(
                 Some((
                     cl::merge_cms_lib_vector2d_regular::<$t>,
                     cl::merge_step_cms_lib_vector2d_regular::<$t>,
+                    cl::merge_query_cms_lib_vector2d_regular::<$t>,
                 )),
                 None,
             )

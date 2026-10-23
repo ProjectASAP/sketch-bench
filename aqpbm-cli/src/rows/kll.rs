@@ -27,6 +27,7 @@ pub(crate) fn row_kll_percall_oxide(
                 Some((
                     ko::merge_kll_oxide_per_call::<$t>,
                     ko::merge_step_kll_oxide_per_call::<$t>,
+                    ko::merge_query_kll_oxide_per_call::<$t>,
                 )),
                 None,
             )
@@ -59,6 +60,7 @@ pub(crate) fn row_kll_percall_lib(
                 Some((
                     kl::merge_kll_lib_per_call::<$t>,
                     kl::merge_step_kll_lib_per_call::<$t>,
+                    kl::merge_query_kll_lib_per_call::<$t>,
                 )),
                 None,
             )
@@ -91,6 +93,7 @@ pub(crate) fn row_kll_cdf_oxide(
                 Some((
                     ko::merge_kll_oxide_cdf::<$t>,
                     ko::merge_step_kll_oxide_cdf::<$t>,
+                    ko::merge_query_kll_oxide_cdf::<$t>,
                 )),
                 Some(ko::prepare_kll_oxide_cdf::<$t>),
             )
@@ -123,6 +126,7 @@ pub(crate) fn row_kll_cdf_lib(
                 Some((
                     kl::merge_kll_lib_cdf::<$t>,
                     kl::merge_step_kll_lib_cdf::<$t>,
+                    kl::merge_query_kll_lib_cdf::<$t>,
                 )),
                 Some(kl::prepare_kll_lib_cdf::<$t>),
             )

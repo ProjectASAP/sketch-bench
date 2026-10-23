@@ -11,7 +11,7 @@ pub(crate) fn row_dd_lib(
 ) -> Result<Measurements, RunError> {
     macro_rules! at {
         ($t:ty) => {
-            quantile_row::<$t>(
+            relative_value_quantile_row::<$t>(
                 req,
                 description,
                 table,
@@ -19,7 +19,11 @@ pub(crate) fn row_dd_lib(
                 ddl::insert_dd_lib::<$t>,
                 ddl::insert_step_dd_lib::<$t>,
                 ddl::query_dd_lib::<$t>,
-                Some((ddl::merge_dd_lib::<$t>, ddl::merge_step_dd_lib::<$t>)),
+                Some((
+                    ddl::merge_dd_lib::<$t>,
+                    ddl::merge_step_dd_lib::<$t>,
+                    ddl::merge_query_dd_lib::<$t>,
+                )),
                 None,
             )
         };
@@ -40,7 +44,7 @@ pub(crate) fn row_dd_oxide(
 ) -> Result<Measurements, RunError> {
     macro_rules! at {
         ($t:ty) => {
-            quantile_row::<$t>(
+            relative_value_quantile_row::<$t>(
                 req,
                 description,
                 table,
@@ -48,7 +52,11 @@ pub(crate) fn row_dd_oxide(
                 ddo::insert_dd_oxide::<$t>,
                 ddo::insert_step_dd_oxide::<$t>,
                 ddo::query_dd_oxide::<$t>,
-                Some((ddo::merge_dd_oxide::<$t>, ddo::merge_step_dd_oxide::<$t>)),
+                Some((
+                    ddo::merge_dd_oxide::<$t>,
+                    ddo::merge_step_dd_oxide::<$t>,
+                    ddo::merge_query_dd_oxide::<$t>,
+                )),
                 None,
             )
         };

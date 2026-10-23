@@ -9,6 +9,8 @@ use std::io::Read;
 use anyhow::{Context, Result};
 use clap::Parser;
 
+use std::collections::BTreeMap;
+
 use aqpbm_core::{reduce_all, MergedRecord};
 
 #[derive(Parser, Debug)]
@@ -19,28 +21,50 @@ pub struct AtomicCostsArgs {
     /// Output path for the reduced table (JSON array). Defaults to stdout.
     #[arg(short, long)]
     output: Option<String>,
+    /// `VARIANT=METRIC`, once per variant: the `query_accuracy` key that is
+    /// that variant's `accuracy_metric`. A row whose variant has none, or
+    /// whose scores lack it, is skipped.
+    #[arg(long = "accuracy-metric", value_name = "VARIANT=METRIC", required = true,
+          value_parser = parse_accuracy_metric)]
+    accuracy_metrics: Vec<(String, String)>,
 }
 
-pub fn run(args: AtomicCostsArgs) -> Result<()> {
-    let raw = if args.input == "-" {
+fn parse_accuracy_metric(arg: &str) -> Result<(String, String), String> {
+    match arg.split_once('=') {
+        Some((variant, metric)) if !variant.is_empty() && !metric.is_empty() => {
+            Ok((variant.to_string(), metric.to_string()))
+        }
+        _ => Err(format!("expected VARIANT=METRIC, got {arg}")),
+    }
+}
+
+fn read_records(path: &str) -> Result<Vec<MergedRecord>> {
+    let raw = if path == "-" {
         let mut buf = String::new();
         std::io::stdin()
             .read_to_string(&mut buf)
             .context("reading stdin")?;
         buf
     } else {
-        std::fs::read_to_string(&args.input).with_context(|| format!("reading {}", args.input))?
+        std::fs::read_to_string(path).with_context(|| format!("reading {path}"))?
     };
-
-    let records: Vec<MergedRecord> = raw
-        .lines()
+    raw.lines()
         .filter(|line| !line.trim().is_empty())
         .map(|line| {
             serde_json::from_str(line).with_context(|| format!("parsing MergedRecord: {line}"))
         })
-        .collect::<Result<_>>()?;
+        .collect()
+}
 
-    let (table, skipped) = reduce_all(&records);
+pub fn run(args: AtomicCostsArgs) -> Result<()> {
+    let records = read_records(&args.input)?;
+    let mut accuracy_metrics = BTreeMap::new();
+    for (variant, metric) in args.accuracy_metrics {
+        if let Some(earlier) = accuracy_metrics.insert(variant.clone(), metric.clone()) {
+            anyhow::bail!("--accuracy-metric gives {variant} twice ({earlier}, {metric})");
+        }
+    }
+    let (table, skipped) = reduce_all(&records, &accuracy_metrics);
     for (i, reason) in &skipped {
         let record = &records[*i];
         eprintln!(

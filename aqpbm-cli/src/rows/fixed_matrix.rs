@@ -7,7 +7,7 @@ use super::*;
 /// erased list, so nothing in the return type mentions the shape it ran at.
 macro_rules! fixed_matrix_row {
     ($fname:ident, $params:ty, $algo:literal, $module:ident, $insert:ident, $insert_step:ident,
-     $query:ident, $merge:ident, $merge_step:ident) => {
+     $query:ident, $merge:ident, $merge_step:ident, $merge_query:ident) => {
         pub(crate) fn $fname(
             req: &Requirement,
             description: &TableDescription,
@@ -54,7 +54,11 @@ macro_rules! fixed_matrix_row {
                         w::$insert::<M, T>,
                         w::$insert_step::<M, T>,
                         w::$query::<M, T>,
-                        Some((w::$merge::<M, T>, w::$merge_step::<M, T>)),
+                        Some((
+                            w::$merge::<M, T>,
+                            w::$merge_step::<M, T>,
+                            w::$merge_query::<M, T>,
+                        )),
                         None,
                     )
                 }
@@ -95,7 +99,8 @@ fixed_matrix_row!(
     insert_step_cms_lib_fixedmatrix,
     query_cms_lib_fixedmatrix,
     merge_cms_lib_fixedmatrix,
-    merge_step_cms_lib_fixedmatrix
+    merge_step_cms_lib_fixedmatrix,
+    merge_query_cms_lib_fixedmatrix
 );
 
 fixed_matrix_row!(
@@ -107,5 +112,6 @@ fixed_matrix_row!(
     insert_step_cs_lib_fixedmatrix,
     query_cs_lib_fixedmatrix,
     merge_cs_lib_fixedmatrix,
-    merge_step_cs_lib_fixedmatrix
+    merge_step_cs_lib_fixedmatrix,
+    merge_query_cs_lib_fixedmatrix
 );

@@ -16,13 +16,20 @@ pub enum Capability {
     SubpopCardinality,
     SubpopFrequency,
     SubpopQuantile,
+    SubpopCdf,
     SubpopL1Norm,
     SubpopL2Norm,
     SubpopEntropy,
+    SubpopSum,
     KeyedCardinality,
     KeyedL1Norm,
     KeyedL2Norm,
     KeyedEntropy,
+    SumOrCount,
+    Min,
+    Max,
+    RateOrIncrease,
+    KeySet,
     #[default]
     None,
 }
@@ -39,13 +46,20 @@ impl Capability {
             Capability::SubpopCardinality => "subpop-cardinality",
             Capability::SubpopFrequency => "subpop-frequency",
             Capability::SubpopQuantile => "subpop-quantile",
+            Capability::SubpopCdf => "subpop-cdf",
             Capability::SubpopL1Norm => "subpop-l1-norm",
             Capability::SubpopL2Norm => "subpop-l2-norm",
             Capability::SubpopEntropy => "subpop-entropy",
+            Capability::SubpopSum => "subpop-sum",
             Capability::KeyedCardinality => "keyed-cardinality",
             Capability::KeyedL1Norm => "keyed-l1-norm",
             Capability::KeyedL2Norm => "keyed-l2-norm",
             Capability::KeyedEntropy => "keyed-entropy",
+            Capability::SumOrCount => "sum-or-count",
+            Capability::Min => "min",
+            Capability::Max => "max",
+            Capability::RateOrIncrease => "rate-or-increase",
+            Capability::KeySet => "key-set",
             Capability::None => "none",
         }
     }
@@ -108,6 +122,12 @@ pub struct Requirement {
     pub workers: usize,
     /// How many shards a merge measurement folds
     pub merge_shards: usize,
+    /// The label columns a grouped (`hydra-*`) row asks and scores, ascending
+    pub group_columns: Vec<usize>,
+    /// Where a grouped row writes each scored group's error, if anywhere
+    pub per_group_out: Option<std::path::PathBuf>,
+    /// How a merge measurement splits the stream into those shards
+    pub merge_split: crate::wrappers::MergeSplit,
     /// A named comparator, or `None` for the row's default.
     pub comparator: Option<String>,
     /// Measured runs, and the warm-ups run and discarded before them

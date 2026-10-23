@@ -23,6 +23,7 @@ pub(crate) fn row_cms_heap_fastpath_vector2d_lib(
                 Some((
                     chl::merge_cms_heap_lib_vector2d_fast::<$t>,
                     chl::merge_step_cms_heap_lib_vector2d_fast::<$t>,
+                    chl::merge_query_cms_heap_lib_vector2d_fast_estimate::<$t>,
                 )),
                 None,
             )
@@ -55,6 +56,7 @@ pub(crate) fn row_cms_heap_regularpath_vector2d_lib(
                 Some((
                     chl::merge_cms_heap_lib_vector2d_regular::<$t>,
                     chl::merge_step_cms_heap_lib_vector2d_regular::<$t>,
+                    chl::merge_query_cms_heap_lib_vector2d_regular_estimate::<$t>,
                 )),
                 None,
             )
@@ -87,6 +89,7 @@ pub(crate) fn row_cms_heap_topk_fastpath_vector2d_lib(
                 Some((
                     chl::merge_cms_heap_lib_vector2d_fast::<$t>,
                     chl::merge_step_cms_heap_lib_vector2d_fast::<$t>,
+                    chl::merge_query_cms_heap_lib_vector2d_fast_topk::<$t>,
                 )),
             )
         };
@@ -118,6 +121,7 @@ pub(crate) fn row_cms_heap_topk_regularpath_vector2d_lib(
                 Some((
                     chl::merge_cms_heap_lib_vector2d_regular::<$t>,
                     chl::merge_step_cms_heap_lib_vector2d_regular::<$t>,
+                    chl::merge_query_cms_heap_lib_vector2d_regular_topk::<$t>,
                 )),
             )
         };

@@ -191,6 +191,10 @@ mod tests {
                 special_rule: aqpbm_datagen::RULE_NONE,
                 data_type: "i64".into(),
                 string: None,
+                child_of: None,
+                fan_out: None,
+                scale_by: None,
+                scale_range: None,
             },
             1000,
         );
@@ -220,6 +224,7 @@ mod tests {
             accuracy: Some(serde_json::json!({"are_all": 0.01, "accuracy_runs": 5})),
             merge_folds_per_sec: Some(stats(mean * 0.5)),
             merge_shards: Some(4),
+            merge_split: None,
             merge_supported: Some(true),
         });
         rec

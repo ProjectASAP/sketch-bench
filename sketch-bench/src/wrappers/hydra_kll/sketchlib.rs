@@ -19,7 +19,8 @@ pub struct HydraKll {
     params: HydraKllParams,
 }
 
-pub fn build_hydra_kll(config: &ParamSet) -> Result<HydraKll, BuildError> {
+/// `label_columns`: the key columns every record carries.
+pub fn build_hydra_kll(config: &ParamSet, label_columns: usize) -> Result<HydraKll, BuildError> {
     let p: HydraKllParams = config.parse()?;
     check_grid(p.rows, p.cols, "hydra-kll")?;
     // The cell is the same `asap_sketchlib::KLL` the `kll-*` rows hold, and it
@@ -35,7 +36,7 @@ pub fn build_hydra_kll(config: &ParamSet) -> Result<HydraKll, BuildError> {
     }
     let cell = HydraCounter::KLL(KLL::init_kll(p.cell_k as i32));
     Ok(HydraKll {
-        inner: Hydra::with_dimensions(p.rows, p.cols, cell),
+        inner: new_hydra(p.rows, p.cols, label_columns, cell, "hydra-kll")?,
         params: p,
     })
 }
@@ -45,20 +46,27 @@ impl HydraKll {
     /// at a rank, which is what rank error is defined over. The `Cdf` variant
     /// answers the inverse question.
     #[inline]
-    pub fn estimate_subpop_quantile(&self, labels: &[&str], phi: f64) -> f64 {
-        self.inner
-            .query_key(labels.to_vec(), &HydraQuery::Quantile(phi))
+    pub fn estimate_subpop_quantile(&self, labels: &[Option<&str>], phi: f64) -> f64 {
+        query(&self.inner, labels, &HydraQuery::Quantile(phi), "hydra-kll")
+    }
+
+    /// `HydraQuery::Cdf`: the share of the group at or below `x`, the question
+    /// the `hydra-kll-cdf` row asks.
+    #[inline]
+    pub fn estimate_subpop_cdf(&self, labels: &[Option<&str>], x: f64) -> f64 {
+        query(&self.inner, labels, &HydraQuery::Cdf(x), "hydra-kll")
     }
 }
 
-/// Retained slots per cell times the grid area, plus the level index every
-/// cell carries. Analytic because the cell allocates once — see
-/// `kll_cell_slots` in this crate's `hydra_kll` module for the per-cell count.
+/// One `asap_sketchlib::KLL` per cell times the grid area: its retained
+/// slots and level index, allocated with the grid, plus its merge buffer at
+/// its `cell_k`-item bound (`kll_lib_bytes`). The grid clones its cells from
+/// one template and a cloned `Vec` keeps no capacity, so a cell's buffer is
+/// empty at build and grows to about `cell_k` items once its level 0 first
+/// compacts: this is the steady-state footprint, not the one at build.
 pub fn memory_hydra_kll(sketch: &HydraKll) -> usize {
     let p = &sketch.params;
-    let per_cell = kll_cell_slots(p.cell_k) * std::mem::size_of::<f64>()
-        + (KLL_MAX_LEVELS + 1) * std::mem::size_of::<usize>();
-    p.rows * p.cols * per_cell + grid_overhead_bytes(p.rows, p.cols)
+    p.rows * p.cols * kll_cell_bytes::<f64>(p.cell_k) + grid_overhead_bytes(p.rows, p.cols)
 }
 
 pub fn insert_hydra_kll<V: QuantileValue + 'static>(
@@ -69,11 +77,11 @@ pub fn insert_hydra_kll<V: QuantileValue + 'static>(
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         // Built here, so calling the closure is the insert and nothing else.
-        let mut sketch = build_hydra_kll(params)?;
+        let mut sketch = build_hydra_kll(params, label_columns(&items, "hydra-kll")?)?;
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.update(&v.0, &v.1.data_input(), None);
+                update(&mut sketch.inner, &v.0, &v.1.data_input(), "hydra-kll");
             }
             memory_hydra_kll(&sketch)
         }) as Pass);
@@ -88,7 +96,10 @@ pub fn insert_step_hydra_kll<V: QuantileValue + 'static>(
 ) -> Result<Vec<StepPass>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let sketch: Shared<_> = Rc::new(RefCell::new(build_hydra_kll(params)?));
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_hydra_kll(
+            params,
+            label_columns(&items, "hydra-kll")?,
+        )?));
         let (driven, read) = (sketch.clone(), sketch);
         let stream = items.clone();
         out.push(StepPass {
@@ -96,7 +107,7 @@ pub fn insert_step_hydra_kll<V: QuantileValue + 'static>(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.update(&v.0, &v.1.data_input(), None);
+                update(&mut sketch.inner, &v.0, &v.1.data_input(), "hydra-kll");
             }),
             footprint: Box::new(move || memory_hydra_kll(&read.borrow())),
         });
@@ -107,21 +118,82 @@ pub fn insert_step_hydra_kll<V: QuantileValue + 'static>(
 pub fn query_hydra_kll<V: QuantileValue + 'static>(
     params: &ParamSet,
     items: Rc<Vec<(String, V)>>,
-    probes: Rc<Vec<(Vec<String>, f64)>>,
+    probes: Rc<Vec<(Vec<Option<String>>, f64)>>,
     passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    merge_query_hydra_kll(params, items, probes, 1, passes)
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_hydra_kll<V: QuantileValue + 'static>(
+    params: &ParamSet,
+    items: Rc<Vec<(String, V)>>,
+    probes: Rc<Vec<(Vec<Option<String>>, f64)>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    asked_hydra_kll(
+        params,
+        items,
+        probes,
+        shards,
+        passes,
+        HydraKll::estimate_subpop_quantile,
+    )
+}
+
+pub fn query_hydra_kll_cdf<V: QuantileValue + 'static>(
+    params: &ParamSet,
+    items: Rc<Vec<(String, V)>>,
+    probes: Rc<Vec<(Vec<Option<String>>, f64)>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    merge_query_hydra_kll_cdf(params, items, probes, 1, passes)
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_hydra_kll_cdf<V: QuantileValue + 'static>(
+    params: &ParamSet,
+    items: Rc<Vec<(String, V)>>,
+    probes: Rc<Vec<(Vec<Option<String>>, f64)>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    asked_hydra_kll(
+        params,
+        items,
+        probes,
+        shards,
+        passes,
+        HydraKll::estimate_subpop_cdf,
+    )
+}
+
+fn asked_hydra_kll<V: QuantileValue + 'static>(
+    params: &ParamSet,
+    items: Rc<Vec<(String, V)>>,
+    probes: Rc<Vec<(Vec<Option<String>>, f64)>>,
+    shards: usize,
+    passes: usize,
+    estimate: fn(&HydraKll, &[Option<&str>], f64) -> f64,
 ) -> Result<Vec<QueryPass<f64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        // Built and fed here: the closure below asks, and only asks.
-        let mut sketch = build_hydra_kll(params)?;
-        for v in items.iter() {
-            sketch.inner.update(&v.0, &v.1.data_input(), None);
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = hydra_kll_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch
+                .inner
+                .merge(&other.inner)
+                .expect("both operands built from one ParamSet, so grid and cell shapes match");
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for p in probes.iter() {
-                answers.push(sketch.estimate_subpop_quantile(&labels(&p.0), p.1));
+                answers.push(estimate(&sketch, &labels(&p.0), p.1));
             }
             let footprint = memory_hydra_kll(&sketch);
             (answers, footprint)
@@ -187,9 +259,9 @@ fn hydra_kll_shards<V: QuantileValue>(
 ) -> Result<(HydraKll, Vec<HydraKll>), BuildError> {
     let mut parts: Vec<HydraKll> = Vec::new();
     for shard in partition(items, shards) {
-        let mut sketch = build_hydra_kll(params)?;
+        let mut sketch = build_hydra_kll(params, label_columns(items, "hydra-kll")?)?;
         for v in shard {
-            sketch.inner.update(&v.0, &v.1.data_input(), None);
+            update(&mut sketch.inner, &v.0, &v.1.data_input(), "hydra-kll");
         }
         parts.push(sketch);
     }

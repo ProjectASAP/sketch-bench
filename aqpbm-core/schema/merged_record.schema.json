@@ -99,6 +99,9 @@
       "format": "uint64",
       "minimum": 0
     },
+    "merge_accuracy": {
+      "description": "The same comparator as `query_accuracy`, against the same whole-stream\ntruth, scoring the sketch left by folding `merge_shards` shards split\nas `merge_split` says. A linear sketch should match `query_accuracy`\nexactly under either split."
+    },
     "merge_cpu_time_ms": {
       "anyOf": [
         {
@@ -143,6 +146,18 @@
       ],
       "format": "uint",
       "minimum": 0
+    },
+    "merge_split": {
+      "description": "How the stream was split into the `merge_shards` shards.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MergeSplit"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "merge_supported": {
       "type": [
@@ -214,7 +229,7 @@
       ]
     },
     "query_accuracy": {
-      "description": "The comparator's scores. Only this operation has them: accuracy is\nwhat an answer can be scored for, and query is what produces one."
+      "description": "The comparator's scores for the sketch fed the whole stream. Merge\ncarries the same scores for a folded sketch in `merge_accuracy`."
     },
     "query_cpu_time_ms": {
       "anyOf": [
@@ -314,10 +329,12 @@
     "insert_wall_time_ms",
     "language",
     "memory_bytes",
+    "merge_accuracy",
     "merge_cpu_time_ms",
     "merge_heap_allocated_kb",
     "merge_rss_peak_kb",
     "merge_shards",
+    "merge_split",
     "merge_supported",
     "merge_timestamp",
     "merge_wall_time_ms",
@@ -344,6 +361,38 @@
   ],
   "x-schema-version": 5,
   "$defs": {
+    "BurstSpec": {
+      "type": "object",
+      "properties": {
+        "burst_intervals": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "extra_fraction": {
+          "description": "Additional rows per selected interval, relative to its base size.",
+          "type": "number",
+          "format": "double"
+        },
+        "interval_rows": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "seed": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "interval_rows",
+        "burst_intervals",
+        "extra_fraction",
+        "seed"
+      ]
+    },
     "ColumnSpec": {
       "description": "One column of a [`crate::TableDescription`].",
       "type": "object",
@@ -357,12 +406,52 @@
           "format": "uint64",
           "minimum": 0
         },
+        "child_of": {
+          "description": "Index of an earlier `string` column this one nests under, for\nhierarchical labels. A value is the parent row's value, a `.`, and a\nchild index in `[0, fan_out)` drawn from this column's distribution.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
         "data_type": {
           "description": "Which [`ColumnData`] variant this column renders into.",
           "type": "string"
         },
         "distribution": {
           "$ref": "#/$defs/DataDistribution"
+        },
+        "fan_out": {
+          "description": "How many children each parent value has. Required with `child_of`, and\nchecked against the distribution's domain like `cardinality` is.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "scale_by": {
+          "description": "Index of an earlier `string` column whose values scale this one. Each\ndistinct label value gets a fixed factor in `scale_range`, and every\nrow's value is multiplied by its label's factor. `f64` columns only.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "scale_range": {
+          "description": "`[lo, hi]` with `0 < lo <= hi`: the factors are log-uniform in it.\nRequired with `scale_by`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
         },
         "shift": {
           "description": "Added to every value, for a column that should not start where its\ndistribution naturally does. Under the monotonic rule it is the value the\nseries starts from.",
@@ -416,42 +505,124 @@
       "description": "A column's distribution. Serialises internally tagged, so a spec file reads\n`distribution: {kind: zipf, skewness: 1.1, population_size: 200, seed: 1}`.",
       "oneOf": [
         {
+          "description": "Zipfian: rank `r` appears with probability `∝ r^-skewness`, over the ranks\n`1..=population_size`.",
           "type": "object",
           "properties": {
             "kind": {
               "type": "string",
               "const": "zipf"
+            },
+            "population_size": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "seed": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "skewness": {
+              "type": "number",
+              "format": "double"
             }
           },
-          "$ref": "#/$defs/ZipfParameter",
+          "additionalProperties": false,
           "required": [
-            "kind"
+            "kind",
+            "skewness",
+            "population_size",
+            "seed"
           ]
         },
         {
+          "description": "Flat over `[lower_bound, upper_bound)`.",
           "type": "object",
           "properties": {
             "kind": {
               "type": "string",
               "const": "uniform"
+            },
+            "lower_bound": {
+              "type": "number",
+              "format": "double"
+            },
+            "seed": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "upper_bound": {
+              "type": "number",
+              "format": "double"
             }
           },
-          "$ref": "#/$defs/UniformParameter",
+          "additionalProperties": false,
           "required": [
-            "kind"
+            "kind",
+            "lower_bound",
+            "upper_bound",
+            "seed"
           ]
         },
         {
+          "description": "Gaussian. Unbounded, which is why it has no domain (see [`DataDistribution::domain`]).",
           "type": "object",
           "properties": {
             "kind": {
               "type": "string",
               "const": "normal"
+            },
+            "mean": {
+              "type": "number",
+              "format": "double"
+            },
+            "seed": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "standard_deviation": {
+              "type": "number",
+              "format": "double"
             }
           },
-          "$ref": "#/$defs/NormalParameter",
+          "additionalProperties": false,
           "required": [
-            "kind"
+            "kind",
+            "mean",
+            "standard_deviation",
+            "seed"
+          ]
+        },
+        {
+          "description": "Pareto: heavy-tailed, `P(X > x) = (scale / x)^alpha` for `x >= scale`.\nUnbounded above, so like Normal it has no domain.",
+          "type": "object",
+          "properties": {
+            "alpha": {
+              "type": "number",
+              "format": "double"
+            },
+            "kind": {
+              "type": "string",
+              "const": "pareto"
+            },
+            "scale": {
+              "type": "number",
+              "format": "double"
+            },
+            "seed": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "alpha",
+            "scale",
+            "seed"
           ]
         }
       ]
@@ -576,35 +747,26 @@
         "count"
       ]
     },
+    "MergeSplit": {
+      "description": "How a merge run split the stream into its shards.",
+      "oneOf": [
+        {
+          "description": "Each shard a consecutive stretch of the stream.",
+          "type": "string",
+          "const": "contiguous"
+        },
+        {
+          "description": "Round-robin by record over the contiguous split's shard sizes, so each\nshard is a sample of the whole stream.",
+          "type": "string",
+          "const": "interleaved"
+        }
+      ]
+    },
     "Mode": {
       "type": "string",
       "enum": [
         "bench",
         "runtime"
-      ]
-    },
-    "NormalParameter": {
-      "description": "Gaussian. Unbounded, which is why it has no domain (see [`DataDistribution::domain`]).",
-      "type": "object",
-      "properties": {
-        "mean": {
-          "type": "number",
-          "format": "double"
-        },
-        "seed": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "standard_deviation": {
-          "type": "number",
-          "format": "double"
-        }
-      },
-      "required": [
-        "mean",
-        "standard_deviation",
-        "seed"
       ]
     },
     "RunStats": {
@@ -747,30 +909,6 @@
         "row_num"
       ]
     },
-    "UniformParameter": {
-      "description": "Flat over `[lower_bound, upper_bound)`.",
-      "type": "object",
-      "properties": {
-        "lower_bound": {
-          "type": "number",
-          "format": "double"
-        },
-        "seed": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "upper_bound": {
-          "type": "number",
-          "format": "double"
-        }
-      },
-      "required": [
-        "lower_bound",
-        "upper_bound",
-        "seed"
-      ]
-    },
     "WorkloadDescription": {
       "description": "The provenance and selection semantics of the input records.",
       "oneOf": [
@@ -781,6 +919,16 @@
             "synthetic": {
               "type": "object",
               "properties": {
+                "burst": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/BurstSpec"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "description": {
                   "$ref": "#/$defs/TableDescription"
                 }
@@ -808,31 +956,6 @@
             "external"
           ]
         }
-      ]
-    },
-    "ZipfParameter": {
-      "description": "Zipfian: rank `r` appears with probability `∝ r^-skewness`, over the ranks\n`1..=population_size`.",
-      "type": "object",
-      "properties": {
-        "population_size": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "seed": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "skewness": {
-          "type": "number",
-          "format": "double"
-        }
-      },
-      "required": [
-        "skewness",
-        "population_size",
-        "seed"
       ]
     }
   }

@@ -1,0 +1,1178 @@
+#!/usr/bin/env python3
+
+"""Export the accuracy/cost table for the AutoSketch vs ASAPQuery evaluation.
+
+Plan: ProjectASAP/ASAPQuery#777 (docs/evaluation/autosketch-vs-planner.md,
+section 6 "Benchmark input"). One RQE per (dataset, query_id, kind, range) of
+ASAPQuery's dataset-analysis skew_summary.csv, worst case over the whole
+dataset, rounded to the measured grid exactly as recommend_config.py does.
+Every config of every candidate family is listed (no pick), with two lookups:
+
+  autosketch_error  the single-sketch curve at N = max_N. AutoSketch keeps
+                    one sketch per query window and never merges, so it has
+                    no saturation requirement.
+  asap_error_by_m   the error after merging m = 1, 4, 16, 64 shards, at
+                    N = max_N. CMS, CountSketch, HLL and DDSketch merge
+                    exactly, so every m reads the single-sketch curve. KLL and
+                    top-k read the merged curve at m (sketch-bench #131) when
+                    one is given, else the single-sketch curve, flagged.
+                    ASAP merges smaller-window sketches, so it may only use a
+                    value when `saturated` (max_N >= n_sat).
+
+Costs are recommend_config.py's (memory_bytes, insert_ns_per_item,
+merge_us_per_fold, query_phase_us). There is no burst variant: the worst case
+over the whole dataset replaces AutoSketch's synthetic burst injection.
+
+BOOM rows have no timestamps, window or N in skew_summary.csv; boom_query()
+derives them from the 20 equal chunks per series and records the assumptions.
+
+--synthetic writes the synthetic PromQL workload instead (plan section 6,
+"Synthetic workload"): one table per workload-grid point under --out (a
+directory), from synthetic_queries(), plus plan.tsv. These tables hold the
+workload only: RQEs, streams, targets and each family's data shape. The
+evaluation reads costs and accuracy from the saturation study, like the
+planner (sketch-bench #174), so --synthetic takes no curves or costs. Sum and
+rate queries name exact accumulators.
+"""
+
+import argparse
+import collections
+import csv
+import hashlib
+import itertools
+import json
+import math
+import os
+import random
+import re
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from recommend_config import (  # noqa: E402
+    DEFAULT_TARGETS, FAMILIES, KIND_FAMILIES, MERGE_INEXACT, cost_of, error_at, grid_point,
+    load_merge_curves, load_saturation, nominal_size, num, read_summary)
+from study_saturation import COST_KEYS, COST_PARETO_ALPHA, COST_THETA, load_curves  # noqa: E402
+
+SHARD_COUNTS = [1, 4, 16, 64]
+CAPABILITY = {"cms": "freq", "countsketch": "freq", "topk": "topk",
+              "kll": "quantile", "dd": "quantile"}
+
+
+def params_of(config):
+    """'rows=3 cols=1024' -> {"rows": 3, "cols": 1024}."""
+    out = {}
+    for part in config.split():
+        k, v = part.split("=")
+        out[k] = int(v) if v.isdigit() else float(v)
+    return out
+
+
+def saturation_of(srow, n):
+    """(n_sat or None, saturated): saturated when n >= n_sat."""
+    if not srow or srow["n_sat"] == "not_saturated":
+        return None, False
+    n_sat = num(srow["n_sat"])
+    return n_sat, n_sat is not None and n >= n_sat
+
+
+def config_row(q, family, key, cost_key, curves, curves_big, sat, sat_big, merge):
+    """One config's lookups for query-range q, or None without a curve."""
+    curve = curves.get(key)
+    if not curve:
+        return None
+    n = q["max_N"]
+    if n > curve[-1][0] and key in curves_big:
+        curve = curves_big[key]
+    single, single_flag = error_at(curve, n)
+    by_m, m_flags = {}, {}
+    for m in SHARD_COUNTS:
+        if m == 1 or family not in MERGE_INEXACT:
+            by_m[str(m)], m_flags[str(m)] = single, single_flag
+            continue
+        merged = merge.get(key, {}).get(m)
+        if merged:
+            by_m[str(m)], m_flags[str(m)] = error_at(merged, n)
+        else:
+            by_m[str(m)] = single
+            m_flags[str(m)] = "; ".join(
+                x for x in ["no merge curve; single-sketch curve optimistic", single_flag] if x)
+    srow = sat_big.get(key) or sat.get(key)
+    n_sat, saturated = saturation_of(srow, n)
+    cost = cost_of(sat, cost_key, curves[key][-1][0])
+    memory, insert_ns, merge_us, query_us = (None if x == "" else x for x in cost[:4])
+    cost_flag = cost[4]
+    return {
+        "config": key[1], "params": params_of(key[1]),
+        "memory_bytes": memory, "insert_ns_per_item": insert_ns,
+        "merge_us_per_fold": merge_us, "query_phase_us": query_us,
+        "cost_flag": cost_flag,
+        "n_sat": n_sat, "not_saturated_in_grid": bool(srow) and srow["n_sat"] == "not_saturated",
+        "saturated": saturated,
+        "autosketch_error": single, "autosketch_flag": single_flag,
+        "asap_error_by_m": by_m, "asap_flag_by_m": m_flags,
+    }
+
+
+BOOM_CHUNKS = 20
+STEP_UNIT_SECS = {"S": 1, "T": 60, "H": 3600, "D": 86400}
+
+
+def boom_query(r):
+    """A read_summary-shaped query for one BOOM series row.
+
+    One evaluation is one of the series' 20 equal chunks over all variates:
+    N = rows_total / 20, lookback = interval = the chunk's duration, from the
+    series' sampling step in its name (ds-2187-H: hourly). A series without an
+    alpha fit (too few rows, or every variate light) uses the hardest grid
+    alpha for the error and the easiest for memory, flagged by grid_point.
+    """
+    match = re.search(r"-(\d*)([SDHT])\]$", r["query_id"])
+    step = int(match.group(1) or 1) * STEP_UNIT_SECS[match.group(2)]
+    rows, variates = num(r["rows_total"]), num(r["K_total"])
+    n = rows / BOOM_CHUNKS
+    span = round(rows / variates / BOOM_CHUNKS * step)
+    alpha_rank, alpha_memory = num(r["worst_alpha_rank"]), num(r["worst_alpha_memory"])
+    assumptions = [f"N = rows_total / {BOOM_CHUNKS} chunks",
+                   f"lookback = interval = one chunk ({rows / variates / BOOM_CHUNKS:g} "
+                   f"steps of {step} s)"]
+    if alpha_rank is None:
+        alpha_rank, alpha_memory = math.inf, 0.0
+        assumptions.append("no alpha fit: hardest grid alpha for error, easiest for memory")
+    q = {"dataset": r["dataset"], "query_id": r["query_id"], "kind": r["kind"],
+         "range": f"chunk_of_{BOOM_CHUNKS}", "range_s": span, "step_s": span,
+         "theta": None, "K": None, "min_N": n, "max_N": n,
+         "alpha_rank": alpha_rank, "alpha_memory": alpha_memory,
+         "tail_class": r.get("tail_class", ""), "assumptions": assumptions}
+    for t, default in DEFAULT_TARGETS.items():
+        q[t] = default if num(r.get(t)) is None else num(r.get(t))
+    return q
+
+
+def queries(path):
+    """read_summary's queries, plus one per BOOM series (read_summary drops them)."""
+    out = read_summary(path)
+    with open(path, newline="") as f:
+        out += [boom_query(r) for r in csv.DictReader(f) if r["dataset"] == "boom"]
+    return out
+
+
+def rqe_entry(q, curves, curves_big, sat, sat_big, merge):
+    """The table entry for one skew_summary query-range."""
+    instant = not q["range_s"]
+    # An instant query reads one step's samples (max_N counts one step window).
+    lookback = q["step_s"] if instant else q["range_s"]
+    families = []
+    for family in KIND_FAMILIES[q["kind"]]:
+        sketch, target_col, higher_better = FAMILIES[family]
+        points = [k for k in curves if k[0] == sketch]
+        if not points:
+            continue
+        param, cost_param, card, common = grid_point(q, points)
+        rows = []
+        for config in sorted({k[1] for k in points}, key=nominal_size):
+            key = (sketch, config, points[0][2], float(param), card)
+            cost_key = (sketch, config, key[2], float(cost_param), card)
+            row = config_row(q, family, key, cost_key, curves, curves_big, sat, sat_big, merge)
+            if row:
+                rows.append(row)
+        if not rows:
+            continue
+        metric = (sat.get(key) or sat_big.get(key) or {}).get("error_metric", "")
+        families.append({
+            "family": family, "capability": CAPABILITY[family], "sketch": sketch,
+            "error_metric": metric, "higher_is_better": higher_better,
+            "target": q[target_col], "grid_param": param, "grid_K": card,
+            "flags": [x for x in common if x], "configs": rows,
+        })
+    return {
+        "id": f"{q['dataset']}/{q['query_id']}/{q['kind']}/{q['range']}",
+        "dataset": q["dataset"], "query_id": q["query_id"], "kind": q["kind"],
+        "range": q["range"], "instant": instant,
+        "lookback_secs": lookback, "interval_secs": q["step_s"],
+        "min_N": q["min_N"], "max_N": q["max_N"],
+        # One sketch per query: group-by values are the sketch's keys, not
+        # separate instances (README, "Label sets").
+        "label_set": {"groups": 1,
+                      "arrival_rate_per_sec": q["max_N"] / lookback if lookback else None,
+                      "keys_per_window": q["K"]},
+        "assumptions": q.get("assumptions", []) + (
+            ["instant: lookback = one step (max_N counts one step window)"] if instant else []),
+        "families": families,
+    }
+
+
+# synthetic workload (ProjectASAP/ASAPQuery#777 section 6, "Data model and
+# scale"): one metric with C series (label_0, the top-k key) in J jobs, each
+# series scraped every 5 ms. The data is fixed; the grid varies the queries.
+# The data is the cost table's (study_saturation.py --phase optimizer-cost):
+# Zipf θ over C keys, and quantiles on Pareto a, so costs, curves and the
+# evaluation share one dataset.
+SYNTHETIC_SERIES = COST_KEYS
+SYNTHETIC_JOBS = 10
+SYNTHETIC_SAMPLES_PER_SEC = 200
+SYNTHETIC_THETA = COST_THETA
+SYNTHETIC_ALPHA = COST_PARETO_ALPHA
+SYNTHETIC_WINDOWS = "15m,1h,6h,24h"
+SYNTHETIC_INTERVAL = 60
+SYNTHETIC_QUANTILES = ["0.5", "0.75", "0.9", "0.95", "0.99"]
+SYNTHETIC_FAMILIES = {"sum": ["exact-sum"], "rate": ["exact-increase"], "topk": ["topk"],
+                      "quantile": ["kll", "dd"], "cardinality": ["hll"]}
+SYNTHETIC_SKETCHES = {**FAMILIES, "hll": ("hll", "target_hll_rel_err", False)}
+EXACT_SKETCH = {"exact-sum": "exact-sum", "exact-increase": "exact-increase"}
+WINDOW_SECS = {"1m": 60, "5m": 300, "10m": 600, "15m": 900, "1h": 3600, "6h": 21600,
+               "24h": 86400}
+SERIES_LABELS = ["job", "label_0"]  # a classic metric's labels
+# Capabilities an expression-tree leaf can read (no rate); a topk leaf is
+# named topk_by_value.
+LEAF_CAPABILITIES = {"sum", "quantile", "cardinality", "topk"}
+DASHBOARD_QUANTILES = ["0.5", "0.9", "0.99"]
+DASHBOARD_FIXED_WINDOWS = ["15m", "1h"]  # D5
+# Shared replicas: each replica draws windows, quantiles and an interval.
+SHARED_WINDOWS = 3
+SHARED_QUANTILES = 3
+SHARED_INTERVALS = [10, 60, 300]
+SHARED_SEED = 7
+# "classic" is the mixed set (templates 1-6, 8 and 10; 7 and 9 are dropped,
+# see synthetic_queries()); "all" adds the multi-grouping
+# templates below; "multigroup" is the multi-grouping templates alone.
+TEMPLATE_SETS = ["dashboard", "classic", "all", "multigroup"]
+# Workload grid (#777 section 6): for each of SYNTHETIC_TEMPLATE_SETS, the
+# default point, then each scaling dimension alone. One accuracy level, 95% in each family's metric
+# (the runner's p95). `shared` replicas read one metric (the sharing benefit);
+# `metrics` copies of the template set each read their own metric, so RQEs
+# grow as m times the set's (planning time vs. RQEs).
+SYNTHETIC_DEFAULT = {"templates": "all", "shared": 1, "metrics": 1, "target": "p95"}
+SYNTHETIC_GRID = {
+    "shared": [1, 8],
+    "metrics": [1, 8, 16],
+}
+SYNTHETIC_TEMPLATE_SETS = ["all", "classic", "multigroup"]
+
+# Multi-grouping templates (sketch-bench docs/rqe_optimizer_hydra.md): two
+# metrics with an ordered label schema, each value read at several groupings
+# on one stream, so a fine deployment can serve a coarse RQE (a roll-up) and
+# one Hydra grid can serve them all. A label has `cardinality` values, or,
+# with `child_of`, that many under each parent value (aqpbm-datagen's fan-out:
+# the value is "parent.i"), drawn Zipf(`skew`) independently of the other
+# labels given its parent. A value names its families' data shape: Zipf θ over
+# `keys` distinct values (distinct counts), or the Pareto tail index
+# (quantiles). The runner reads the shape, the groups and their shares
+# (group_coverage()); the rest (latency scaling, the anomaly, the burst's
+# sources) describes the data and is not modeled. Rates are the classic set's 2e6 samples/s,
+# doubled for flows so its finest grouping (1e6 groups) holds the curves'
+# first N (1e3 items) in a 5m window.
+SCHEMAS = {
+    "http": {
+        "labels": [
+            {"name": "region", "cardinality": 4, "skew": 0.5},
+            {"name": "service", "cardinality": 25, "skew": 1.1},
+            {"name": "endpoint", "cardinality": 25, "child_of": "service", "skew": 1.1},
+            {"name": "status", "cardinality": 4, "skew": 2.0},
+        ],
+        "rate": SYNTHETIC_SERIES * SYNTHETIC_SAMPLES_PER_SEC,
+        "values": {
+            "user_id": {"zipf": 0.8, "keys": 1_000_000},
+            # Each service's latencies scaled by its own factor; one endpoint
+            # is 10x slower (the anomaly). Scaling keeps the tail index.
+            "latency": {"pareto": SYNTHETIC_ALPHA, "scaled_by": "service",
+                        "anomaly": {"label": "endpoint", "factor": 10}},
+        },
+    },
+    "flows": {
+        "labels": [
+            {"name": "dst_subnet", "cardinality": 1000, "skew": 1.1},
+            {"name": "dst_port", "cardinality": 1000, "skew": 1.2},
+            {"name": "proto", "cardinality": 3, "skew": 0.0},
+        ],
+        "rate": 2 * SYNTHETIC_SERIES * SYNTHETIC_SAMPLES_PER_SEC,
+        "values": {
+            # Uniform background sources, plus a DDoS burst: a tail subnet
+            # (the least popular, value 999) gets 5% of the traffic from 1e4
+            # distinct sources, which makes it a group of share >= 5%.
+            "src_ip": {"zipf": 0.0, "keys": 1_000_000,
+                       "burst": {"label": "dst_subnet", "value": 999, "share": 0.05,
+                                 "keys": 10_000}},
+        },
+    },
+}
+SCHEMA_WINDOWS = "5m,15m"
+SCHEMA_MIN_COVERED_N = 1e3
+# Set by --samples-per-sec: a schema RQE whose smallest covered group falls
+# below SCHEMA_MIN_COVERED_N is left out (logged) instead of failing.
+SKIP_BELOW_CURVES = False
+# Set by --keep-duplicate-queries: every template's copy of a query is an
+# RQE. Otherwise only the strictest copy is, since the engine answers one
+# query string from one aggregation.
+KEEP_DUPLICATE_QUERIES = False
+
+
+def check_unique_ids(rqes):
+    duplicates = sorted(i for i, n in collections.Counter(r["id"] for r in rqes).items()
+                        if n > 1)
+    if duplicates:
+        raise ValueError(f"duplicate RQE ids: {duplicates}")
+
+
+def divides_1000(rate):
+    """Whether series scraped `rate` times a second are scraped every whole
+    number of ms, as the runner requires."""
+    return (isinstance(rate, int) and not isinstance(rate, bool) and rate > 0
+            and 1000 % rate == 0)
+
+
+def set_samples_per_sec(rate, skip_below_curves):
+    """Scrapes each series `rate` times a second (SYNTHETIC_SAMPLES_PER_SEC)
+    and scales the schema metrics' rates with it; with `skip_below_curves`,
+    schema RQEs below the curves' first N are left out."""
+    global SYNTHETIC_SAMPLES_PER_SEC, SKIP_BELOW_CURVES
+    for schema in SCHEMAS.values():
+        schema["rate"] = schema["rate"] // SYNTHETIC_SAMPLES_PER_SEC * rate
+    SYNTHETIC_SAMPLES_PER_SEC, SKIP_BELOW_CURVES = rate, skip_below_curves
+
+
+def all_subsets(metric, names=None):
+    """Every non-empty subset of `names` (default: all of `metric`'s labels),
+    in schema order."""
+    names = names or [label["name"] for label in SCHEMAS[metric]["labels"]]
+    return [list(c) for n in range(1, len(names) + 1) for c in itertools.combinations(names, n)]
+
+
+# (template, query, metric, value, capability, groupings, covers_share): one
+# RQE per grouping and window. `covers_share` is the accuracy target's scope:
+# only groups holding at least that share of the items (None: every group).
+SCHEMA_TEMPLATES = [
+    (11, "distinct_src", "flows", "src_ip", "cardinality", [["dst_subnet"]], 0.05),
+    (12, "distinct_src", "flows", "src_ip", "cardinality",
+     [["dst_port"], ["dst_subnet", "proto"], ["dst_port", "proto"]], 0.05),
+    (14, "distinct_users", "http", "user_id", "cardinality",
+     [["region"], ["service"], ["region", "service"], ["service", "endpoint"]], 0.01),
+    (15, "distinct_users", "http", "user_id", "cardinality", all_subsets("http"), 0.05),
+    # p99 latency GROUP BY CUBE(region, service, endpoint): every grouping of
+    # three labels, which one deployment at the finest serves by roll-ups.
+    (16, "p99_latency", "http", "latency", "quantile",
+     all_subsets("http", ["region", "service", "endpoint"]), None),
+    # Negative control: every group, the smallest included.
+    (17, "distinct_users", "http", "user_id", "cardinality", [["service", "endpoint"]], None),
+]
+
+
+def closed_labels(schema_labels, grouping):
+    """`grouping`'s labels with every child's ancestors (a child value names
+    its parent), in the order of `schema_labels` (SCHEMAS' format)."""
+    labels = {label["name"]: label for label in schema_labels}
+    closed, todo = set(), list(grouping)
+    while todo:
+        name = todo.pop()
+        if name not in closed:
+            closed.add(name)
+            todo += [labels[name]["child_of"]] if "child_of" in labels[name] else []
+    return [labels[name] for name in labels if name in closed]
+
+
+def grouping_cardinality(metric, grouping):
+    """Groups of `grouping` on `metric`: the product of its labels' fan-outs,
+    with every child's ancestors included."""
+    return labels_cardinality(SCHEMAS[metric]["labels"], grouping)
+
+
+def labels_cardinality(schema_labels, grouping):
+    """grouping_cardinality() on `schema_labels` (SCHEMAS' format)."""
+    return math.prod(label["cardinality"] for label in closed_labels(schema_labels, grouping))
+
+
+def label_shares(metric, label):
+    """Each value's share of `metric`'s records (a child's: given its parent):
+    Zipf(`skew`), mixed with a value's burst."""
+    weights = [(i + 1) ** -label["skew"] for i in range(label["cardinality"])]
+    shares = [w / sum(weights) for w in weights]
+    for value in SCHEMAS[metric]["values"].values():
+        burst = value.get("burst")
+        if burst and burst["label"] == label["name"]:
+            shares = [(1 - burst["share"]) * p for p in shares]
+            shares[burst["value"]] += burst["share"]
+    return shares
+
+
+def group_coverage(metric, grouping, covers_share):
+    """(covered groups, smallest and largest covered group's share of the
+    records) of an RQE at `grouping` covering groups of share >=
+    `covers_share`, plus always the largest group (None: every group). A group's share is the product of
+    its labels' shares: labels are drawn independently given their parents."""
+    marginals = [sorted(label_shares(metric, label), reverse=True)
+                 for label in closed_labels(SCHEMAS[metric]["labels"], grouping)]
+    largest = math.prod(m[0] for m in marginals)
+    if covers_share is None:
+        return (grouping_cardinality(metric, grouping), math.prod(m[-1] for m in marginals),
+                largest)
+    # Enumerate the groups of share >= covers_share, largest values first;
+    # a prefix whose best completion falls short ends its loop.
+    best_rest = [math.prod(m[0] for m in marginals[i:]) for i in range(len(marginals) + 1)]
+    covered = []
+
+    def walk(i, share):
+        if i == len(marginals):
+            covered.append(share)
+            return
+        for p in marginals[i]:
+            if share * p * best_rest[i + 1] < covers_share:
+                break
+            walk(i + 1, share * p)
+
+    walk(0, 1.0)
+    covered = covered or [largest]
+    return len(covered), min(covered), largest
+
+
+def synthetic_plan():
+    """Per template set, the default point and every dimension varied alone,
+    each a full dict."""
+    points = []
+    for templates in SYNTHETIC_TEMPLATE_SETS:
+        default = {**SYNTHETIC_DEFAULT, "templates": templates}
+        points.append(default)
+        for dim, values in SYNTHETIC_GRID.items():
+            points += [{**default, dim: v} for v in values]
+    unique = []
+    for p in points:
+        if p not in unique:
+            unique.append(p)
+    return unique
+
+
+def point_id(point):
+    """`templates=dashboard/shared=8` (plus `/metrics=m` past one metric): the
+    table's name segments."""
+    base = f"templates={point['templates']}/shared={point['shared']}"
+    metrics = point.get("metrics", 1)
+    return base if metrics == 1 else f"{base}/metrics={metrics}"
+
+
+def rqe_leaf(rqe, metric, capability, lookback_s, grouping, phi=None, k=None, value=None,
+             topk_by=None):
+    """An expression-tree leaf reading RQE `rqe`, whose output is grouped by
+    `grouping` (a top-k ranks within each `topk_by` group, else over all);
+    None for a capability no leaf reads (rate)."""
+    if capability not in LEAF_CAPABILITIES:
+        return None
+    if capability == "topk":
+        capability = "topk_by_value"
+    leaf = {"id": rqe, "metric": metric, "capability": capability,
+            "lookback_ms": round(lookback_s * 1000), "grouping": list(grouping)}
+    leaf.update((key, v) for key, v in [("phi", phi), ("k", k), ("value", value),
+                                        ("topk_by", topk_by)] if v is not None)
+    return {"rqe": leaf}
+
+
+def synthetic_queries(windows=SYNTHETIC_WINDOWS, interval=SYNTHETIC_INTERVAL,
+                      templates="dashboard", quantiles=None, dataset=None,
+                      range_with_interval=False, seen=None, metric=None, e2e=None):
+    """The `synthetic` queries as read_summary-shaped query-ranges, one per RQE.
+
+    Streams: `series/*` hold one instance per series (C groups), `job/*` one per
+    job (J groups), and `label_0/*` one top-k sketch over all C series as keys.
+    `*/dist` streams feed quantile sketches, `*/value` sums, `*/increment`
+    increases. Spatial templates repeat every 1 s and, like a PromQL instant
+    query, read one sample per series: one scrape interval (S = 1 /
+    SYNTHETIC_SAMPLES_PER_SEC s, T = 1 s); temporal ones repeat every `interval` seconds over each
+    lookback in `windows`. RQEs that repeat another's query and range (template
+    10, D5) are kept once. Templates 7, `sum by (job) (rate(data_total[w]))`,
+    and 9, `topk(32, sum by (label_0) (rate(data_total[w])))`, are dropped
+    (and the dashboard's rates by job and top-k by rate with them): ASAPQuery
+    would need per-series counter deltas to serve them. With `metric`, every stream and query id names it,
+    so the queries share nothing with another metric's. `all` adds
+    schema_queries() to the `classic` set.
+
+    With `e2e` (a list), the `classic` templates append their PromQL to it,
+    one {promql, interval_secs, rqes, expr} per query (e2e_block()), and the
+    schema templates their query fields (schema_queries()). `expr` is the
+    query's RQE expression tree (rqe_leaf()); a rate query has none. Values are
+    read from the gauge `data`, increments from the counter `data_total`.
+    """
+    rate = SYNTHETIC_SERIES * SYNTHETIC_SAMPLES_PER_SEC  # samples/s over all series
+    scrape = 1 / SYNTHETIC_SAMPLES_PER_SEC  # an instant query's lookback, in s
+    dataset = dataset or "synthetic/" + point_id({"templates": templates, "shared": 1})
+    ranges = [(w, WINDOW_SECS[w]) for w in windows.split(",")]
+    seen = set() if seen is None else seen
+    out = []
+
+    def label(rng):
+        return f"{rng}@{interval}s" if range_with_interval else rng
+
+    def add(query_id, stream, capability, rng, s, t, groups, keys=None, promql=None,
+            grouping=SERIES_LABELS, **leaf):
+        """Adds the RQE (once) and its query `promql`, grouped by `grouping`,
+        with `leaf`'s rqe_leaf() fields; returns the RQE's id."""
+        if metric:
+            query_id, stream = f"{query_id}_{metric}", f"{metric}/{stream}"
+        kind = "values" if capability == "quantile" else "keys"
+        rqe = f"{dataset}/{query_id}/{kind}/{rng}"
+        if promql and e2e is not None:
+            query = {"promql": promql, "interval_secs": t, "rqes": [rqe]}
+            expr = rqe_leaf(rqe, gauge, capability, s, grouping, **leaf)
+            e2e.append({**query, "expr": expr} if expr else query)
+        if (query_id, rng) in seen:
+            return rqe
+        seen.add((query_id, rng))
+        out.append({
+            "dataset": dataset, "query_id": query_id, "kind": kind,
+            "range": rng, "range_s": s, "step_s": t, "theta": SYNTHETIC_THETA, "K": keys,
+            "min_N": rate * s / groups, "max_N": rate * s / groups,
+            "alpha_rank": SYNTHETIC_ALPHA, "alpha_memory": SYNTHETIC_ALPHA, "tail_class": "",
+            "families": SYNTHETIC_FAMILIES[capability], "capability": capability,
+            "stream": stream, "metric": metric or "data", "groups": groups,
+            "arrival_rate": rate,
+            "assumptions": [],
+            **DEFAULT_TARGETS,
+        })
+        return rqe
+
+    C, J = SYNTHETIC_SERIES, SYNTHETIC_JOBS
+    gauge = metric or "data"
+    counter = f"{gauge}_total"
+    if templates == "dashboard":
+        quantiles = quantiles or DASHBOARD_QUANTILES
+        for rng, s in ranges:
+            for q in quantiles:
+                add(f"quantile_over_time_p{q}", "series/dist", "quantile", label(rng), s,
+                    interval, C)
+        for q in quantiles:
+            add(f"quantile_by_job_p{q}", "job/dist", "quantile", "1s", scrape, 1, J)
+        for rng, s in [(w, WINDOW_SECS[w]) for w in DASHBOARD_FIXED_WINDOWS]:
+            if (rng, s) not in ranges:
+                continue
+            for q in ["0.99", "0.5"]:  # D5, the same RQEs as D1's
+                add(f"quantile_over_time_p{q}", "series/dist", "quantile", label(rng), s,
+                    interval, C)
+        return out
+    if templates == "multigroup":
+        return schema_queries(interval, dataset, range_with_interval, seen, metric, e2e)
+    assert templates in ("classic", "all"), templates
+    quantiles = quantiles or SYNTHETIC_QUANTILES
+    add("sum_by_job", "job/value", "sum", "1s", scrape, 1, J, promql=f"sum by (job) ({gauge})",
+        grouping=["job"])
+    for q in quantiles:
+        add(f"quantile_by_job_p{q}", "job/dist", "quantile", "1s", scrape, 1, J,
+            promql=f"quantile by (job) ({q}, {gauge})", grouping=["job"], phi=float(q))
+    for rng, s in ranges:
+        lbl = label(rng)
+        # Template 2's PromQL omits `sum by (label_0)`: label_0 names one
+        # series (child_of job, unique values), so it only drops `job`, and
+        # the ranking and values are the same. ASAPQuery's planner supports
+        # this two-level shape, not the three-level one (#744, #772).
+        add("topk32_sum_by_label0_sum_over_time", "label_0/value", "topk", lbl, s, interval,
+            1, C, promql=f"topk(32, sum_over_time({gauge}[{rng}]))", k=32)
+        add("sum_over_time", "series/value", "sum", lbl, s, interval, C,
+            promql=f"sum_over_time({gauge}[{rng}])")
+        for q in quantiles:
+            add(f"quantile_over_time_p{q}", "series/dist", "quantile", lbl, s, interval, C,
+                promql=f"quantile_over_time({q}, {gauge}[{rng}])", phi=float(q))
+        add("rate", "series/increment", "rate", lbl, s, interval, C,
+            promql=f"rate({counter}[{rng}])")
+        add("sum_by_job_sum_over_time", "job/value", "sum", lbl, s, interval, J,
+            promql=f"sum by (job) (sum_over_time({gauge}[{rng}]))", grouping=["job"])
+        # Template 10, the same RQEs as template 5's: one query reads both.
+        rqes = [add(f"quantile_over_time_p{q}", "series/dist", "quantile", lbl, s, interval, C)
+                for q in ["0.9", "0.5"]]
+        if e2e is not None:
+            lhs, rhs = (rqe_leaf(rqe, gauge, "quantile", s, SERIES_LABELS, phi=phi)
+                        for rqe, phi in zip(rqes, [0.9, 0.5]))
+            e2e.append({"promql": f"quantile_over_time(0.9, {gauge}[{rng}]) / "
+                                  f"quantile_over_time(0.5, {gauge}[{rng}])",
+                        "interval_secs": interval, "rqes": rqes,
+                        "expr": {"op": "/", "lhs": lhs, "rhs": rhs}})
+    if templates == "all":
+        out += schema_queries(interval, dataset, range_with_interval, seen, metric, e2e)
+    return out
+
+
+def schema_query(name, value, capability, what, grouping):
+    """A schema template's query on `grouping`: the fields that make it
+    one query string."""
+    query = {"table": name, "value": value, "capability": capability, "grouping": grouping}
+    if capability == "quantile":  # p99_latency -> 0.99
+        query["quantile"] = int(what[1:what.index("_")]) / 100
+    return query
+
+
+def strictest_templates():
+    """{query: (number of templates asking it, the strictest one's number)}
+    over SCHEMA_TEMPLATES. Stricter covers more groups: every group (None),
+    then the smallest `covers_share`."""
+    copies = {}
+    for n, what, name, value, capability, groupings, covers in SCHEMA_TEMPLATES:
+        for grouping in groupings:
+            key = json.dumps(schema_query(name, value, capability, what, grouping),
+                             sort_keys=True)
+            copies.setdefault(key, []).append((covers is not None, covers or 0, n))
+    return {key: (len(c), min(c)[2]) for key, c in copies.items()}
+
+
+def schema_queries(interval, dataset, range_with_interval, seen, metric=None, e2e=None):
+    """SCHEMA_TEMPLATES as synthetic_queries' query-ranges, over
+    SCHEMA_WINDOWS, repeating every `interval` seconds. A metric's values are
+    its streams (`http/user_id`); each RQE names its `grouping` and
+    `covers_share`, and carries its metric's schema. With `metric`, the
+    schema metrics are named under it (`data_1/http`).
+
+    With `e2e` (a list), each RQE appends its query's fields and canonical
+    ASAPQuery SQL (there is no PromQL): {sql, table, value,
+    capability, grouping, quantile (quantiles only), window_secs,
+    interval_secs, rqes, expr}. `table` is the metric with `/` as `_`
+    (`data_1_http`); `expr` is one rqe_leaf() on it.
+
+    A query several templates ask (14, 15 and 17 share groupings) is only
+    its strictest template's RQE, unless KEEP_DUPLICATE_QUERIES."""
+    out = []
+    strictest = strictest_templates()
+    for n, what, name, value, capability, groupings, covers in SCHEMA_TEMPLATES:
+        schema = SCHEMAS[name]
+        shape = schema["values"][value]
+        full = f"{metric}/{name}" if metric else name
+        for grouping in groupings:
+            copies, keep = strictest[json.dumps(
+                schema_query(name, value, capability, what, grouping), sort_keys=True)]
+            if not KEEP_DUPLICATE_QUERIES and keep != n:
+                continue
+            groups = grouping_cardinality(name, grouping)
+            query_id = f"t{n}_{what}_by_{','.join(grouping)}"
+            if metric:
+                query_id = f"{query_id}_{metric}"
+            for w in SCHEMA_WINDOWS.split(","):
+                s = WINDOW_SECS[w]
+                rng = f"{w}@{interval}s" if range_with_interval else w
+                if (query_id, rng) in seen:
+                    continue
+                seen.add((query_id, rng))
+                kind = "values" if capability == "quantile" else "keys"
+                n_items = schema["rate"] * s / groups
+                covered, min_share, max_share = group_coverage(name, grouping, covers)
+                covered_min_n = schema["rate"] * s * min_share
+                # Accuracy is read at the smallest covered group: keep it on
+                # the curves (their first N is 1e3). Below them the runner
+                # can't serve the RQE, so a lower --samples-per-sec leaves it
+                # (and its e2e query) out.
+                if SKIP_BELOW_CURVES and covered_min_n < SCHEMA_MIN_COVERED_N:
+                    # A weaker template's copy might fit, but serving the
+                    # query at a weaker target would change the workload.
+                    if not KEEP_DUPLICATE_QUERIES and copies > 1:
+                        raise ValueError(
+                            f"{dataset}/{query_id}/{kind}/{rng}, the strictest of {copies} "
+                            f"templates asking its query, has a covered group of "
+                            f"{covered_min_n:.0f} items, below the curves' first N")
+                    print(f"left out {dataset}/{query_id}/{kind}/{rng}: smallest covered "
+                          f"group holds {covered_min_n:.0f} items, below the curves' first N",
+                          file=sys.stderr)
+                    continue
+                assert covered_min_n >= SCHEMA_MIN_COVERED_N, (query_id, rng, covered_min_n)
+                if e2e is not None:
+                    query = schema_query(full.replace("/", "_"), value, capability, what,
+                                         grouping)
+                    query["sql"] = asapquery_sql(query, s)
+                    rqe = f"{dataset}/{query_id}/{kind}/{rng}"
+                    e2e.append({**query, "window_secs": s, "interval_secs": interval,
+                                "rqes": [rqe],
+                                "expr": rqe_leaf(rqe, query["table"], capability, s, grouping,
+                                                 phi=query.get("quantile"), value=value)})
+                out.append({
+                    "dataset": dataset, "query_id": query_id, "kind": kind,
+                    "range": rng, "range_s": s, "step_s": interval,
+                    "theta": shape.get("zipf"), "K": shape.get("keys"),
+                    "min_N": n_items, "max_N": n_items,
+                    "alpha_rank": shape.get("pareto"), "alpha_memory": shape.get("pareto"),
+                    "tail_class": "",
+                    "families": SYNTHETIC_FAMILIES[capability], "capability": capability,
+                    "stream": f"{full}/{value}", "metric": full, "groups": groups,
+                    "arrival_rate": schema["rate"],
+                    "grouping": grouping, "covers_share": covers, "schema": schema,
+                    "covered_groups": covered, "min_covered_share": min_share,
+                    "covered_min_N": covered_min_n, "max_covered_share": max_share,
+                    "covered_max_N": schema["rate"] * s * max_share,
+                    "assumptions": [],
+                    **DEFAULT_TARGETS,
+                })
+    return out
+
+
+def asapquery_sql(query, window_secs):
+    """Canonical ASAPQuery SQL for a structured schema query.
+
+    The end-to-end planner replaces NOW() with its floored evaluation time,
+    leaving this exporter as the single renderer for these queries.
+    """
+    group = ", ".join(query["grouping"])
+    if query["capability"] == "cardinality":
+        aggregate = f"COUNT(DISTINCT {query['value']})"
+    else:
+        assert query["capability"] == "quantile", query["capability"]
+        aggregate = f"QUANTILE({query['quantile']}, {query['value']})"
+    return (f"SELECT {group}, {aggregate} FROM {query['table']} WHERE ts BETWEEN "
+            f"DATEADD(s, -{window_secs}, NOW()) AND NOW() GROUP BY {group}")
+
+
+def shared_queries(point, e2e=None):
+    """`point["shared"]` replicas of the point's template set on the same streams.
+    Replica i draws SHARED_WINDOWS of the windows, SHARED_QUANTILES of the
+    set's quantiles and an interval from SHARED_INTERVALS (seeded); identical
+    RQEs across replicas are kept once."""
+    dataset = "synthetic/" + point_id(point)
+    windows = SYNTHETIC_WINDOWS.split(",")
+    pool = DASHBOARD_QUANTILES if point["templates"] == "dashboard" else SYNTHETIC_QUANTILES
+    seen, out = set(), []
+    for i in range(point["shared"]):
+        rng = random.Random(f"{SHARED_SEED}/{i}")
+        picked = rng.sample(windows, min(SHARED_WINDOWS, len(windows)))
+        quantiles = sorted(rng.sample(pool, min(SHARED_QUANTILES, len(pool))), key=float)
+        interval = rng.choice(SHARED_INTERVALS)
+        out += synthetic_queries(",".join(sorted(picked, key=WINDOW_SECS.get)), interval,
+                                 point["templates"], quantiles, dataset, True, seen, e2e=e2e)
+    return out
+
+
+def metric_queries(point, e2e=None):
+    """`point["metrics"]` copies of the point's template set, copy i on its own
+    metric `data_i`: nothing is shared across copies."""
+    dataset = "synthetic/" + point_id(point)
+    return [q for i in range(point["metrics"])
+            for q in synthetic_queries(templates=point["templates"], dataset=dataset,
+                                       metric=f"data_{i}", e2e=e2e)]
+
+
+def synthetic_entry(q):
+    """The table entry for one `synthetic` query-range: the workload only.
+    Each family names its sketch, target and data shape (θ and K, or the
+    Pareto a for quantiles); exact accumulators need no shape. A
+    schema_queries() RQE also names its `grouping`, `covers_share` and its
+    coverage (group_coverage())."""
+    families = []
+    for family in q["families"]:
+        if family in EXACT_SKETCH:
+            families.append({"family": family, "sketch": EXACT_SKETCH[family],
+                             "target": 0.0, "grid_param": None, "grid_K": None})
+            continue
+        sketch, target_col, _ = SYNTHETIC_SKETCHES[family]
+        quantile = q["capability"] == "quantile"
+        families.append({
+            "family": family, "sketch": sketch, "target": q[target_col],
+            "grid_param": q["alpha_rank"] if quantile else q["theta"],
+            "grid_K": None if quantile else q["K"],
+        })
+    entry = {
+        "id": f"{q['dataset']}/{q['query_id']}/{q['kind']}/{q['range']}",
+        "dataset": q["dataset"], "query_id": q["query_id"], "kind": q["kind"],
+        "range": q["range"], "instant": False,
+        "lookback_secs": q["range_s"], "interval_secs": q["step_s"],
+        "min_N": q["min_N"], "max_N": q["max_N"],
+        "queries_per_instance": queries_per_instance(q),
+        "stream": q["stream"], "metric": q["metric"], "capability": q["capability"],
+        # keys_per_window: the value's universe K (the families' grid_K), not
+        # the distinct keys one group sees in a window.
+        "label_set": {"groups": q["groups"], "arrival_rate_per_sec": q["arrival_rate"],
+                      "keys_per_window": q["K"]},
+        "assumptions": q["assumptions"],
+        "families": families,
+    }
+    if "grouping" in q:
+        # max_N is the mean group's items per window; covered_min_N and
+        # covered_max_N the smallest and largest covered group's
+        # (min_covered_share and max_covered_share of the stream's).
+        entry.update({k: q[k] for k in ["grouping", "covers_share", "covered_groups",
+                                        "min_covered_share", "covered_min_N",
+                                        "max_covered_share", "covered_max_N"]})
+    return entry
+
+
+def e2e_block(qs, queries):
+    """What an end-to-end run of a table needs: the `queries` (one entry per
+    distinct query and interval, with the RQEs it reads; a binary query reads
+    two) and the `metrics` to generate. The runner reads only a metric's
+    `samples_per_sec_per_series`, as its scrape rate.
+    Classic queries are PromQL; each classic metric is a gauge (`value` and
+    `dist` streams) and a counter `<metric>_total` (`increment` streams), with
+    labels in SCHEMAS' format: `label_0` has SYNTHETIC_SERIES /
+    SYNTHETIC_JOBS values under each `job` (`child_of`), so there are
+    SYNTHETIC_SERIES series. Schema queries are schema_queries()' fields, one
+    per distinct query (with every RQE it reads, sorted; one reading several
+    has no `expr`, as no single leaf names them); each schema metric
+    is a `records` table (`http`, or `data_1_http` under metric `data_1`)
+    with SCHEMAS' labels, `rate` as `records_per_sec`, and its `values`."""
+    unique = {}
+    for q in queries:
+        if "promql" in q:
+            unique.setdefault((q["promql"], q["interval_secs"]), q)
+            continue
+        # Schema queries identical but for their RQEs (templates 14, 15, 17
+        # share groupings) are one query reading them all.
+        key = json.dumps({k: v for k, v in q.items() if k not in ("rqes", "expr")},
+                         sort_keys=True)
+        if key in unique:
+            merged = {k: v for k, v in unique[key].items() if k != "expr"}
+            unique[key] = {**merged, "rqes": sorted(unique[key]["rqes"] + q["rqes"])}
+        else:
+            unique[key] = q
+    labels = [{"name": "job", "cardinality": SYNTHETIC_JOBS},
+              {"name": "label_0", "cardinality": SYNTHETIC_SERIES // SYNTHETIC_JOBS,
+               "child_of": "job"}]
+    keys = {"zipf": SYNTHETIC_THETA, "keys": SYNTHETIC_SERIES}
+    metrics = {}
+    for gauge in dict.fromkeys(q["metric"] for q in qs if "schema" not in q):
+        common = {"labels": labels, "samples_per_sec_per_series": SYNTHETIC_SAMPLES_PER_SEC}
+        metrics[gauge] = {"type": "gauge", **common,
+                          "values": {"value": keys, "dist": {"pareto": SYNTHETIC_ALPHA}}}
+        metrics[f"{gauge}_total"] = {"type": "counter", **common,
+                                     "values": {"increment": keys}}
+    for q in qs:
+        if "schema" in q:
+            schema = q["schema"]
+            metrics[q["metric"].replace("/", "_")] = {
+                "type": "records", "labels": schema["labels"],
+                "records_per_sec": schema["rate"], "values": schema["values"]}
+    return {"queries": list(unique.values()), "metrics": metrics}
+
+
+# --random-manifest: the five-system queries of an ASAPQuery random workload
+# (asap-tools random_workloads.py), and the streams their capabilities read.
+RANDOM_SUPPORT = "common-promql"
+RANDOM_STREAMS = {"sum": "value", "quantile": "dist", "topk_by_value": "value"}
+# The fewest distinct keys the top-k curves measure; a heap over fewer keys
+# is read there, which overstates its error.
+TOPK_MIN_CURVE_KEYS = 1_000
+# DEFAULT_TARGETS' accuracy level (the runner's p95), the only SLA exported.
+RANDOM_ACCURACY_SLA = 0.95
+# The one quantile shape random_workloads.py writes: an avg of per-series
+# quantiles, grouped by the RQE's grouping_labels.
+AVG_OF_SERIES_QUANTILES = re.compile(
+    r"^avg by \(([\w, ]+)\) \(quantile_over_time\([\d.]+, data\[\w+\]\)\)$")
+
+
+def random_expr(rqe, rqe_id, series_labels):
+    """The RQE expression tree of a manifest query whose one RQE is `rqe`
+    (the table's `rqe_id` on `data`), built from the RQE's fields as
+    asap-tools' rqe_query() renders them, or None for another capability. A leaf's
+    grouping is its output labels; G is the RQE's grouping_labels:
+    - quantile, `avg by (G) (quantile_over_time(phi, data[W]))`: avg by G of
+      a per-series quantile leaf;
+    - sum, `sum by (G) (sum_over_time(data[W]))`: a leaf grouped by G;
+    - topk_by_value, `topk [by (G)] (k, sum_over_time(data[W]))`: a
+      per-series top-k leaf ranked within each G (`topk_by`, left out for a
+      global top-k)."""
+    capability, grouping = rqe["capability"], rqe["grouping_labels"]
+
+    def leaf(capability, grouping, **extra):
+        return rqe_leaf(rqe_id, "data", capability, rqe["lookback_ms"] / 1000, grouping, **extra)
+
+    if capability == "quantile":
+        return {"agg": "avg", "by": grouping,
+                "of": leaf("quantile", series_labels, phi=rqe["phi"])}
+    if capability == "topk_by_value":
+        return leaf("topk", series_labels, k=rqe["k"], topk_by=grouping or None)
+    if capability == "sum":
+        return leaf("sum", grouping)
+    return None
+
+
+def e2e_query(query, rqe, t, rqe_id, series_labels):
+    """The e2e entry of manifest `query` (its RQE `rqe`) reading the table's
+    `rqe_id`, possibly shared with other queries, with its tree when it has one."""
+    entry = {"promql": query["promql"], "interval_secs": t, "rqes": [rqe_id]}
+    expr = random_expr(rqe, rqe_id, series_labels)
+    return {**entry, "expr": expr} if expr else entry
+
+
+def random_manifest_table(manifest, revision, inputs):
+    """The eval table of `manifest`'s RANDOM_SUPPORT queries: one RQE each
+    on the schema metric `data`, its labels the manifest's. Every series is
+    scraped at the same rate, so a grouping's groups hold equal shares. A
+    sum RQE is at its query's grouping, and a top-k's heaps at its `topk by`
+    grouping, on one stream, so a fine sum can serve a coarse one; a
+    quantile is `avg by` of per-series quantiles, so its RQE is per series.
+    Queries of other capabilities are left out (logged). The e2e block holds
+    the PromQL and the query's RQE expression tree (random_expr())."""
+    labels = manifest["labels"]
+    names = [label["name"] for label in labels]
+    series = labels_cardinality(labels, names)
+    per_sec = manifest["samples_per_sec_per_series"]
+    if not divides_1000(per_sec):
+        raise ValueError(f"samples_per_sec_per_series {per_sec!r} must be an "
+                         "integer dividing 1000")
+    rate = series * per_sec
+    facts = manifest["data_facts"]
+    theta = facts["series"]["ranking"]["exponent"]
+    alpha = facts["metrics"]["data"]["pareto_shape"]
+    dataset = f"random/seed={manifest['seed']}/{manifest['id']}"
+    scrape_ms = 1000 // per_sec
+    rqes, e2e, shared, e2e_keys = [], [], {}, set()
+    for query in manifest["queries"]:
+        if query["support"] != RANDOM_SUPPORT:
+            continue
+        if len(query["rqes"]) != 1:
+            raise ValueError(f"{query['id']}: reads {len(query['rqes'])} RQEs; only "
+                             "single-RQE queries are exported")
+        [rqe] = query["rqes"]
+        capability = rqe["capability"]
+        if capability not in RANDOM_STREAMS:
+            print(f"left out {query['id']}: no RQE for capability {capability!r}",
+                  file=sys.stderr)
+            continue
+        if rqe["accuracy_sla"] != RANDOM_ACCURACY_SLA:
+            raise ValueError(f"{query['id']}: accuracy_sla {rqe['accuracy_sla']}; only "
+                             f"{RANDOM_ACCURACY_SLA} (DEFAULT_TARGETS) is exported")
+        grouping = rqe["grouping_labels"]
+        if capability == "quantile":
+            m = AVG_OF_SERIES_QUANTILES.match(query["promql"])
+            if not m or m[1].split(", ") != grouping:
+                raise ValueError(f"{query['id']}: a quantile must be avg by "
+                                 f"({', '.join(grouping)}) of per-series quantiles: "
+                                 f"{query['promql']!r}")
+            grouping = names
+        ms, interval_ms = rqe["lookback_ms"], rqe["interval_ms"]
+        if interval_ms <= 0 or interval_ms % 1000:
+            raise ValueError(f"{query['id']}: interval {interval_ms} ms is not whole "
+                             "seconds")
+        # The optimizer's windows are whole scrapes.
+        if ms <= 0 or ms % scrape_ms:
+            raise ValueError(f"{query['id']}: lookback {ms} ms is not a multiple of the "
+                             f"{scrape_ms} ms scrape")
+        t = interval_ms // 1000
+        # Queries reading one RQE (per-series quantiles that differ only in
+        # their avg's grouping) share its id.
+        key = (capability, tuple(grouping), ms, t, rqe.get("phi"), rqe.get("k"))
+        if key in shared:
+            if (query["promql"], t) not in e2e_keys:
+                e2e_keys.add((query["promql"], t))
+                e2e.append(e2e_query(query, rqe, t, shared[key], names))
+            continue
+        groups = labels_cardinality(labels, grouping)
+        s = ms / 1000
+        n_items = rate * s / groups
+        families = SYNTHETIC_FAMILIES["topk" if capability == "topk_by_value" else capability]
+        # A sketch's accuracy is read off the curves, which start at this N;
+        # exact accumulators read none.
+        exact = all(family in EXACT_SKETCH for family in families)
+        if not exact and n_items < SCHEMA_MIN_COVERED_N:
+            print(f"left out {query['id']}: {n_items:g} items per group per window, "
+                  f"below the curves' first N ({SCHEMA_MIN_COVERED_N:g})", file=sys.stderr)
+            continue
+        query_id, keys, assumptions = query["id"], None, []
+        if capability == "topk_by_value":
+            query_id = f"topk{rqe['k']}_{query_id}"
+            keys = series // groups
+            if keys < TOPK_MIN_CURVE_KEYS:
+                assumptions.append(f"{keys} keys per heap read at the curves' "
+                                   f"{TOPK_MIN_CURVE_KEYS}")
+                keys = TOPK_MIN_CURVE_KEYS
+        kind = "values" if capability == "quantile" else "keys"
+        q = {
+            "dataset": dataset, "query_id": query_id, "kind": kind,
+            # Part of the RQE id, so exact.
+            "range": f"{ms // 1000}s" if ms % 1000 == 0 else f"{ms}ms",
+            "range_s": s, "step_s": t, "theta": theta, "K": keys,
+            "min_N": n_items, "max_N": n_items,
+            "alpha_rank": alpha, "alpha_memory": alpha, "tail_class": "",
+            "families": families,
+            "capability": "topk" if keys else capability,
+            "stream": f"data/{RANDOM_STREAMS[capability]}", "metric": "data",
+            "groups": groups, "arrival_rate": rate,
+            "grouping": grouping, "covers_share": None,
+            "covered_groups": groups, "min_covered_share": 1 / groups,
+            "covered_min_N": n_items, "max_covered_share": 1 / groups,
+            "covered_max_N": n_items,
+            "assumptions": assumptions,
+            **DEFAULT_TARGETS,
+        }
+        rqes.append(synthetic_entry(q))
+        shared[key] = rqes[-1]["id"]
+        e2e_keys.add((query["promql"], t))
+        e2e.append(e2e_query(query, rqe, t, shared[key], names))
+    check_unique_ids(rqes)
+    metrics = {"data": {
+        "type": "gauge", "labels": labels, "samples_per_sec_per_series": per_sec,
+        "values": {"value": {"zipf": theta, "keys": series}, "dist": {"pareto": alpha}},
+    }}
+    return {
+        "schema_version": 1,
+        "plan": "ProjectASAP/ASAPQuery#879",
+        "inputs": inputs,
+        "sketch_bench_revision": revision,
+        "workloads": [{
+            "dataset": dataset,
+            "rqes": rqes,
+            "e2e": {"queries": e2e, "metrics": metrics},
+            "schemas": {"data": {"labels": labels}},
+        }],
+    }
+
+
+def queries_per_instance(q):
+    """Queries one evaluation issues per instance: a `traces` key query reads
+    every key (K point queries); an exact group value, a top-k list and a
+    quantile are one query each."""
+    capability = q.get("capability") or ("freq" if q["kind"] == "keys" else "quantile")
+    return q["K"] if capability == "freq" else 1
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def build_synthetic(args):
+    """({file name: table}, plan rows) for the workload-grid points of
+    `synthetic_plan()`: one table per distinct table point, and one plan row
+    (table, target, replicas, result name) per point."""
+    out, plan = {}, []
+    for point in synthetic_plan():
+        name = "synthetic-" + point_id(point).replace("/", "-").replace("=", "") + ".json"
+        if name not in out:
+            queries = []
+            if point["shared"] > 1:
+                qs = shared_queries(point, queries)
+            elif point["metrics"] > 1:
+                qs = metric_queries(point, queries)
+            else:
+                qs = synthetic_queries(templates=point["templates"],
+                                       dataset="synthetic/" + point_id(point), e2e=queries)
+            workload = {"dataset": qs[0]["dataset"], "rqes": [synthetic_entry(q) for q in qs]}
+            workload["e2e"] = e2e_block(qs, queries)
+            # Each schema metric's label schema, for the runner's facts.
+            schemas = {q["metric"]: q["schema"] for q in qs if "schema" in q}
+            if schemas:
+                workload["schemas"] = schemas
+            out[name] = {
+                "schema_version": 1,
+                "plan": "ProjectASAP/ASAPQuery#777",
+                "inputs": {},
+                "sketch_bench_revision": args.revision,
+                "workloads": [workload],
+            }
+        result = name[:-len(".json")] + f"-t{point['target']}.json"
+        plan.append((name, point["target"], result))
+    return out, plan
+
+
+def build(args):
+    curves = load_curves(args.curves)
+    curves_big = load_curves(args.curves_big) if args.curves_big else {}
+    sat = load_saturation(args.saturation)
+    sat_big = load_saturation(args.saturation_big)
+    merge = {}
+    for path in args.merge_curves or []:
+        for key, per_m in load_merge_curves(path).items():
+            merge.setdefault(key, {}).update(per_m)
+    workloads = {}
+    for q in queries(args.summary):
+        if not q["step_s"]:
+            continue
+        entry = rqe_entry(q, curves, curves_big, sat, sat_big, merge)
+        workloads.setdefault(q["dataset"], []).append(entry)
+    check_unique_ids(r for rqes in workloads.values() for r in rqes)
+    inputs = [p for p in [args.summary, args.curves, args.curves_big, args.saturation,
+                          args.saturation_big, *(args.merge_curves or [])] if p]
+    return {
+        "schema_version": 1,
+        "plan": "ProjectASAP/ASAPQuery#777",
+        "shard_counts": SHARD_COUNTS,
+        "inputs": {os.path.basename(os.path.dirname(p)) + "/" + os.path.basename(p): sha256(p)
+                   for p in inputs},
+        "sketch_bench_revision": args.revision,
+        "workloads": [{"dataset": d, "rqes": r} for d, r in sorted(workloads.items())],
+    }
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--summary", help="ASAPQuery skew_summary.csv (traces)")
+    parser.add_argument("--synthetic", action="store_true",
+                        help="write the `synthetic` workload-grid tables and plan.tsv into the "
+                             "--out directory instead")
+    parser.add_argument("--curves", help="traces only")
+    parser.add_argument("--curves-big")
+    parser.add_argument("--saturation", help="traces only")
+    parser.add_argument("--saturation-big")
+    parser.add_argument("--merge-curves", nargs="*", help="saturation_merge_curve.csv files")
+    parser.add_argument("--revision", help="sketch-bench commit of the curves (default: HEAD)")
+    parser.add_argument("--samples-per-sec", type=int,
+                        help=f"--synthetic: samples/s per series (default "
+                             f"{SYNTHETIC_SAMPLES_PER_SEC}); the schema metrics' rates scale "
+                             "with it, and schema RQEs below the curves' first N are left out; "
+                             "without --keep-duplicate-queries, the export fails instead if "
+                             "one is the strictest copy of a query several templates ask")
+    parser.add_argument("--keep-duplicate-queries", action="store_true",
+                        help="--synthetic: an RQE for every template asking a query, not "
+                             "just the strictest (the section 6.3 tables). Without it, a strictest "
+                             "copy below the curves' first N fails the export")
+    parser.add_argument("--random-manifest",
+                        help="write the eval table of an ASAPQuery random workload manifest "
+                             f"(asap-tools random_workloads.py), its {RANDOM_SUPPORT} queries, "
+                             "to --out instead")
+    parser.add_argument("--out", required=True)
+    args = parser.parse_args(argv)
+    ignored = ["synthetic", "summary", "samples_per_sec", "keep_duplicate_queries",
+               "curves", "curves_big", "saturation", "saturation_big", "merge_curves"]
+    if args.random_manifest and any(getattr(args, name) not in (None, False)
+                                    for name in ignored):
+        parser.error("--random-manifest takes its rate and queries from the manifest and "
+                     "reads no curves: drop "
+                     + ", ".join("--" + name.replace("_", "-") for name in ignored))
+    # An instant query reads one scrape, 1000 / rate ms, which the runner keeps
+    # in whole ms.
+    if args.samples_per_sec is not None and not divides_1000(args.samples_per_sec):
+        parser.error("--samples-per-sec must divide 1000")
+    global KEEP_DUPLICATE_QUERIES
+    KEEP_DUPLICATE_QUERIES = args.keep_duplicate_queries
+    try:
+        if args.samples_per_sec is not None:
+            default = SYNTHETIC_SAMPLES_PER_SEC
+            set_samples_per_sec(args.samples_per_sec, True)
+            try:
+                return run(args, parser)
+            finally:
+                set_samples_per_sec(default, False)
+        return run(args, parser)
+    finally:
+        KEEP_DUPLICATE_QUERIES = False
+
+
+def run(args, parser):
+    if args.revision is None:
+        args.revision = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
+                                       text=True, check=False).stdout.strip()
+    if args.synthetic:
+        os.makedirs(args.out, exist_ok=True)
+        tables, plan = build_synthetic(args)
+        for name, t in tables.items():
+            with open(os.path.join(args.out, name), "w") as f:
+                json.dump(t, f, sort_keys=True)
+        # One line per run: table, accuracy target, result file name.
+        with open(os.path.join(args.out, "plan.tsv"), "w") as f:
+            for name, target, result in plan:
+                f.write(f"{name}\t{target}\t{result}\n")
+        print(f"Done. {len(tables)} `synthetic` tables and {len(plan)} planned runs in "
+              f"{args.out}", file=sys.stderr)
+        return 0
+    if args.random_manifest:
+        with open(args.random_manifest) as f:
+            manifest = json.load(f)
+        inputs = {os.path.basename(args.random_manifest): sha256(args.random_manifest)}
+        table = random_manifest_table(manifest, args.revision, inputs)
+    else:
+        if not (args.summary and args.curves and args.saturation):
+            parser.error("--summary, --curves and --saturation are required without "
+                         "--synthetic or --random-manifest")
+        table = build(args)
+    os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
+    with open(args.out, "w") as f:
+        json.dump(table, f, indent=1, sort_keys=True)
+        f.write("\n")
+    n = sum(len(w["rqes"]) for w in table["workloads"])
+    print(f"Done. {n} RQEs in {args.out}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

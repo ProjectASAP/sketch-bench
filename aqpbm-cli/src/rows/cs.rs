@@ -19,7 +19,11 @@ pub(crate) fn row_countsketch_oxide(
                 so::insert_cs_oxide,
                 so::insert_step_cs_oxide,
                 so::query_cs_oxide,
-                Some((so::merge_cs_oxide, so::merge_step_cs_oxide)),
+                Some((
+                    so::merge_cs_oxide,
+                    so::merge_step_cs_oxide,
+                    so::merge_query_cs_oxide,
+                )),
                 None,
             )
         };
@@ -80,6 +84,7 @@ pub(crate) fn row_countsketch_fastpath_vector2d_lib(
                 Some((
                     sl::merge_cs_lib_vector2d_fast,
                     sl::merge_step_cs_lib_vector2d_fast,
+                    sl::merge_query_cs_lib_vector2d_fast,
                 )),
                 None,
             )
@@ -112,6 +117,7 @@ pub(crate) fn row_countsketch_regularpath_vector2d_lib(
                 Some((
                     sl::merge_cs_lib_vector2d_regular,
                     sl::merge_step_cs_lib_vector2d_regular,
+                    sl::merge_query_cs_lib_vector2d_regular,
                 )),
                 None,
             )

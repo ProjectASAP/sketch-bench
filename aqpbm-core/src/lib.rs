@@ -7,6 +7,7 @@ pub mod atomic_costs;
 pub mod benchmark_result;
 pub mod erp;
 pub mod error;
+pub mod heap_footprint;
 pub mod measure;
 pub mod metrics;
 
@@ -16,19 +17,22 @@ pub mod metrics;
 pub use accuracy::GroundTruth;
 pub use aqpbm_datagen::{
     ColumnData, ColumnItem, ColumnSpec, DataDistribution, DataGenError, GeneratedTable,
-    NormalParameter, StringOpts, TableDescription, UniformParameter, ZipfParameter,
-    RULE_MONOTONIC_INCREASE, RULE_NONE,
+    NormalParameter, ParetoParameter, StringOpts, TableDescription, UniformParameter,
+    ZipfParameter, RULE_MONOTONIC_INCREASE, RULE_NONE,
 };
-pub use atomic_costs::{reduce_all, reduce_one, AtomicCostEntry, AtomicCostTable, SkipReason};
+pub use atomic_costs::{
+    reduce_all, reduce_one, AtomicCostEntry, AtomicCostTable, MeasuredAt, MeasuredShape, SkipReason,
+};
 pub use benchmark_result::{
     BenchReport, BenchSection, CpuTime, ExternalWorkload, InsertMetrics, LatencySummary,
-    MergeMetrics, MergedRecord, Mode, PrepareMetrics, QueryMetrics, Record, RunStats, Source,
-    WorkloadDescription, SCHEMA_VERSION,
+    MergeMetrics, MergeSplit, MergedRecord, Mode, PrepareMetrics, QueryMetrics, Record, RunStats,
+    Source, WorkloadDescription, SCHEMA_VERSION,
 };
 pub use erp::{
     erp_artifact, erp_record, ErpArtifact, ErpRecord, ErpResourceProfile, ERP_SCHEMA_VERSION,
 };
 pub use error::RunError;
+pub use heap_footprint::{hash_buckets, hh_heap_bytes, HH_HEAP_INDEX_ENTRY_BYTES};
 pub use measure::{
     measure, record_calls, runs_for, MeasureConfig, Measurement, Pass, Report, RunOutcome,
     MIN_MERGE_SHARDS,

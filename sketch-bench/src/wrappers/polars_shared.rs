@@ -5,6 +5,7 @@
 use crate::wrappers::hll::CardinalityValue;
 use ::polars::prelude::*;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 /// the resulting key→count table for O(1) per-key queries.
 /// Shared by `cms/polars` and `countsketch/polars`.
@@ -262,9 +263,11 @@ impl<T: PolarsColumnItem> PolarsQuantileCore<T> {
     }
 }
 
-/// The `;`-joined key of one label subset, in column order. This is the format
-/// `Hydra::update` builds internally, reproduced so the baseline and the sketch
-/// answer to the same key.
+/// The key of the label subset `mask` picks out of `parts`, in column order,
+/// each value tagged with its column (`label0:a;label2:c`, with `\`, `:` and `;`
+/// escaped): asap_sketchlib 0.3.0's subkey over the `label{i}` schema
+/// `hydra_shared` declares. So a value in one column never matches the same
+/// value in another (#74), in the baseline as in the sketch.
 pub fn subset_key(parts: &[&str], mask: usize) -> String {
     let mut out = String::new();
     for (j, part) in parts.iter().enumerate() {
@@ -272,17 +275,35 @@ pub fn subset_key(parts: &[&str], mask: usize) -> String {
             if !out.is_empty() {
                 out.push(';');
             }
-            out.push_str(part);
+            let _ = write!(out, "label{j}:");
+            for ch in part.chars() {
+                if matches!(ch, '\\' | ':' | ';') {
+                    out.push('\\');
+                }
+                out.push(ch);
+            }
         }
     }
     out
 }
 
+/// The key a probe reads: `labels` holds a value at each grouped column and
+/// `None` at the rest, so any subset of the columns is a group, not only a
+/// prefix of them.
+pub fn group_key(labels: &[Option<&str>]) -> String {
+    let parts: Vec<&str> = labels.iter().map(|l| l.unwrap_or("")).collect();
+    let mask = labels
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.is_some())
+        .fold(0, |mask, (j, _)| mask | (1 << j));
+    subset_key(&parts, mask)
+}
+
 /// Expand one record into `(subset_key, value)` rows, one per non-empty subset
-/// of its labels. Empty label parts are dropped, matching the library's
-/// `split(';').filter(|s| !s.is_empty())`.
+/// of its labels. An empty label keeps its column, as 0.3.0's Hydra does.
 pub fn fan_out<V: Clone>(key: &str, value: &V, keys: &mut Vec<String>, values: &mut Vec<V>) {
-    let parts: Vec<&str> = key.split(';').filter(|s| !s.is_empty()).collect();
+    let parts: Vec<&str> = key.split(';').collect();
     for mask in 1..(1usize << parts.len()) {
         keys.push(subset_key(&parts, mask));
         values.push(value.clone());
@@ -347,9 +368,9 @@ impl<T: PolarsFrequencyItem> PolarsSubpopFrequencyCore<T> {
         }
     }
 
-    pub fn query(&self, labels: &[&str], value: &T) -> f64 {
+    pub fn query(&self, labels: &[Option<&str>], value: &T) -> f64 {
         self.counts
-            .get(&(labels.join(";"), value.count_key()))
+            .get(&(group_key(labels), value.count_key()))
             .copied()
             .unwrap_or(0) as f64
     }
@@ -413,8 +434,8 @@ impl<T: CardinalityValue> PolarsSubpopCardinalityCore<T> {
         }
     }
 
-    pub fn query(&self, labels: &[&str]) -> f64 {
-        self.distinct.get(&labels.join(";")).copied().unwrap_or(0) as f64
+    pub fn query(&self, labels: &[Option<&str>]) -> f64 {
+        self.distinct.get(&group_key(labels)).copied().unwrap_or(0) as f64
     }
 
     pub fn memory_bytes(&self) -> usize {
@@ -482,8 +503,8 @@ impl<T: CardinalityValue> PolarsSubpopVectorCore<T> {
             .collect();
     }
 
-    pub fn query(&self, labels: &[&str]) -> f64 {
-        self.exact.get(&labels.join(";")).copied().unwrap_or(0.0)
+    pub fn query(&self, labels: &[Option<&str>]) -> f64 {
+        self.exact.get(&group_key(labels)).copied().unwrap_or(0.0)
     }
 
     pub fn memory_bytes(&self) -> usize {
@@ -498,7 +519,7 @@ impl<T: CardinalityValue> PolarsSubpopVectorCore<T> {
     }
 }
 
-fn grouped_values<T: CardinalityValue>(
+pub(crate) fn grouped_values<T: CardinalityValue>(
     buf: &[(String, T)],
     aggregate: impl Fn(LazyFrame) -> LazyFrame,
 ) -> Option<DataFrame> {
@@ -519,4 +540,33 @@ fn grouped_values<T: CardinalityValue>(
             .collect()
             .expect("polars group_by collect"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subset_keys_tag_each_value_with_its_column() {
+        assert_eq!(subset_key(&["a", "b", "c"], 0b101), "label0:a;label2:c");
+        assert_eq!(subset_key(&["x:y;z", ""], 0b11), r"label0:x\:y\;z;label1:");
+        assert_eq!(group_key(&[Some("a"), Some("b")]), "label0:a;label1:b");
+        assert_eq!(group_key(&[None, Some("b")]), "label1:b");
+    }
+
+    /// #74: the column-0 group `a` holds 2 records (`a;a`, `a;b`). The old
+    /// untagged key counted 3: `a;a`'s `a` once per column.
+    #[test]
+    fn a_value_shared_by_two_columns_is_counted_once() {
+        let mut core = PolarsSubpopFrequencyCore::<i64>::default();
+        core.update(&("a;a".to_string(), 7));
+        core.update(&("a;b".to_string(), 7));
+        core.finalize();
+        assert_eq!(core.query(&[Some("a")], &7), 2.0);
+        assert_eq!(core.query(&[Some("a"), Some("a")], &7), 1.0);
+        assert_eq!(core.query(&[Some("b")], &7), 0.0);
+        // Column 1 alone: `a` once, `b` once, with column 0 unconstrained.
+        assert_eq!(core.query(&[None, Some("a")], &7), 1.0);
+        assert_eq!(core.query(&[None, Some("b")], &7), 1.0);
+    }
 }

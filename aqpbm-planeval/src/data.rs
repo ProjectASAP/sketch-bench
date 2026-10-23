@@ -113,6 +113,10 @@ fn uniform_column(name: &str, (low, high): (f64, f64), seed: u64, rows: u64) -> 
             special_rule: 0,
             data_type: "f64".into(),
             string: None,
+            child_of: None,
+            fan_out: None,
+            scale_by: None,
+            scale_range: None,
         },
         rows,
     )

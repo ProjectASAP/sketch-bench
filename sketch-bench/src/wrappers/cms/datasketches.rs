@@ -126,12 +126,24 @@ pub fn query_cms_datasketches<T: FrequencyValue>(
     probes: Rc<Vec<T>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<u64>>, BuildError> {
+    merge_query_cms_datasketches(params, items, probes, 1, passes)
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_cms_datasketches<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<T>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<u64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        // Built and fed here: the closure below asks, and only asks.
-        let mut sketch = build_cms_datasketches(params)?;
-        for v in items.iter() {
-            sketch.inner.update(v.hash_key());
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = cms_datasketches_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch.inner.merge(&other.inner);
         }
         let probes = probes.clone();
         out.push(Box::new(move || {

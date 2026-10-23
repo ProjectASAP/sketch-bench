@@ -126,12 +126,30 @@ pub fn query_kll_oxide_per_call<T>(
 where
     T: QuantileValue + 'static,
 {
+    merge_query_kll_oxide_per_call::<T>(params, items, probes, 1, passes)
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_kll_oxide_per_call<T>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<f64>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError>
+where
+    T: QuantileValue + 'static,
+{
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        // Built and fed here: the closure below asks, and only asks.
-        let mut sketch = build_kll_oxide_per_call::<T>(params)?;
-        for v in items.iter() {
-            sketch.inner.update(v.to_f64());
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = kll_oxide_per_call_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch
+                .inner
+                .merge(&other.inner)
+                .expect("both operands built from one ParamSet, so k matches");
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
@@ -283,12 +301,32 @@ pub fn query_kll_oxide_cdf<T>(
 where
     T: QuantileValue + 'static,
 {
+    merge_query_kll_oxide_cdf::<T>(params, items, probes, 1, passes)
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_kll_oxide_cdf<T>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<f64>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError>
+where
+    T: QuantileValue + 'static,
+{
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        // Built and fed here: the closure below asks, and only asks.
-        let mut sketch = build_kll_oxide_cdf::<T>(params)?;
-        for v in items.iter() {
-            sketch.inner.update(v.to_f64());
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = kll_oxide_cdf_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch
+                .inner
+                .merge(&other.inner)
+                .expect("both operands built from one ParamSet, so k matches");
+            // A merged sketch invalidates any table cached from the pre-merge state.
+            sketch.cdf = None;
         }
         let (table, min, max) = (sketch.inner.cdf(), sketch.inner.min(), sketch.inner.max());
         let probes = probes.clone();

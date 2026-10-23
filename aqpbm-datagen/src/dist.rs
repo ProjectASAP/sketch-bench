@@ -2,7 +2,7 @@
 //! fixes it — so two columns are independent unless given the same one. Every
 //! distribution draws an `f64`, so [`crate::column`]'s pipeline is written once.
 
-use rand_distr::{Distribution as _, Normal, Uniform, Zipf};
+use rand_distr::{Distribution as _, Normal, Pareto, Uniform, Zipf};
 use rand_xoshiro::Xoshiro256PlusPlus;
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +16,7 @@ fn bad(msg: String) -> DataGenError {
 /// `1..=population_size`.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ZipfParameter {
     pub skewness: f64,
     pub population_size: u64,
@@ -25,6 +26,7 @@ pub struct ZipfParameter {
 /// Flat over `[lower_bound, upper_bound)`.
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UniformParameter {
     pub lower_bound: f64,
     pub upper_bound: f64,
@@ -34,9 +36,21 @@ pub struct UniformParameter {
 /// Gaussian. Unbounded, which is why it has no domain (see [`DataDistribution::domain`]).
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NormalParameter {
     pub mean: f64,
     pub standard_deviation: f64,
+    pub seed: u64,
+}
+
+/// Pareto: heavy-tailed, `P(X > x) = (scale / x)^alpha` for `x >= scale`.
+/// Unbounded above, so like Normal it has no domain.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ParetoParameter {
+    pub alpha: f64,
+    pub scale: f64,
     pub seed: u64,
 }
 
@@ -49,6 +63,7 @@ pub enum DataDistribution {
     Zipf(ZipfParameter),
     Uniform(UniformParameter),
     Normal(NormalParameter),
+    Pareto(ParetoParameter),
 }
 
 /// The half-open span a bounded distribution draws over: the lowest value it can
@@ -68,6 +83,7 @@ impl DataDistribution {
             DataDistribution::Zipf(_) => "zipf",
             DataDistribution::Uniform(_) => "uniform",
             DataDistribution::Normal(_) => "normal",
+            DataDistribution::Pareto(_) => "pareto",
         }
     }
 
@@ -77,10 +93,11 @@ impl DataDistribution {
             DataDistribution::Zipf(p) => p.seed,
             DataDistribution::Uniform(p) => p.seed,
             DataDistribution::Normal(p) => p.seed,
+            DataDistribution::Pareto(p) => p.seed,
         }
     }
 
-    /// The bounded span, or `None` for Normal — which is unbounded, so a
+    /// The bounded span, or `None` for Normal and Pareto — which are unbounded, so a
     /// `cardinality` over it would be a claim this crate cannot keep.
     pub fn domain(&self) -> Option<Domain> {
         match self {
@@ -93,7 +110,7 @@ impl DataDistribution {
                 lower: p.lower_bound,
                 size: (p.upper_bound - p.lower_bound) as u64,
             }),
-            DataDistribution::Normal(_) => None,
+            DataDistribution::Normal(_) | DataDistribution::Pareto(_) => None,
         }
     }
 
@@ -139,6 +156,18 @@ impl DataDistribution {
                         .map_err(|e| bad(format!("normal: {e}")))?,
                 ))
             }
+            DataDistribution::Pareto(p) => {
+                if !p.alpha.is_finite() || p.alpha <= 0.0 || !p.scale.is_finite() || p.scale <= 0.0
+                {
+                    return Err(bad(format!(
+                        "pareto: alpha and scale must be finite and > 0, got alpha {} scale {}",
+                        p.alpha, p.scale
+                    )));
+                }
+                Ok(Sampler::Pareto(
+                    Pareto::new(p.scale, p.alpha).map_err(|e| bad(format!("pareto: {e}")))?,
+                ))
+            }
         }
     }
 }
@@ -149,6 +178,7 @@ pub enum Sampler {
     Zipf(Zipf<f64>),
     Uniform(Uniform<f64>),
     Normal(Normal<f64>),
+    Pareto(Pareto<f64>),
 }
 
 impl Sampler {
@@ -158,6 +188,7 @@ impl Sampler {
             Sampler::Zipf(d) => d.sample(rng),
             Sampler::Uniform(d) => d.sample(rng),
             Sampler::Normal(d) => d.sample(rng),
+            Sampler::Pareto(d) => d.sample(rng),
         }
     }
 }

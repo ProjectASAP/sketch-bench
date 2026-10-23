@@ -36,8 +36,8 @@ use aqpbm_core::measure::MeasureConfig;
 use aqpbm_core::measure::MIN_MERGE_SHARDS;
 use aqpbm_core::metrics::{Metric, MetricsMask, Operation, OperationMask};
 use aqpbm_datagen::{
-    ColumnSpec, DataDistribution, GeneratedTable, StringOpts, TableDescription, UniformParameter,
-    ZipfParameter, RULE_NONE,
+    ColumnSpec, DataDistribution, GeneratedTable, ParetoParameter, StringOpts, TableDescription,
+    UniformParameter, ZipfParameter, RULE_NONE,
 };
 use clap::Parser;
 use sketch_bench::params::ParamSet;
@@ -205,7 +205,25 @@ fn dataset_spec(args: &SketchbenchArgs) -> Result<InputDataSetSpec> {
             population_size: cardinality,
             seed: args.seed,
         }),
-        other => bail!("unknown dataset shape: {other} (expected uniform|zipf, or use --spec)"),
+        // Unbounded and continuous, so `--cardinality` has nothing to name. An
+        // f64 column keeps the draws as drawn; an i64 column floors them (every
+        // draw is >= scale > 0, so the renderer's truncation is a floor), which
+        // is what the i64-only exact quantile baseline needs.
+        "pareto" => {
+            if !matches!(args.dtype.as_deref(), Some("f64" | "i64")) {
+                bail!("--dataset pareto needs --dtype f64 or i64 (i64 floors each draw)");
+            }
+            DataDistribution::Pareto(ParetoParameter {
+                alpha: args
+                    .pareto_alpha
+                    .expect("clap requires --pareto-alpha when --dataset pareto"),
+                scale: args.pareto_scale,
+                seed: args.seed,
+            })
+        }
+        other => {
+            bail!("unknown dataset shape: {other} (expected uniform|zipf|pareto, or use --spec)")
+        }
     };
     // Only the rows that ingest text read this. Left `None` at the defaults
     // so a run that did not ask for the axis keeps the descriptor — and so
@@ -240,6 +258,10 @@ fn dataset_spec(args: &SketchbenchArgs) -> Result<InputDataSetSpec> {
                 };
                 (opts != StringOpts::default()).then_some(opts)
             },
+            child_of: None,
+            fan_out: None,
+            scale_by: None,
+            scale_range: None,
         },
         args.size.expect("clap requires --size") as u64,
     )))
@@ -332,6 +354,21 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         None => ParamSet::empty(&variant),
     };
 
+    let mut group_columns = args.group_columns.clone();
+    group_columns.sort_unstable();
+    group_columns.dedup();
+    if args.per_group_out.is_some() {
+        if !variant.starts_with("hydra-") {
+            bail!("--per-group-out: only the hydra-* rows score groups, and {variant} is not one");
+        }
+        match want.iter().filter(|(_, m)| *m == Metric::Accuracy).count() {
+            0 => bail!("--per-group-out writes an accuracy measurement, and none was asked for"),
+            1 => {}
+            _ => bail!(
+                "--per-group-out writes one accuracy measurement; ask for query or merge, not both"
+            ),
+        }
+    }
     let req = Requirement {
         variant: variant.clone(),
         library: library.clone(),
@@ -339,6 +376,9 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         width,
         workers: args.workers.max(1),
         merge_shards: args.merge_shards,
+        group_columns,
+        per_group_out: args.per_group_out.as_ref().map(std::path::PathBuf::from),
+        merge_split: args.merge_split,
         comparator: args.comparator.clone(),
         runs: args.runs,
         warmup_runs: args.warmup_runs,
@@ -421,6 +461,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         // and a record states what ran rather than what was asked for.
         if operation == Operation::Merge {
             report.bench.merge_shards = Some(args.merge_shards.max(MIN_MERGE_SHARDS));
+            report.bench.merge_split = Some(args.merge_split);
         }
         reports.push(report);
     }

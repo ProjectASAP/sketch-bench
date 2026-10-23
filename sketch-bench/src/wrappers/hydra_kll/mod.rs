@@ -7,40 +7,15 @@ use crate::params::*;
 pub mod polars;
 pub mod sketchlib;
 
-pub(crate) use super::hydra_shared::{check_grid, grid_overhead_bytes, labels};
+pub(crate) use super::hydra_shared::{
+    check_grid, grid_overhead_bytes, label_columns, labels, new_hydra, query, update,
+};
 
-// Level count and decay of an `asap_sketchlib::KLL`. Both are private constants
-// in the library, reproduced here because a cell's footprint is a function of
-// them and the library exposes no accessor for its own capacity.
-const KLL_MAX_LEVELS: usize = 61;
-
-const KLL_CAPACITY_DECAY: f64 = 2.0 / 3.0;
-
-/// The `m` the library's `init_kll` passes, its minimum level capacity, and the
-/// floor it silently raises a smaller `k` to. Same cell as the `kll` rows, so
-/// the bound is theirs: see [`crate::wrappers::kll::LIB_K_MIN`].
-const KLL_MIN_LEVEL: usize = crate::wrappers::kll::LIB_K_MIN as usize;
-
-/// The library clamps `k` to this before sizing, so a larger `k` buys nothing.
-const KLL_MAX_CACHEABLE_K: usize = crate::wrappers::kll::LIB_K_MAX as usize;
-
-/// Retained slots one KLL cell allocates at construction — `KLL::init` boxes a
-/// slice of this length once and never grows it. A line-for-line copy of the
-/// library's private `compute_max_capacity`, so a claim about 0.2.2, not a bound.
-fn kll_cell_slots(k: u32) -> usize {
-    // `init_internal` normalises before sizing: `m` floors `k`, and `k` is
-    // capped. Reproduced so an out-of-range `k` reports the footprint the
-    // library actually allocates.
-    let m = KLL_MIN_LEVEL;
-    let k = (k as usize).max(m).min(KLL_MAX_CACHEABLE_K) as f64;
-    let mut total = 0usize;
-    let mut scale = 1.0f64;
-    for _ in 0..KLL_MAX_LEVELS {
-        total += (k * scale).ceil().max(m as f64) as usize;
-        scale *= KLL_CAPACITY_DECAY;
-    }
-    total
-}
+pub(crate) use crate::wrappers::kll::kll_lib_bytes as kll_cell_bytes;
+#[cfg(test)]
+use crate::wrappers::kll::{
+    kll_lib_slots as kll_cell_slots, KLL_LIB_MAX_CACHEABLE_K, KLL_LIB_MAX_LEVELS, KLL_LIB_MIN_LEVEL,
+};
 
 #[cfg(test)]
 mod tests {
@@ -51,11 +26,14 @@ mod tests {
     use crate::params::SketchParams;
 
     fn built_kll() -> HydraKll {
-        build_hydra_kll(&ParamSet::of(&HydraKllParams {
-            rows: 3,
-            cols: 64,
-            cell_k: 200,
-        }))
+        build_hydra_kll(
+            &ParamSet::of(&HydraKllParams {
+                rows: 3,
+                cols: 64,
+                cell_k: 200,
+            }),
+            2,
+        )
         .expect("canonical dimensions build")
     }
 
@@ -64,14 +42,17 @@ mod tests {
     }
 
     fn fed_kll(sketch: &mut HydraKll, r: &(String, f64)) {
-        sketch
-            .inner
-            .update(&r.0, &asap_sketchlib::DataInput::F64(r.1), None);
+        update(
+            &mut sketch.inner,
+            &r.0,
+            &asap_sketchlib::DataInput::F64(r.1),
+            "hydra-kll",
+        );
     }
 
     #[test]
     fn canonical_params_build() {
-        assert!(build_hydra_kll(&ParamSet::of(&HydraKllParams::canonical())).is_ok());
+        assert!(build_hydra_kll(&ParamSet::of(&HydraKllParams::canonical()), 2).is_ok());
     }
 
     /// The statistic is ordered and taken inside a group, so the median of one
@@ -85,7 +66,7 @@ mod tests {
         for _ in 0..500 {
             fed_kll(&mut h, &frecord("b;x", 10_000.0));
         }
-        let median = h.estimate_subpop_quantile(&["a"], 0.5);
+        let median = h.estimate_subpop_quantile(&[Some("a")], 0.5);
         assert!(
             (1.0..=101.0).contains(&median),
             "group `a` spans 1..=101, median estimated {median}"
@@ -101,8 +82,8 @@ mod tests {
         for v in 1..=101 {
             fed_kll(&mut h, &frecord("a;x", v as f64));
         }
-        assert_eq!(h.estimate_subpop_quantile(&["a"], 0.0), 1.0);
-        assert_eq!(h.estimate_subpop_quantile(&["a"], 1.0), 101.0);
+        assert_eq!(h.estimate_subpop_quantile(&[Some("a")], 0.0), 1.0);
+        assert_eq!(h.estimate_subpop_quantile(&[Some("a")], 1.0), 101.0);
     }
 
     /// The library allocates a cell's retained slots once, so the footprint is
@@ -116,12 +97,59 @@ mod tests {
         assert_eq!(kll_cell_slots(200), 580 + 424);
         // Monotone in k, and never below the floor times the level count.
         assert!(kll_cell_slots(400) > kll_cell_slots(200));
-        assert_eq!(kll_cell_slots(1), KLL_MIN_LEVEL * KLL_MAX_LEVELS);
+        assert_eq!(kll_cell_slots(1), KLL_LIB_MIN_LEVEL * KLL_LIB_MAX_LEVELS);
         // Past the library's clamp, a larger k buys no more slots.
         assert_eq!(
-            kll_cell_slots(KLL_MAX_CACHEABLE_K as u32),
-            kll_cell_slots(KLL_MAX_CACHEABLE_K as u32 + 5_000)
+            kll_cell_slots(KLL_LIB_MAX_CACHEABLE_K as u32),
+            kll_cell_slots(KLL_LIB_MAX_CACHEABLE_K as u32 + 5_000)
         );
+    }
+
+    /// A cell is a whole `KLL`, merge buffer included, as the `kll-*` lib rows
+    /// count it. Hand-derived: at `k = 200`, 1004 retained slots (above) plus
+    /// 200 buffer items, 8 bytes each, plus 62 level offsets.
+    #[test]
+    fn kll_footprint_counts_each_cells_merge_buffer() {
+        let per_cell = (1004 + 200) * 8 + 62 * std::mem::size_of::<usize>();
+        assert_eq!(
+            memory_hydra_kll(&built_kll()),
+            3 * 64 * per_cell + grid_overhead_bytes(3, 64)
+        );
+    }
+
+    /// Below `k` the cell keeps every value, so `Cdf(x)` is the exact share at
+    /// or below `x`, inside the group only.
+    #[test]
+    fn kll_cdf_is_the_share_at_or_below_inside_the_group() {
+        let mut h = built_kll();
+        for v in 1..=100 {
+            fed_kll(&mut h, &frecord("a;x", v as f64));
+        }
+        for _ in 0..300 {
+            fed_kll(&mut h, &frecord("b;x", 0.5));
+        }
+        assert_eq!(h.estimate_subpop_cdf(&[Some("a")], 25.0), 0.25);
+        assert_eq!(h.estimate_subpop_cdf(&[Some("a")], 100.0), 1.0);
+        assert_eq!(h.estimate_subpop_cdf(&[Some("a")], 0.9), 0.0);
+        // Ties count as at or below: every one of b's values is 0.5.
+        assert_eq!(h.estimate_subpop_cdf(&[Some("b")], 0.5), 1.0);
+
+        // Mixed ties, on a grid wide enough that `c` shares no cell: its 2s
+        // are three of its five values.
+        let mut wide = build_hydra_kll(
+            &ParamSet::of(&HydraKllParams {
+                rows: 3,
+                cols: 4096,
+                cell_k: 200,
+            }),
+            2,
+        )
+        .expect("canonical dimensions build");
+        for v in [1.0, 2.0, 2.0, 2.0, 3.0] {
+            fed_kll(&mut wide, &frecord("c;y", v));
+        }
+        assert_eq!(wide.estimate_subpop_cdf(&[Some("c")], 2.0), 0.8);
+        assert_eq!(wide.estimate_subpop_cdf(&[Some("c")], 1.0), 0.2);
     }
 
     #[test]
@@ -131,12 +159,39 @@ mod tests {
             cols: 64,
             cell_k: 0,
         });
-        let Err(err) = build_hydra_kll(&bad) else {
+        let Err(err) = build_hydra_kll(&bad, 2) else {
             panic!("a zero cell_k must be refused, not built");
         };
         assert!(
             err.to_string().contains("cell_k"),
             "error should name the field: {err}"
         );
+    }
+}
+
+#[cfg(test)]
+mod baseline_tests {
+    use super::polars::*;
+    use crate::params::{ParamSet, SketchParams};
+    use crate::wrappers::hydra_kll::HydraKllParams;
+    use std::rc::Rc;
+
+    /// `a` holds 10, 10, 20: `F_a(10)` counts both tens, `F_a(15)` too, and
+    /// `F_a(5)` nothing. A group never seen answers NaN, not a share.
+    #[test]
+    fn the_cdf_baseline_answers_the_share_at_or_below() {
+        let stream = Rc::new(vec![
+            ("a;x".to_string(), 10.0),
+            ("a;y".to_string(), 10.0),
+            ("a;x".to_string(), 20.0),
+            ("b;x".to_string(), 30.0),
+        ]);
+        let a = || vec![Some("a".to_string())];
+        let probes = Rc::new(vec![(a(), 10.0), (a(), 15.0), (a(), 5.0), (a(), 20.0)]);
+        let params = ParamSet::of(&HydraKllParams::canonical());
+        let mut passes =
+            query_polars_subpop_cdf::<f64>(&params, stream, probes, 1).expect("baseline builds");
+        let answers = passes.pop().expect("one pass")().0;
+        assert_eq!(answers, vec![2.0 / 3.0, 2.0 / 3.0, 0.0, 1.0]);
     }
 }

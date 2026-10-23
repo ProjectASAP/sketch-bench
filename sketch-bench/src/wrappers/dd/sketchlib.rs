@@ -93,11 +93,30 @@ pub fn query_dd_lib<T>(
 where
     T: asap_sketchlib::common::numerical::NumericalValue + 'static,
 {
+    merge_query_dd_lib::<T>(params, items, probes, 1, passes)
+}
+
+/// The query, asked of the sketch a fold over `shards` shards leaves. One
+/// shard is the plain query.
+pub fn merge_query_dd_lib<T>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<f64>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError>
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + 'static,
+{
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let mut sketch = build_dd_lib::<T>(params)?;
-        for v in items.iter() {
-            sketch.inner.add(v);
+        // Built, fed and folded here: the closure below asks, and only asks.
+        let (mut sketch, rest) = dd_lib_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch
+                .inner
+                .merge(&other.inner)
+                .expect("both operands built from one ParamSet, so alpha matches");
         }
         let probes = probes.clone();
         out.push(Box::new(move || {
@@ -126,7 +145,9 @@ where
         let (mut acc, rest) = dd_lib_shards(params, &items, shards)?;
         out.push(Box::new(move || {
             for other in rest.iter() {
-                acc.inner.merge(&other.inner);
+                acc.inner
+                    .merge(&other.inner)
+                    .expect("both operands built from one ParamSet, so alpha matches");
             }
             memory_dd_lib::<T>(&acc)
         }) as Pass);
@@ -152,7 +173,9 @@ where
             steps: rest.len(),
             step: Box::new(move |i| {
                 let acc = &mut *driven.borrow_mut();
-                acc.inner.merge(&rest[i].inner);
+                acc.inner
+                    .merge(&rest[i].inner)
+                    .expect("both operands built from one ParamSet, so alpha matches");
             }),
             footprint: Box::new(move || memory_dd_lib::<T>(&read.borrow())),
         });
