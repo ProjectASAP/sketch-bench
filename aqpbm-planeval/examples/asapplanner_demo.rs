@@ -1,7 +1,8 @@
 //! Demo prototype: ASAPPlanner as planeval's runtime.
 //!
 //! Runs one PromQL query through ASAPPlanner alone, at the rev
-//! ASAPQuery-backend pins (7565c47e): `plan_installable` plans it, and
+//! ASAPQuery-backend pins (05fb36e4, see `aqpbm-planeval/pins.env`):
+//! `plan_installable` plans it, and
 //! ASAPPlanner's executor runs the plan on samples made up here. No backend,
 //! no Prometheus, and the plan stays in memory (no JSON hand-off).
 //!
@@ -22,9 +23,9 @@
 //! cargo run --release -p aqpbm-planeval --example asapplanner_demo
 //! ```
 //!
-//! This is a prototype only: planeval's own code still uses ASAPPlanner
-//! 3c31338. The new ASAPPlanner is a dev-dependency, so only examples and
-//! tests build it.
+//! This is a prototype only. ASAPPlanner is a dev-dependency of planeval,
+//! so only examples and tests build it; the `planeval` binary runs the
+//! planner and executor through ASAPQuery-backend instead.
 use std::collections::BTreeMap;
 
 use asap_executor::operators::Operator;
@@ -169,12 +170,24 @@ async fn show(title: &str, accuracy: &str, caps: DeploymentCapabilities) {
         plan.stored_outputs.len()
     );
     for o in &plan.stored_outputs {
+        let windows: Vec<String> = o
+            .inputs
+            .raw_sample_windows
+            .iter()
+            .map(|w| {
+                format!(
+                    "{} min ending {} min before T",
+                    w.width_ms / 60_000,
+                    w.end_offset_ms / 60_000
+                )
+            })
+            .collect();
         println!(
-            "  node {:>2}: built in {:?}, pane of {} min ending {} min before T, kept {} min",
+            "  node {:>2}: built in {:?} from raw windows {:?} and stored outputs {:?}, kept {} min",
             o.node_id,
             o.built_at,
-            o.pane.width_ms / 60_000,
-            o.pane.end_offset_ms / 60_000,
+            windows,
+            o.inputs.stored_outputs,
             o.retention_ms / 60_000
         );
     }
@@ -192,13 +205,23 @@ async fn show(title: &str, accuracy: &str, caps: DeploymentCapabilities) {
 
     // 2. Execute with the planner's own executor.
     let all = samples();
-    let mut inputs = BTreeMap::new();
+    let mut inputs: BTreeMap<u64, Batch> = BTreeMap::new();
+    // Stored outputs come in dependency order: each after those it reads.
     for o in &plan.stored_outputs {
-        let (start, end) = o.pane.bounds_ms(T);
-        let rows = RawSampleSelector::new(dag, &o.pane)
-            .unwrap()
-            .window_batch(end, &all)
-            .unwrap();
+        let mut build_inputs = BTreeMap::new();
+        let (mut start, mut end) = (T, T);
+        for w in &o.inputs.raw_sample_windows {
+            let (s, e) = w.bounds_ms(T);
+            (start, end) = (start.min(s), end.max(e));
+            let rows = RawSampleSelector::new(dag, w)
+                .unwrap()
+                .window_batch(e, &all)
+                .unwrap();
+            build_inputs.insert(w.time_range_node_id as u64, rows);
+        }
+        for &id in &o.inputs.stored_outputs {
+            build_inputs.insert(id as u64, inputs[&(id as u64)].clone());
+        }
         let scope = match o.built_at {
             StoredOutputBuild::IngestionRun => Scope::Ingestion {
                 window_start_ms: start,
@@ -210,12 +233,7 @@ async fn show(title: &str, accuracy: &str, caps: DeploymentCapabilities) {
                 revision: 1,
             },
         };
-        let built = run(
-            dag,
-            BTreeMap::from([(o.pane.time_range_node_id as u64, rows)]),
-            &[o.node_id as u64],
-            scope,
-        );
+        let built = run(dag, build_inputs, &[o.node_id as u64], scope);
         let rows = built.iter().flat_map(|b| b.to_rows().to_vec()).collect();
         inputs.insert(
             o.node_id as u64,

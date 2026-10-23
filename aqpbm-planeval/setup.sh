@@ -58,7 +58,7 @@ cargo build --release --locked \
   --manifest-path "$BACKEND_DIR/Cargo.toml" -p control_plane -p data_plane
 
 # --- Harness ------------------------------------------------------------------
-echo "setup: building the harness (aqpbm-e2e)"
-cargo build --release --locked --manifest-path "$REPO_DIR/Cargo.toml" -p aqpbm-e2e
+echo "setup: building the harness (planeval)"
+cargo build --release --locked --manifest-path "$REPO_DIR/Cargo.toml" -p aqpbm-planeval --bin planeval
 
 df -h / | tail -1 | awk '{print "setup: free disk on /: " $4}'

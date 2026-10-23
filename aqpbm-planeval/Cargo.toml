@@ -4,42 +4,32 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Decodes a post-ASAP DAG, runs it over rows holding one summary per (plan, node, group), and scores each readout against the exact answer."
+description = "End-to-end evaluation: feeds the same generated samples to ASAPQuery-backend (which runs ASAPPlanner's plan) and to Prometheus over Remote Write, queries both through the Prometheus HTTP API at the same evaluation times, and compares accuracy, latency and throughput."
 
-# A thin bin over a real lib. `aqpbm-cli` is bin-only, which is why its
-# `rows::binding()` and `rows::measurements()` cannot be called in-process.
 [[bin]]
 name = "planeval"
 path = "src/main.rs"
 
-# Pinned to a rev rather than a path: CI checks out sketch-bench alone, and a
-# missing path dep fails manifest resolution for every member of the workspace.
+# No ASAPPlanner crate in the binary: the planner and its executor run inside
+# the backend's control_plane and data_plane, built from the backend's own
+# lockfile at the commit in pins.env.
 [dependencies]
-asap-types = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "3c31338d6fa28e31acaf0a11626a05f4d04df9b0" }
-asap-aware-mapping = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "3c31338d6fa28e31acaf0a11626a05f4d04df9b0" }
-asap-frontend-promql = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "3c31338d6fa28e31acaf0a11626a05f4d04df9b0" }
-
-# 0.3.0, not the workspace pin (0.2.2): cdf_cached/quantile_cached do not
-# exist before 0.3.0 and a 101-point probe grid re-sorts on every call there.
-asap_sketchlib = { version = "0.3.0", features = ["experimental"] }
-
-aqpbm-core = { workspace = true, features = ["hdrhist"] }
 aqpbm-datagen.workspace = true
+aqpbm-core.workspace = true
+anyhow.workspace = true
+clap.workspace = true
 csv.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-anyhow.workspace = true
-clap.workspace = true
-thiserror.workspace = true
-blake3 = "1"
+libc = "0.2"
+prost = "0.13"
+snap = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json"] }
 
 [dev-dependencies]
-tempfile = "3"
-
-# Demo prototype only (examples/asapplanner_demo.rs): ASAPPlanner as the
-# runtime, at the rev ASAPQuery-backend pins. The lib above still uses
-# 3c31338; the two revs resolve as separate packages.
-asap-planner = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "7565c47e30609d9571d8a9a372bf5e195754b2bb", default-features = false, features = ["promql"] }
-asap-executor = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "7565c47e30609d9571d8a9a372bf5e195754b2bb" }
+# examples/asapplanner_demo.rs only: ASAPPlanner on its own, planner and
+# executor in process, at the rev ASAPQuery-backend pins (pins.env).
+asap-planner = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "05fb36e4e9ff0b8e2ff6d43685785117ec0b9225", default-features = false, features = ["promql"] }
+asap-executor = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "05fb36e4e9ff0b8e2ff6d43685785117ec0b9225" }
 futures = "0.3"
 tokio = { version = "1", features = ["rt", "macros"] }

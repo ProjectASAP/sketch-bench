@@ -7,7 +7,6 @@ members = [
     "sketch-bench",
     "aqpbm-cli",
     "aqpbm-planeval",
-    "e2e/harness",
 ]
 
 exclude = ["sketch-runtime"]
