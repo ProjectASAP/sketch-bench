@@ -137,6 +137,8 @@ Each of the following is a description error:
 
 `configs/datagen/hydra_http_latency.yaml` scales latency by service.
 
+A caller that puts the rows on labels of its own, rather than on a generated string column, gets the same factor for a label from `ColumnSpec::scale_factor(label)` on a spec with `scale_range` set; `aqpbm-planeval` scales each series group this way.
+
 ## Output
 
 The output is a struct containing data:

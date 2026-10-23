@@ -13,9 +13,15 @@
 //! (`service-3` is the second service of `region-1`), so every child has one
 //! parent and a coarser grouping is a union of finer ones.
 //!
-//! The gauge (the queried metric) takes the column's values as they are. The
-//! counter takes a second column, drawn with the next seed, as non-negative
-//! increments and accumulates them per series from zero, so it only grows.
+//! The gauge takes the column's values as they are. The counter takes a
+//! second column, drawn with the next seed, as non-negative increments and
+//! accumulates them per series from zero, so it only grows.
+//!
+//! With a [`GroupScale`], each group of one hierarchy level (say every
+//! `service`) multiplies its gauge values and its counter increments by a
+//! factor of its own: `aqpbm-datagen`'s `scale_by`, keyed by the series'
+//! label value rather than by a generated string column. Groups then differ
+//! in scale, so a top-k over them ranks real differences.
 //!
 //! Values are deterministic in `seed`; timestamps are deterministic given
 //! `start_ms`, which the run picks relative to the wall clock (the data plane
@@ -82,6 +88,38 @@ pub struct DatasetSpec {
     pub gauge_table: TableDescription,
     /// The `aqpbm-datagen` description the counter increments came from.
     pub counter_increment_table: Option<TableDescription>,
+    /// Per-group factors, if the groups are scaled.
+    pub scale: Option<GroupScale>,
+}
+
+/// `aqpbm-datagen`'s `scale_by` on one hierarchy level: every series under
+/// one label value gets that value's factor, log-uniform in `range` and fixed
+/// by the value and the column's seed
+/// ([`ColumnSpec::scale_factor`]). The gauge and the counter's increments
+/// have different seeds, so different factors.
+#[derive(Debug, Clone, Serialize)]
+pub struct GroupScale {
+    /// The hierarchy label whose value picks the factor.
+    pub label: String,
+    /// `scale_range`: `[lo, hi]`.
+    pub range: [f64; 2],
+    /// Label value -> the gauge's factor.
+    pub gauge_factors: BTreeMap<String, f64>,
+    /// Label value -> the factor of the counter's increments.
+    pub counter_factors: BTreeMap<String, f64>,
+}
+
+/// Parses `service:1,10` into the label and `[lo, hi]`.
+pub fn parse_scale(spec: &str) -> anyhow::Result<(String, [f64; 2])> {
+    let (label, range) = spec
+        .split_once(':')
+        .with_context(|| format!("scale {spec:?} is not LABEL:LO,HI"))?;
+    let (lo, hi) = range
+        .split_once(',')
+        .with_context(|| format!("scale {spec:?}: range is not LO,HI"))?;
+    let (lo, hi): (f64, f64) = (lo.trim().parse()?, hi.trim().parse()?);
+    ensure!(0.0 < lo && lo <= hi, "scale {spec:?}: needs 0 < LO <= HI");
+    Ok((label.to_owned(), [lo, hi]))
 }
 
 pub struct Dataset {
@@ -120,6 +158,28 @@ fn uniform_column(name: &str, (low, high): (f64, f64), seed: u64, rows: u64) -> 
         },
         rows,
     )
+}
+
+/// Multiplies every series' row by the factor of its value of label `level`,
+/// as `scale_by` with `range` on `table`'s column would; returns the factors.
+fn scale_rows(
+    table: &TableDescription,
+    range: [f64; 2],
+    labels: &[Vec<(String, String)>],
+    level: usize,
+    rows: &mut [Vec<f64>],
+) -> BTreeMap<String, f64> {
+    let mut spec = table.column_spec[0].clone();
+    spec.scale_range = Some(range);
+    let mut factors = BTreeMap::new();
+    for (row, labels) in rows.iter_mut().zip(labels) {
+        let value = &labels[level].1;
+        let factor = *factors
+            .entry(value.clone())
+            .or_insert_with(|| spec.scale_factor(value));
+        row.iter_mut().for_each(|v| *v *= factor);
+    }
+    factors
 }
 
 /// Generates `table` and deals its one `f64` column out to `series` series.
@@ -171,23 +231,47 @@ pub fn label_key<'a>(labels: impl IntoIterator<Item = (&'a str, &'a str)>) -> St
 }
 
 impl Dataset {
+    #[allow(clippy::too_many_arguments)]
     pub fn generate(
         metric: &str,
         counter_metric: Option<&str>,
         hierarchy: Vec<Level>,
+        scale: Option<(&str, [f64; 2])>,
         interval_ms: i64,
         start_ms: i64,
         points: usize,
         seed: u64,
     ) -> anyhow::Result<Self> {
         let series: usize = hierarchy.iter().map(|l| l.fan_out).product();
+        let labels = hierarchy_labels(&hierarchy);
+        let level = scale
+            .map(|(label, _)| {
+                hierarchy
+                    .iter()
+                    .position(|l| l.label == label)
+                    .with_context(|| format!("scale label {label:?} is not in the hierarchy"))
+            })
+            .transpose()?;
         let rows = (series * points) as u64;
         let gauge_table = uniform_column(metric, GAUGE, seed, rows);
-        let values = deal(&gauge_table, series, points)?;
+        let mut values = deal(&gauge_table, series, points)?;
+        let mut scale_report = match (scale, level) {
+            (Some((label, range)), Some(level)) => Some(GroupScale {
+                label: label.to_owned(),
+                range,
+                gauge_factors: scale_rows(&gauge_table, range, &labels, level, &mut values),
+                counter_factors: BTreeMap::new(),
+            }),
+            _ => None,
+        };
         let (counter_increment_table, counters) = match counter_metric {
             Some(name) => {
                 let table = uniform_column(name, COUNTER_INCREMENT, seed.wrapping_add(1), rows);
                 let mut counters = deal(&table, series, points)?;
+                if let (Some(report), Some(level)) = (&mut scale_report, level) {
+                    report.counter_factors =
+                        scale_rows(&table, report.range, &labels, level, &mut counters);
+                }
                 for row in &mut counters {
                     let mut total = 0.0;
                     for v in row.iter_mut() {
@@ -200,7 +284,7 @@ impl Dataset {
             None => (None, None),
         };
         Ok(Self {
-            labels: hierarchy_labels(&hierarchy),
+            labels,
             spec: DatasetSpec {
                 metric: metric.into(),
                 counter_metric: counter_metric.map(str::to_owned),
@@ -212,6 +296,7 @@ impl Dataset {
                 seed,
                 gauge_table,
                 counter_increment_table,
+                scale: scale_report,
             },
             values,
             counters,
@@ -358,7 +443,7 @@ mod tests {
 
     #[test]
     fn window_is_left_open_right_closed() {
-        let d = Dataset::generate("m", None, flat(2), 1000, 1000, 10, 7).unwrap();
+        let d = Dataset::generate("m", None, flat(2), None, 1000, 1000, 10, 7).unwrap();
         // Points at 1000..=10000; (3000, 6000] holds 4000, 5000, 6000.
         assert_eq!(d.points_in(3000, 6000), 3..6);
         assert_eq!(d.window(0, 6000, 3000).len(), 3);
@@ -400,13 +485,53 @@ mod tests {
     /// The counter never decreases and starts from its first increment.
     #[test]
     fn counter_only_grows() {
-        let d = Dataset::generate("g", Some("c_total"), flat(3), 1000, 1000, 50, 7).unwrap();
+        let d = Dataset::generate("g", Some("c_total"), flat(3), None, 1000, 1000, 50, 7).unwrap();
         for row in d.counters.as_ref().unwrap() {
             assert!(row[0] >= 0.0);
             assert!(row.windows(2).all(|w| w[1] >= w[0]));
         }
         let req = d.write_request(0, 5000);
         assert_eq!(req.timeseries.len(), 6, "a gauge and a counter per series");
+    }
+
+    /// Every series of one group carries its group's factor, the gauge and
+    /// the counter different ones, and the counter still only grows.
+    #[test]
+    fn groups_scale_by_their_own_factor() {
+        let h = parse_hierarchy("service:3,instance:2").unwrap();
+        let plain =
+            Dataset::generate("g", Some("c_total"), h.clone(), None, 1000, 0, 20, 7).unwrap();
+        let scaled = Dataset::generate(
+            "g",
+            Some("c_total"),
+            h,
+            Some(("service", [1.0, 10.0])),
+            1000,
+            0,
+            20,
+            7,
+        )
+        .unwrap();
+        let report = scaled.spec.scale.as_ref().unwrap();
+        assert_eq!(report.gauge_factors.len(), 3);
+        assert_ne!(report.gauge_factors, report.counter_factors);
+        for s in 0..6 {
+            let service = &scaled.labels[s][0].1;
+            let g = report.gauge_factors[service];
+            assert!((1.0..10.0).contains(&g));
+            for (a, b) in plain.values[s].iter().zip(&scaled.values[s]) {
+                assert!((a * g - b).abs() < 1e-9);
+            }
+            let c = report.counter_factors[service];
+            let (pc, sc) = (
+                &plain.counters.as_ref().unwrap()[s],
+                &scaled.counters.as_ref().unwrap()[s],
+            );
+            assert!((pc[19] * c - sc[19]).abs() < 1e-6);
+            assert!(sc.windows(2).all(|w| w[1] >= w[0]));
+        }
+        assert!(parse_scale("service:1,10").is_ok());
+        assert!(parse_scale("service:0,10").is_err());
     }
 
     #[test]

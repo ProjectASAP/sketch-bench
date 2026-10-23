@@ -287,7 +287,11 @@ impl ColumnSpec {
     /// The fixed factor of one `scale_by` label value: a SplitMix64 hash of
     /// the value's FNV-1a and this column's seed, as `u` in `[0, 1)`, mapped to
     /// `lo·(hi/lo)^u`.
-    pub(crate) fn scale_factor(&self, label: &str) -> f64 {
+    ///
+    /// Public for a caller that lays the column's rows onto labels of its own
+    /// rather than a generated string column: it gets the factor `scale_by`
+    /// would give the same label. Panics without `scale_range`.
+    pub fn scale_factor(&self, label: &str) -> f64 {
         let [lo, hi] = self.scale_range.expect("scale_range was validated above");
         let fnv = label.bytes().fold(0xCBF2_9CE4_8422_2325u64, |h, b| {
             (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01B3)
