@@ -67,10 +67,19 @@ struct Args {
     /// Keep each arm's Prometheus TSDB directory instead of deleting it.
     #[arg(long)]
     keep_tsdb: bool,
-    /// Override the source's `series_count` (and the arrival rate) in the
-    /// workload; the patched workload is written to the output directory.
+    /// The series' label hierarchy, coarsest level first, e.g.
+    /// `region:2,service:2,instance:4` (16 series). Without it the series
+    /// are `instance:N`, N the workload's `series_count`.
+    #[arg(long)]
+    labels: Option<String>,
+    /// Total series: sets the last level's fan-out so the hierarchy holds N
+    /// series (N must be a multiple of the levels above it).
     #[arg(long)]
     series: Option<usize>,
+    /// Name of the counter metric written next to the queried gauge; an
+    /// empty name writes no counter.
+    #[arg(long, default_value = "requests_total")]
+    counter_metric: String,
     /// Seconds each closed-loop query-load step runs.
     #[arg(long, default_value_t = 5)]
     load_seconds: u64,
@@ -399,7 +408,8 @@ struct QueryRow {
 struct AnswerRow {
     arm: String,
     eval_time_ms: i64,
-    instance: String,
+    /// The series' labels ([`data::label_key`]).
+    series: String,
     window_samples: usize,
     truth: Option<f64>,
     prom_value: Option<f64>,
@@ -614,11 +624,11 @@ fn run_arm(
         let mut rank_errors = Vec::new();
         let mut prom_vs_truth = Vec::new();
         for s in 0..data.spec.series {
-            let instance = Dataset::instance(s);
+            let key = data.series_key(s);
             let window = data.window(s, eval, q.window_ms);
             let truth = prometheus_quantile(&window, q.quantile);
-            let prom_value = prom_first.values.get(&instance).copied();
-            let asap_value = asap_first.values.get(&instance).copied();
+            let prom_value = prom_first.values.get(&key).copied();
+            let asap_value = asap_first.values.get(&key).copied();
             let rel_error = match (prom_value, asap_value) {
                 (Some(p), Some(a)) if p != 0.0 => Some((a - p).abs() / p.abs()),
                 _ => None,
@@ -632,7 +642,7 @@ fn run_arm(
             answers.push(AnswerRow {
                 arm: name.into(),
                 eval_time_ms: eval,
-                instance,
+                series: key,
                 window_samples: window.len(),
                 truth,
                 prom_value,
@@ -770,39 +780,82 @@ fn main() -> anyhow::Result<()> {
         &fs::read_to_string(&args.workload)
             .with_context(|| format!("reading {}", args.workload.display()))?,
     )?;
+    // The series' label hierarchy, and the workload made to match the data
+    // the run generates: the queried source's series count, the counter as a
+    // second source, and the arrival rate of both. The planner sees this
+    // workload, written to the output directory.
     let mut workload = workload;
-    let mut workload_path = args.workload.clone();
-    if let Some(series) = args.series {
-        let base = read_query(&workload)?;
-        let source = workload
-            .pointer_mut(&format!("/data_workload/sources/{}", base.metric))
-            .context("workload source")?;
-        source["series_count"] = json!(series);
-        let rows_per_second = series as f64 * 1000.0 / base.sample_interval_ms as f64;
-        if let Some(rate) = workload.pointer_mut("/data_workload/arrival/ingesting/rows_per_second")
-        {
-            *rate = json!(rows_per_second);
-        }
-        workload_path = args.out_dir.join("workload.json");
-        fs::write(
-            &workload_path,
-            serde_json::to_string_pretty(&workload)? + "\n",
-        )?;
+    let base = read_query(&workload)?;
+    let mut hierarchy = match &args.labels {
+        Some(spec) => data::parse_hierarchy(spec)?,
+        None => data::parse_hierarchy(&format!("instance:{}", base.series))?,
+    };
+    if let Some(n) = args.series {
+        let (leaf, above) = hierarchy.split_last_mut().expect("a hierarchy has a level");
+        let parents: usize = above.iter().map(|l| l.fan_out).product();
+        ensure!(
+            n > 0 && n % parents == 0,
+            "--series {n} is not a multiple of the {parents} nodes above level {:?}",
+            leaf.label
+        );
+        leaf.fan_out = n / parents;
     }
+    let series: usize = hierarchy.iter().map(|l| l.fan_out).product();
+    let counter_metric = (!args.counter_metric.is_empty()).then_some(args.counter_metric.as_str());
+    ensure!(
+        counter_metric != Some(base.metric.as_str()),
+        "the counter metric must differ from the queried metric"
+    );
+    {
+        let sources = workload
+            .pointer_mut("/data_workload/sources")
+            .and_then(Value::as_object_mut)
+            .context("workload sources")?;
+        sources.get_mut(&base.metric).context("workload source")?["series_count"] = json!(series);
+        if let Some(counter) = counter_metric {
+            sources.insert(
+                counter.to_owned(),
+                json!({
+                    "series_count": series,
+                    "metric_type": "counter",
+                    "sample_interval": base.sample_interval_ms,
+                }),
+            );
+        }
+    }
+    let metrics = 1 + usize::from(counter_metric.is_some());
+    let rows_per_second = (series * metrics) as f64 * 1000.0 / base.sample_interval_ms as f64;
+    if let Some(rate) = workload.pointer_mut("/data_workload/arrival/ingesting/rows_per_second") {
+        *rate = json!(rows_per_second);
+    }
+    let workload_path = args.out_dir.join("workload.json");
+    fs::write(
+        &workload_path,
+        serde_json::to_string_pretty(&workload)? + "\n",
+    )?;
     let q = read_query(&workload)?;
     let tl = timeline(&q, args.evaluations);
     let points = ((tl.last_sample_ms - tl.first_sample_ms) / q.sample_interval_ms + 1) as usize;
     let data = Dataset::generate(
         &q.metric,
-        q.series,
+        counter_metric,
+        hierarchy,
         q.sample_interval_ms,
         tl.first_sample_ms,
         points,
         args.seed,
     )?;
     eprintln!(
-        "query {:?}: {} series x {} points, evaluations {:?}",
-        q.text, q.series, points, tl.evaluations_ms
+        "query {:?}: {} series x {} points per metric ({}), evaluations {:?}",
+        q.text,
+        q.series,
+        points,
+        [Some(q.metric.as_str()), counter_metric]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(", "),
+        tl.evaluations_ms
     );
 
     let run = Run {

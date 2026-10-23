@@ -14,8 +14,10 @@ in [`aqpbm-planeval/README.md`](../aqpbm-planeval/README.md).
   workload with ASAPPlanner and writes `plan.json`; `data_plane` executes it
   over Remote Write data) and Prometheus. Both are built or downloaded at
   pinned versions.
-- **Data.** Values from `aqpbm-datagen`, laid onto series and timestamps by
-  the harness and sent to both systems over Remote Write.
+- **Data.** Values from `aqpbm-datagen`, laid by the harness onto series on
+  a label hierarchy (by default `region:2,service:2,instance:4`) and onto
+  timestamps, as a gauge the query reads and a counter that only grows, and
+  sent to both systems over Remote Write.
 - **Ground truth.** The harness computes exact answers from the generated
   samples, and also checks Prometheus against them, so either can serve as
   the reference.
@@ -30,8 +32,8 @@ in [`aqpbm-planeval/README.md`](../aqpbm-planeval/README.md).
 
 - More queries in one workload, each with its own repeat interval, planned
   jointly by the backend after each is checked alone.
-- Data with a label hierarchy (region, service, job) and counters, so
-  grouped and `rate` queries have meaning.
+- Different value and rate distributions per series or group, so a top-k
+  over groups ranks real differences rather than near-ties.
 - Accuracy measured against both references: Prometheus and the harness's
   own exact answer.
 - A report per query that a user can read without the raw tables.

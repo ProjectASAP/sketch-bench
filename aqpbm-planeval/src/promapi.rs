@@ -15,7 +15,8 @@ pub struct Answer {
     pub execution: Option<String>,
     /// The response's `error` field, if any.
     pub error: Option<String>,
-    /// `instance` label -> value, for a vector result.
+    /// Series key ([`crate::data::label_key`]: every label but `__name__`)
+    /// -> value, for a vector result.
     pub values: BTreeMap<String, f64>,
     /// Request sent to body fully read, client side.
     pub latency_ms: f64,
@@ -56,17 +57,22 @@ pub fn instant_query(
     let mut values = BTreeMap::new();
     if let Some(result) = json.pointer("/data/result").and_then(|r| r.as_array()) {
         for item in result {
-            let instance = item
-                .pointer("/metric/instance")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_owned();
+            let key = item
+                .get("metric")
+                .and_then(|m| m.as_object())
+                .map(|m| {
+                    crate::data::label_key(
+                        m.iter()
+                            .filter_map(|(name, value)| Some((name.as_str(), value.as_str()?))),
+                    )
+                })
+                .unwrap_or_default();
             let value = item
                 .pointer("/value/1")
                 .and_then(|v| v.as_str())
                 .and_then(|v| v.parse::<f64>().ok())
                 .unwrap_or(f64::NAN);
-            values.insert(instance, value);
+            values.insert(key, value);
         }
     }
     Ok(Answer {
