@@ -10,11 +10,6 @@
 
 # data
 *.csv
-# The AutoSketch-vs-ASAP eval's accuracy curves are inputs, committed so it
-# reruns from the repo alone.
-!rqe-optimizer/results/autosketch-vs-asap-inputs/saturation/**/*.csv
-# The Hydra eval's study table is an input, committed so it reruns from the repo.
-!rqe-optimizer/results/autosketch-vs-asap-hydra/inputs/**/*.csv
 *.pcap
 
 # Rust target directories

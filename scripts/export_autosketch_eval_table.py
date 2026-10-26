@@ -250,7 +250,7 @@ SYNTHETIC_GRID = {
 }
 SYNTHETIC_TEMPLATE_SETS = ["all", "classic", "multigroup"]
 
-# Multi-grouping templates (sketch-bench docs/rqe_optimizer_hydra.md): two
+# Multi-grouping templates (ASAPQuery rqe-optimizer/docs/rqe_optimizer_hydra.md): two
 # metrics with an ordered label schema, each value read at several groupings
 # on one stream, so a fine deployment can serve a coarse RQE (a roll-up) and
 # one Hydra grid can serve them all. A label has `cardinality` values, or,

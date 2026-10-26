@@ -269,7 +269,7 @@ written for).
 A Hydra grid's error for a group depends on the group's share of the
 fanned-out mass `N·(2^d − 1)`, not on a per-key shape, so it is measured on
 data with the §6.3 eval's own schemas rather than on the Zipf grid above
-(docs/rqe_optimizer_hydra.md). `HYDRA_SWEEPS` holds two sweeps:
+(ASAPQuery `rqe-optimizer/docs/rqe_optimizer_hydra.md`). `HYDRA_SWEEPS` holds two sweeps:
 
 - `eval`: `hydra-hll` and `hydra-univmon-cardinality` on
   `configs/datagen/hydra_http.yaml` and `hydra_flows.yaml`, `hydra-kll` on
@@ -637,4 +637,3 @@ Crossover at theta = 1, K = 1e5 (frequency, top-k, HLL) and Pareto alpha 1.5
     now covers every top-k and KLL config.
 - **HLL lg_k 10.** asap_sketchlib has register types for lg_k 12, 14, 16
   (and 18 for the bucket list) only, so the HLL grid starts at 12.
-

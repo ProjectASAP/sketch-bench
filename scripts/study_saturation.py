@@ -134,7 +134,7 @@ EXACT_COST_ROWS = [
 ]
 EXACT_METRIC = "relative_error"
 
-# --phase hydra (docs/rqe_optimizer_hydra.md; ASAPQuery#777 §6.3): Hydra's
+# --phase hydra (ASAPQuery rqe-optimizer/docs/rqe_optimizer_hydra.md; ASAPQuery#777 §6.3): Hydra's
 # per-group error depends on the group's share of the fanned-out mass, so the
 # eval reads accuracy measured on datasets with its own schemas
 # (configs/datagen/hydra_http*.yaml, hydra_flows.yaml, matching
@@ -145,7 +145,7 @@ EXACT_METRIC = "relative_error"
 # read. The other statistics run on the generic hydra_hier*.yaml sweep
 # (schema width 2, 3, 4).
 HYDRA_R = 3
-# Inner cells: the canonical ones (docs/rqe_optimizer_hydra.md §1), except
+# Inner cells: the canonical ones (ASAPQuery rqe-optimizer/docs/rqe_optimizer_hydra.md §1), except
 # UnivMon's, whose 5 x 2048 x 8-layer cell (~650 KB) makes a 3 x 16384 grid
 # 32 GB; this one is ~100 KB.
 HYDRA_UNIVMON_CELL = "cell_heap_size=64 cell_sketch_row=3 cell_sketch_col=256 cell_layer_size=8"
