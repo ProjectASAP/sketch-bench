@@ -774,6 +774,24 @@ class RandomManifestTest(unittest.TestCase):
         workload = random_manifest_table(manifest, "test", {})["workloads"][0]
         self.assertIn("q6", {r["query_id"] for r in workload["rqes"]})
 
+    def test_a_pooled_sum_is_refused(self):
+        manifest = self.manifest()
+        manifest["queries"][1]["rqes"][0]["pooled"] = True
+        with self.assertRaisesRegex(ValueError, "pooled sum"):
+            random_manifest_table(manifest, "test", {})
+
+    def test_a_quantile_promql_asking_another_phi_is_refused(self):
+        for pooled, promql in [
+                (False, "avg by (job) (quantile_over_time(0.5, data[100s]))"),
+                (True, "quantile by (job) (0.5, quantile_over_time(0.99, data[100s]))"),
+                (True, "quantile by (job) (0.99, quantile_over_time(0.9, data[100s]))")]:
+            with self.subTest(promql=promql):
+                manifest = self.manifest()
+                manifest["queries"][2]["rqes"][0]["pooled"] = pooled
+                manifest["queries"][2]["promql"] = promql
+                with self.assertRaisesRegex(ValueError, "0.99 quantiles"):
+                    random_manifest_table(manifest, "test", {})
+
     def test_other_capabilities_have_no_tree(self):
         for capability in ["topk_by_count", "rate", "cardinality"]:
             with self.subTest(capability=capability):
@@ -842,6 +860,8 @@ class RandomManifestTest(unittest.TestCase):
         def with_q6(phi):
             manifest = self.manifest()
             manifest["queries"][2]["rqes"][0]["phi"] = 0.9
+            manifest["queries"][2]["promql"] = (
+                "avg by (job) (quantile_over_time(0.9, data[100s]))")
             q6 = json.loads(json.dumps(manifest["queries"][2]))
             q6["id"] = "q6"
             q6["promql"] = f"avg by (job, label_0) (quantile_over_time({phi}, data[100s]))"
@@ -902,7 +922,7 @@ class RandomManifestTest(unittest.TestCase):
         # A per-series quantile over 10 s at 10/s holds 100 samples.
         manifest = self.manifest()
         manifest["queries"][2]["promql"] = (
-            "avg by (job) (quantile_over_time(0.90, data[10s]))")
+            "avg by (job) (quantile_over_time(0.99, data[10s]))")
         manifest["queries"][2]["rqes"][0]["lookback_ms"] = 10_000
         with mock.patch("sys.stderr"):
             workload = random_manifest_table(manifest, "test", {})["workloads"][0]

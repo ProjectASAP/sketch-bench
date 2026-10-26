@@ -843,10 +843,11 @@ RANDOM_ACCURACY_SLA = 0.95
 # The one quantile shape random_workloads.py writes: an avg of per-series
 # quantiles, grouped by the RQE's grouping_labels.
 AVG_OF_SERIES_QUANTILES = re.compile(
-    r"^avg by \(([\w, ]+)\) \(quantile_over_time\([\d.]+, data\[\w+\]\)\)$")
+    r"^avg by \(([\w, ]+)\) \(quantile_over_time\(([\d.]+), data\[\w+\]\)\)$")
 # A pooled quantile's PromQL stand-in: the quantile of per-series quantiles.
+# Both phis are the RQE's.
 QUANTILE_OF_SERIES_QUANTILES = re.compile(
-    r"^quantile by \(([\w, ]+)\) \([\d.]+, quantile_over_time\([\d.]+, data\[\w+\]\)\)$")
+    r"^quantile by \(([\w, ]+)\) \(([\d.]+), quantile_over_time\(([\d.]+), data\[\w+\]\)\)$")
 
 
 def random_expr(rqe, rqe_id, series_labels):
@@ -939,14 +940,19 @@ def random_manifest_table(manifest, revision, inputs):
                              f"{RANDOM_ACCURACY_SLA} (DEFAULT_TARGETS) is exported")
         grouping = rqe["grouping_labels"]
         pooled = rqe.get("pooled", False)
+        if pooled and capability not in ("quantile", "topk_by_value"):
+            raise ValueError(f"{query['id']}: a pooled {capability} RQE is not "
+                             "exported; only quantile and topk_by_value pool")
         if capability == "quantile":
             # Pooled, the PromQL is the other systems' stand-in.
             shape = QUANTILE_OF_SERIES_QUANTILES if pooled else AVG_OF_SERIES_QUANTILES
             m = shape.match(query["promql"])
-            if not m or m[1].split(", ") != grouping:
+            if (not m or m[1].split(", ") != grouping
+                    or any(float(phi) != rqe["phi"] for phi in m.groups()[1:])):
                 raise ValueError(f"{query['id']}: a quantile must be "
                                  f"{'quantile' if pooled else 'avg'} by "
-                                 f"({', '.join(grouping)}) of per-series quantiles: "
+                                 f"({', '.join(grouping)}) of per-series "
+                                 f"{rqe['phi']} quantiles: "
                                  f"{query['promql']!r}")
             if not pooled:
                 grouping = names
