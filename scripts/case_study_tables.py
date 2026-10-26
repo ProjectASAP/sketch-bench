@@ -104,7 +104,9 @@ def anomaly(dataset, endpoints=25, statuses=4, rate=2_000_000, intervals=None, d
     exporter.SCHEMAS["requests"] = schema
     rqes = []
     queries = ANOMALY_QUERIES + ([DRILLDOWN] if drilldown else [])
-    for (grouping, interval, covers), override in zip(queries, intervals or [None] * 7):
+    intervals = intervals or [None] * len(queries)
+    assert len(intervals) == len(queries), (len(intervals), len(queries))
+    for (grouping, interval, covers), override in zip(queries, intervals):
         coverage = exporter.group_coverage("requests", grouping, covers)
         smallest = rate * 5 * MIN * coverage[1]
         assert smallest >= exporter.SCHEMA_MIN_COVERED_N, (dataset, grouping, smallest)

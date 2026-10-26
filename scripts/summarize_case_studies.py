@@ -43,9 +43,9 @@ def mvs(plan):
     for choices in by_deployment.values():
         first = choices[0]
         params = ",".join(f"{k}={v}" for k, v in first["params"].items())
-        # Candidates only take the queries' own groupings, so an MV's is the
-        # finest of those it serves.
-        grouping = max((grouping_of(c["rqe"]) for c in choices), key=len)
+        # The runner names the deployment's grouping only where it differs
+        # from the RQE's (a roll-up or a Hydra grid).
+        grouping = first.get("deployment_grouping") or grouping_of(first["rqe"])
         out.append((f"{first['sketch']}({params}) by ({','.join(grouping)}) "
                     f"window {secs(first['window_secs'])} "
                     f"slide {secs(first['slide_secs'])}",

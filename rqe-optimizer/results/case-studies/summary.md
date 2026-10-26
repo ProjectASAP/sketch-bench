@@ -10,7 +10,7 @@
 | 3.0 | 0.151 | 4 | 1.11 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (service,region,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
+- dd(alpha=0.1) by (region,service,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
@@ -23,19 +23,19 @@ Plan at SLA 0.3:
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 0.5:
-- dd(alpha=0.1) by (service,region) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
+- dd(alpha=0.1) by (region,service) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 1.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 2.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
@@ -51,19 +51,19 @@ Plan at SLA 2.0:
 | 100.0 | 0.0776 | 2 | 82.5 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
-- dd(alpha=0.1) by (region,service,endpoint,status) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5), p99_by_service,region,status[5m] (merges 5), p99_by_region,endpoint[5m] (merges 5), p99_by_region,service,endpoint,status[5m] (merges 5)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (endpoint,region,service,status) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5), p99_by_service,region,status[5m] (merges 5), p99_by_region,endpoint[5m] (merges 5), p99_by_region,service,endpoint,status[5m] (merges 5)
 
 Plan at SLA 10.0:
-- dd(alpha=0.1) by (service,region,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
+- dd(alpha=0.1) by (region,service,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (region,service,endpoint,status) window 300s slide 300s: p99_by_region,service,endpoint,status[5m] (merges 1)
 
 Plan at SLA 30.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
-- dd(alpha=0.1) by (region,service,endpoint,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1), p99_by_region,endpoint[5m] (merges 1), p99_by_region,service,endpoint,status[5m] (merges 1)
+- dd(alpha=0.1) by (endpoint,region,service,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1), p99_by_region,endpoint[5m] (merges 1), p99_by_region,service,endpoint,status[5m] (merges 1)
 
 ## synthetic/case/anomaly/drilldown_endpoints=10/tp95
 
@@ -76,16 +76,16 @@ Plan at SLA 30.0:
 | 100.0 | 0.0435 | 1 | 33.1 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (region,service,endpoint,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20), p99_by_service,region,status[5m] (merges 20), p99_by_region,endpoint[5m] (merges 20), p99_by_region,service,endpoint,status[5m] (merges 20)
+- dd(alpha=0.1) by (endpoint,region,service,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20), p99_by_service,region,status[5m] (merges 20), p99_by_region,endpoint[5m] (merges 20), p99_by_region,service,endpoint,status[5m] (merges 20)
 
 Plan at SLA 3.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
-- dd(alpha=0.1) by (region,service,endpoint,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1), p99_by_region,endpoint[5m] (merges 1), p99_by_region,service,endpoint,status[5m] (merges 1)
+- dd(alpha=0.1) by (endpoint,region,service,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1), p99_by_region,endpoint[5m] (merges 1), p99_by_region,service,endpoint,status[5m] (merges 1)
 
 Plan at SLA 10.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
-- dd(alpha=0.1) by (region,service,endpoint,status) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5), p99_by_service,region,status[5m] (merges 5), p99_by_region,endpoint[5m] (merges 5), p99_by_region,service,endpoint,status[5m] (merges 5)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (endpoint,region,service,status) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5), p99_by_service,region,status[5m] (merges 5), p99_by_region,endpoint[5m] (merges 5), p99_by_region,service,endpoint,status[5m] (merges 5)
 
 ## synthetic/case/anomaly/drilldown_endpoints=25/tp95
 
@@ -98,23 +98,23 @@ Plan at SLA 10.0:
 | 100.0 | 0.0522 | 1 | 82.7 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (region,service,endpoint,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20), p99_by_service,region,status[5m] (merges 20), p99_by_region,endpoint[5m] (merges 20), p99_by_region,service,endpoint,status[5m] (merges 20)
+- dd(alpha=0.1) by (endpoint,region,service,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20), p99_by_service,region,status[5m] (merges 20), p99_by_region,endpoint[5m] (merges 20), p99_by_region,service,endpoint,status[5m] (merges 20)
 
 Plan at SLA 3.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (region,service,endpoint,status) window 300s slide 300s: p99_by_region,service,endpoint,status[5m] (merges 1)
 
 Plan at SLA 10.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
-- dd(alpha=0.1) by (region,service,endpoint,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1), p99_by_region,endpoint[5m] (merges 1), p99_by_region,service,endpoint,status[5m] (merges 1)
+- dd(alpha=0.1) by (endpoint,region,service,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1), p99_by_region,endpoint[5m] (merges 1), p99_by_region,service,endpoint,status[5m] (merges 1)
 
 Plan at SLA 30.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
-- dd(alpha=0.1) by (region,service,endpoint,status) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5), p99_by_service,region,status[5m] (merges 5), p99_by_region,endpoint[5m] (merges 5), p99_by_region,service,endpoint,status[5m] (merges 5)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (endpoint,region,service,status) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5), p99_by_service,region,status[5m] (merges 5), p99_by_region,endpoint[5m] (merges 5), p99_by_region,service,endpoint,status[5m] (merges 5)
 
 ## synthetic/case/anomaly/drilldown_endpoints=2/tp95
 
@@ -127,11 +127,11 @@ Plan at SLA 30.0:
 | 100.0 | 0.0388 | 1 | 6.61 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (region,service,endpoint,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20), p99_by_service,region,status[5m] (merges 20), p99_by_region,endpoint[5m] (merges 20), p99_by_region,service,endpoint,status[5m] (merges 20)
+- dd(alpha=0.1) by (endpoint,region,service,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20), p99_by_service,region,status[5m] (merges 20), p99_by_region,endpoint[5m] (merges 20), p99_by_region,service,endpoint,status[5m] (merges 20)
 
 Plan at SLA 3.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
-- dd(alpha=0.1) by (region,service,endpoint,status) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5), p99_by_service,region,status[5m] (merges 5), p99_by_region,endpoint[5m] (merges 5), p99_by_region,service,endpoint,status[5m] (merges 5)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (endpoint,region,service,status) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5), p99_by_service,region,status[5m] (merges 5), p99_by_region,endpoint[5m] (merges 5), p99_by_region,service,endpoint,status[5m] (merges 5)
 
 ## synthetic/case/anomaly/drilldown_endpoints=50/tp95
 
@@ -144,23 +144,23 @@ Plan at SLA 3.0:
 | 100.0 | 0.0765 | 2 | 41.2 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (region,service,endpoint,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20), p99_by_service,region,status[5m] (merges 20), p99_by_region,endpoint[5m] (merges 20), p99_by_region,service,endpoint,status[5m] (merges 20)
+- dd(alpha=0.1) by (endpoint,region,service,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20), p99_by_service,region,status[5m] (merges 20), p99_by_region,endpoint[5m] (merges 20), p99_by_region,service,endpoint,status[5m] (merges 20)
 
 Plan at SLA 3.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (region,service,endpoint,status) window 300s slide 300s: p99_by_region,service,endpoint,status[5m] (merges 1)
 
 Plan at SLA 10.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
-- dd(alpha=0.1) by (region,service,endpoint,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1), p99_by_region,endpoint[5m] (merges 1), p99_by_region,service,endpoint,status[5m] (merges 1)
+- dd(alpha=0.1) by (endpoint,region,service,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1), p99_by_region,endpoint[5m] (merges 1), p99_by_region,service,endpoint,status[5m] (merges 1)
 
 Plan at SLA 100.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
-- dd(alpha=0.1) by (region,service,endpoint,status) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5), p99_by_service,region,status[5m] (merges 5), p99_by_region,endpoint[5m] (merges 5), p99_by_region,service,endpoint,status[5m] (merges 5)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (endpoint,region,service,status) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5), p99_by_service,region,status[5m] (merges 5), p99_by_region,endpoint[5m] (merges 5), p99_by_region,service,endpoint,status[5m] (merges 5)
 
 ## synthetic/case/anomaly/drilldown_endpoints=5/tp95
 
@@ -173,16 +173,16 @@ Plan at SLA 100.0:
 | 100.0 | 0.0406 | 1 | 16.5 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (region,service,endpoint,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20), p99_by_service,region,status[5m] (merges 20), p99_by_region,endpoint[5m] (merges 20), p99_by_region,service,endpoint,status[5m] (merges 20)
+- dd(alpha=0.1) by (endpoint,region,service,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20), p99_by_service,region,status[5m] (merges 20), p99_by_region,endpoint[5m] (merges 20), p99_by_region,service,endpoint,status[5m] (merges 20)
 
 Plan at SLA 3.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
-- dd(alpha=0.1) by (region,service,endpoint,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1), p99_by_region,endpoint[5m] (merges 1), p99_by_region,service,endpoint,status[5m] (merges 1)
+- dd(alpha=0.1) by (endpoint,region,service,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1), p99_by_region,endpoint[5m] (merges 1), p99_by_region,service,endpoint,status[5m] (merges 1)
 
 Plan at SLA 10.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
-- dd(alpha=0.1) by (region,service,endpoint,status) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5), p99_by_service,region,status[5m] (merges 5), p99_by_region,endpoint[5m] (merges 5), p99_by_region,service,endpoint,status[5m] (merges 5)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (endpoint,region,service,status) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5), p99_by_service,region,status[5m] (merges 5), p99_by_region,endpoint[5m] (merges 5), p99_by_region,service,endpoint,status[5m] (merges 5)
 
 ## synthetic/case/anomaly/endpoints=100/tp95
 
@@ -196,12 +196,12 @@ Plan at SLA 10.0:
 | 3.0 | 0.301 | 4 | 1.19 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (service,region,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
+- dd(alpha=0.1) by (region,service,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 2.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
@@ -218,8 +218,8 @@ Plan at SLA 2.0:
 | 3.0 | 0.151 | 4 | 0.825 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (service,endpoint) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20)
-- dd(alpha=0.1) by (service,region,status) window 15s slide 15s: p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
+- dd(alpha=0.1) by (endpoint,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20)
+- dd(alpha=0.1) by (region,service,status) window 15s slide 15s: p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 0.3:
@@ -231,13 +231,13 @@ Plan at SLA 0.3:
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 0.5:
-- dd(alpha=0.1) by (service,region) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
+- dd(alpha=0.1) by (region,service) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 1.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
@@ -254,7 +254,7 @@ Plan at SLA 1.0:
 | 3.0 | 0.151 | 4 | 1.11 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (service,region,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
+- dd(alpha=0.1) by (region,service,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
@@ -267,19 +267,19 @@ Plan at SLA 0.3:
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 0.5:
-- dd(alpha=0.1) by (service,region) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
+- dd(alpha=0.1) by (region,service) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 1.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 2.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
@@ -296,9 +296,9 @@ Plan at SLA 2.0:
 | 3.0 | 0.113 | 3 | 1.65 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (service,endpoint) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20)
-- dd(alpha=0.1) by (region,endpoint) window 15s slide 15s: p99_by_region[5m] (merges 20), p99_by_region,endpoint[5m] (merges 20)
-- dd(alpha=0.1) by (service,region,status) window 60s slide 60s: p99_by_service,region[5m] (merges 5), p99_by_service,region,status[5m] (merges 5)
+- dd(alpha=0.1) by (endpoint,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20)
+- dd(alpha=0.1) by (endpoint,region) window 15s slide 15s: p99_by_region[5m] (merges 20), p99_by_region,endpoint[5m] (merges 20)
+- dd(alpha=0.1) by (region,service,status) window 60s slide 60s: p99_by_service,region[5m] (merges 5), p99_by_service,region,status[5m] (merges 5)
 
 Plan at SLA 0.3:
 - dd(alpha=0.1) by (service) window 15s slide 15s: p99_by_service[5m] (merges 20)
@@ -309,16 +309,16 @@ Plan at SLA 0.3:
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 0.5:
-- dd(alpha=0.1) by (service,endpoint) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20)
+- dd(alpha=0.1) by (endpoint,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20)
 - dd(alpha=0.1) by (region) window 15s slide 15s: p99_by_region[5m] (merges 20)
 - dd(alpha=0.1) by (service,region) window 60s slide 60s: p99_by_service,region[5m] (merges 5)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 1.0:
-- dd(alpha=0.1) by (service,endpoint) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20)
+- dd(alpha=0.1) by (endpoint,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20)
 - dd(alpha=0.1) by (region) window 15s slide 15s: p99_by_region[5m] (merges 20)
-- dd(alpha=0.1) by (service,region,status) window 60s slide 60s: p99_by_service,region[5m] (merges 5), p99_by_service,region,status[5m] (merges 5)
+- dd(alpha=0.1) by (region,service,status) window 60s slide 60s: p99_by_service,region[5m] (merges 5), p99_by_service,region,status[5m] (merges 5)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 ## synthetic/case/anomaly/endpoints=50/tp95
@@ -333,18 +333,18 @@ Plan at SLA 1.0:
 | 3.0 | 0.151 | 4 | 2.22 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (service,region,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
+- dd(alpha=0.1) by (region,service,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 1.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 3.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
@@ -361,8 +361,8 @@ Plan at SLA 3.0:
 | 3.0 | 0.151 | 4 | 1.03 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (service,endpoint) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20)
-- dd(alpha=0.1) by (service,region,status) window 15s slide 15s: p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
+- dd(alpha=0.1) by (endpoint,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20)
+- dd(alpha=0.1) by (region,service,status) window 15s slide 15s: p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 0.3:
@@ -374,21 +374,21 @@ Plan at SLA 0.3:
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 0.5:
-- dd(alpha=0.1) by (service,region) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
+- dd(alpha=0.1) by (region,service) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 1.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 2.0:
-- dd(alpha=0.1) by (service,endpoint) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20)
+- dd(alpha=0.1) by (endpoint,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20)
 - dd(alpha=0.1) by (region) window 15s slide 15s: p99_by_region[5m] (merges 20)
-- dd(alpha=0.1) by (service,region,status) window 60s slide 60s: p99_by_service,region[5m] (merges 5), p99_by_service,region,status[5m] (merges 5)
+- dd(alpha=0.1) by (region,service,status) window 60s slide 60s: p99_by_service,region[5m] (merges 5), p99_by_service,region,status[5m] (merges 5)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 ## synthetic/case/anomaly/interval=15/tp95
@@ -403,33 +403,33 @@ Plan at SLA 2.0:
 | 3.0 | 0.528 | 3 | 2.4 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (service,region,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
+- dd(alpha=0.1) by (region,service,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 15s slide 15s: p99_by_service,endpoint[5m] (merges 20)
 - dd(alpha=0.1) by (region,endpoint) window 15s slide 15s: p99_by_region,endpoint[5m] (merges 20)
 
 Plan at SLA 0.3:
-- dd(alpha=0.1) by (service,region) window 60s slide 15s: p99_by_service[5m] (merges 5), p99_by_region[5m] (merges 5), p99_by_service,region[5m] (merges 5)
+- dd(alpha=0.1) by (region,service) window 60s slide 15s: p99_by_service[5m] (merges 5), p99_by_region[5m] (merges 5), p99_by_service,region[5m] (merges 5)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 15s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (service,region,status) window 150s slide 15s: p99_by_service,region,status[5m] (merges 2)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 15s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 0.5:
-- dd(alpha=0.1) by (service,region,status) window 150s slide 15s: p99_by_service[5m] (merges 2), p99_by_region[5m] (merges 2), p99_by_service,region[5m] (merges 2), p99_by_service,region,status[5m] (merges 2)
+- dd(alpha=0.1) by (region,service,status) window 150s slide 15s: p99_by_service[5m] (merges 2), p99_by_region[5m] (merges 2), p99_by_service,region[5m] (merges 2), p99_by_service,region,status[5m] (merges 2)
 - dd(alpha=0.1) by (service,endpoint) window 150s slide 15s: p99_by_service,endpoint[5m] (merges 2)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 15s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 1.0:
-- dd(alpha=0.1) by (service,region,status) window 60s slide 15s: p99_by_service[5m] (merges 5), p99_by_region[5m] (merges 5), p99_by_service,region[5m] (merges 5), p99_by_service,region,status[5m] (merges 5)
+- dd(alpha=0.1) by (region,service,status) window 60s slide 15s: p99_by_service[5m] (merges 5), p99_by_region[5m] (merges 5), p99_by_service,region[5m] (merges 5), p99_by_service,region,status[5m] (merges 5)
 - dd(alpha=0.1) by (service,endpoint) window 75s slide 15s: p99_by_service,endpoint[5m] (merges 4)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 15s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 2.0:
-- dd(alpha=0.1) by (service,endpoint) window 60s slide 15s: p99_by_service[5m] (merges 5), p99_by_service,endpoint[5m] (merges 5)
-- dd(alpha=0.1) by (service,region,status) window 30s slide 15s: p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10), p99_by_service,region,status[5m] (merges 10)
+- dd(alpha=0.1) by (endpoint,service) window 60s slide 15s: p99_by_service[5m] (merges 5), p99_by_service,endpoint[5m] (merges 5)
+- dd(alpha=0.1) by (region,service,status) window 30s slide 15s: p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10), p99_by_service,region,status[5m] (merges 10)
 - dd(alpha=0.1) by (region,endpoint) window 150s slide 15s: p99_by_region,endpoint[5m] (merges 2)
 
 Plan at SLA 3.0:
-- dd(alpha=0.1) by (service,region,status) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10), p99_by_service,region,status[5m] (merges 10)
+- dd(alpha=0.1) by (region,service,status) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10), p99_by_service,region,status[5m] (merges 10)
 - dd(alpha=0.1) by (service,endpoint) window 30s slide 15s: p99_by_service,endpoint[5m] (merges 10)
 - dd(alpha=0.1) by (region,endpoint) window 150s slide 15s: p99_by_region,endpoint[5m] (merges 2)
 
@@ -445,7 +445,7 @@ Plan at SLA 3.0:
 | 3.0 | 0.113 | 3 | 0.297 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service[5m] (merges 1), p99_by_region[5m] (merges 1), p99_by_service,region[5m] (merges 1), p99_by_service,region,status[5m] (merges 1)
+- dd(alpha=0.1) by (region,service,status) window 300s slide 300s: p99_by_service[5m] (merges 1), p99_by_region[5m] (merges 1), p99_by_service,region[5m] (merges 1), p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 300s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
@@ -461,22 +461,22 @@ Plan at SLA none:
 | 3.0 | 0.264 | 3 | 1.11 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (service,region,status) window 60s slide 60s: p99_by_service[5m] (merges 5), p99_by_region[5m] (merges 5), p99_by_service,region[5m] (merges 5), p99_by_service,region,status[5m] (merges 5)
+- dd(alpha=0.1) by (region,service,status) window 60s slide 60s: p99_by_service[5m] (merges 5), p99_by_region[5m] (merges 5), p99_by_service,region[5m] (merges 5), p99_by_service,region,status[5m] (merges 5)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (region,endpoint) window 60s slide 60s: p99_by_region,endpoint[5m] (merges 5)
 
 Plan at SLA 0.3:
-- dd(alpha=0.1) by (service,region,status) window 300s slide 60s: p99_by_service[5m] (merges 1), p99_by_region[5m] (merges 1), p99_by_service,region[5m] (merges 1), p99_by_service,region,status[5m] (merges 1)
+- dd(alpha=0.1) by (region,service,status) window 300s slide 60s: p99_by_service[5m] (merges 1), p99_by_region[5m] (merges 1), p99_by_service,region[5m] (merges 1), p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 60s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 1.0:
-- dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service[5m] (merges 1), p99_by_service,endpoint[5m] (merges 1)
-- dd(alpha=0.1) by (service,region,status) window 60s slide 60s: p99_by_region[5m] (merges 5), p99_by_service,region[5m] (merges 5), p99_by_service,region,status[5m] (merges 5)
+- dd(alpha=0.1) by (endpoint,service) window 300s slide 60s: p99_by_service[5m] (merges 1), p99_by_service,endpoint[5m] (merges 1)
+- dd(alpha=0.1) by (region,service,status) window 60s slide 60s: p99_by_region[5m] (merges 5), p99_by_service,region[5m] (merges 5), p99_by_service,region,status[5m] (merges 5)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 60s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 2.0:
-- dd(alpha=0.1) by (service,region,status) window 60s slide 60s: p99_by_service[5m] (merges 5), p99_by_region[5m] (merges 5), p99_by_service,region[5m] (merges 5), p99_by_service,region,status[5m] (merges 5)
+- dd(alpha=0.1) by (region,service,status) window 60s slide 60s: p99_by_service[5m] (merges 5), p99_by_region[5m] (merges 5), p99_by_service,region[5m] (merges 5), p99_by_service,region,status[5m] (merges 5)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 60s: p99_by_region,endpoint[5m] (merges 1)
 
@@ -492,24 +492,24 @@ Plan at SLA 2.0:
 | 3.0 | 1.51 | 4 | 1.11 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (service,region,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
+- dd(alpha=0.1) by (region,service,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 0.5:
-- dd(alpha=0.1) by (service,region) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
+- dd(alpha=0.1) by (region,service) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 1.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 2.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
@@ -526,7 +526,7 @@ Plan at SLA 2.0:
 | 3.0 | 0.151 | 4 | 1.11 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (service,region,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
+- dd(alpha=0.1) by (region,service,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
@@ -539,19 +539,19 @@ Plan at SLA 0.3:
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 0.5:
-- dd(alpha=0.1) by (service,region) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
+- dd(alpha=0.1) by (region,service) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 1.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 2.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
@@ -568,7 +568,7 @@ Plan at SLA 2.0:
 | 3.0 | 0.019 | 4 | 1.11 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (service,region,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
+- dd(alpha=0.1) by (region,service,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
@@ -581,19 +581,19 @@ Plan at SLA 0.3:
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 0.5:
-- dd(alpha=0.1) by (service,region) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
+- dd(alpha=0.1) by (region,service) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 1.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 2.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
@@ -610,7 +610,7 @@ Plan at SLA 2.0:
 | 3.0 | 0.0378 | 4 | 1.11 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (service,region,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
+- dd(alpha=0.1) by (region,service,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
@@ -623,19 +623,19 @@ Plan at SLA 0.3:
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 0.5:
-- dd(alpha=0.1) by (service,region) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
+- dd(alpha=0.1) by (region,service) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 1.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 2.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
@@ -652,8 +652,8 @@ Plan at SLA 2.0:
 | 3.0 | 0.151 | 4 | 1.11 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (service,endpoint) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20)
-- dd(alpha=0.1) by (service,region,status) window 15s slide 15s: p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
+- dd(alpha=0.1) by (endpoint,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20)
+- dd(alpha=0.1) by (region,service,status) window 15s slide 15s: p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 0.3:
@@ -665,19 +665,19 @@ Plan at SLA 0.3:
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 0.5:
-- dd(alpha=0.1) by (service,region) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
+- dd(alpha=0.1) by (region,service) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 1.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 2.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
@@ -694,7 +694,7 @@ Plan at SLA 2.0:
 | 3.0 | 0.113 | 3 | 1.65 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (service,region,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
+- dd(alpha=0.1) by (region,service,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
@@ -709,13 +709,13 @@ Plan at SLA 0.3:
 Plan at SLA 0.5:
 - dd(alpha=0.1) by (service) window 15s slide 15s: p99_by_service[5m] (merges 20)
 - dd(alpha=0.1) by (region) window 15s slide 15s: p99_by_region[5m] (merges 20)
-- dd(alpha=0.1) by (service,region,status) window 60s slide 60s: p99_by_service,region[5m] (merges 5), p99_by_service,region,status[5m] (merges 5)
+- dd(alpha=0.1) by (region,service,status) window 60s slide 60s: p99_by_service,region[5m] (merges 5), p99_by_service,region,status[5m] (merges 5)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 1.0:
-- dd(alpha=0.1) by (service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20)
-- dd(alpha=0.1) by (service,region,status) window 60s slide 60s: p99_by_service,region[5m] (merges 5), p99_by_service,region,status[5m] (merges 5)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service,status) window 60s slide 60s: p99_by_service,region[5m] (merges 5), p99_by_service,region,status[5m] (merges 5)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
@@ -731,7 +731,7 @@ Plan at SLA 1.0:
 | 3.0 | 0.151 | 4 | 1.11 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (service,region,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
+- dd(alpha=0.1) by (region,service,status) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
@@ -744,19 +744,19 @@ Plan at SLA 0.3:
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 0.5:
-- dd(alpha=0.1) by (service,region) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
+- dd(alpha=0.1) by (region,service) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 1.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 2.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
@@ -773,8 +773,8 @@ Plan at SLA 2.0:
 | 3.0 | 0.151 | 4 | 1.11 |
 
 Plan at SLA none:
-- dd(alpha=0.1) by (service,endpoint) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20)
-- dd(alpha=0.1) by (service,region,status) window 15s slide 15s: p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
+- dd(alpha=0.1) by (endpoint,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_service,endpoint[5m] (merges 20)
+- dd(alpha=0.1) by (region,service,status) window 15s slide 15s: p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20), p99_by_service,region,status[5m] (merges 20)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 0.3:
@@ -786,19 +786,19 @@ Plan at SLA 0.3:
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 0.5:
-- dd(alpha=0.1) by (service,region) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
+- dd(alpha=0.1) by (region,service) window 30s slide 15s: p99_by_service[5m] (merges 10), p99_by_region[5m] (merges 10), p99_by_service,region[5m] (merges 10)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 1.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 300s slide 60s: p99_by_service,endpoint[5m] (merges 1)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
 
 Plan at SLA 2.0:
-- dd(alpha=0.1) by (service,region) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
+- dd(alpha=0.1) by (region,service) window 15s slide 15s: p99_by_service[5m] (merges 20), p99_by_region[5m] (merges 20), p99_by_service,region[5m] (merges 20)
 - dd(alpha=0.1) by (service,endpoint) window 60s slide 60s: p99_by_service,endpoint[5m] (merges 5)
 - dd(alpha=0.1) by (service,region,status) window 300s slide 300s: p99_by_service,region,status[5m] (merges 1)
 - dd(alpha=0.1) by (region,endpoint) window 300s slide 300s: p99_by_region,endpoint[5m] (merges 1)
