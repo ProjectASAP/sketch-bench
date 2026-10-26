@@ -726,6 +726,72 @@ class RandomManifestTest(unittest.TestCase):
                          {"rqe": {**leaf, "topk_by": ["job"]}})
         self.assertEqual(self.expr("topk_by_value", [], k=4), {"rqe": leaf})
 
+    def test_a_pooled_quantile_is_one_leaf_at_its_grouping(self):
+        self.assertEqual(
+            self.expr("quantile", ["job"], phi=0.5, pooled=True),
+            {"rqe": {"id": "rqe", "metric": "data", "capability": "quantile",
+                     "lookback_ms": 60_000, "grouping": ["job"], "phi": 0.5}})
+
+    def test_a_pooled_topk_ranks_its_groupings_groups_globally(self):
+        self.assertEqual(
+            self.expr("topk_by_value", ["job"], k=4, pooled=True),
+            {"rqe": {"id": "rqe", "metric": "data", "capability": "topk_by_value",
+                     "lookback_ms": 60_000, "grouping": ["job"], "k": 4}})
+
+    def test_pooled_rqes_are_per_group_and_one_global_heap(self):
+        manifest = self.manifest()
+        manifest["queries"][2]["rqes"][0]["pooled"] = True
+        manifest["queries"][2]["promql"] = (
+            "quantile by (job) (0.99, quantile_over_time(0.99, data[100s]))")
+        manifest["queries"][3]["rqes"][0]["pooled"] = True
+        manifest["queries"][3]["promql"] = "topk(4, sum by (job) (sum_over_time(data[1m])))"
+        workload = random_manifest_table(manifest, "test", {})["workloads"][0]
+        rqes = {r["query_id"]: r for r in workload["rqes"]}
+        # One quantile per job over its 500 series' samples.
+        self.assertEqual(rqes["q3"]["grouping"], ["job"])
+        self.assertEqual(rqes["q3"]["label_set"]["groups"], 2)
+        self.assertEqual(rqes["q3"]["min_N"], 500 * 10 * 100)
+        # One heap over the 2 jobs, read at the curves' 1,000 keys.
+        topk = rqes["topk4_q4"]
+        self.assertEqual(topk["grouping"], [])
+        self.assertEqual(topk["label_set"]["groups"], 1)
+        self.assertEqual(topk["assumptions"], ["2 keys per heap read at the curves' 1000"])
+        [q3, q4] = workload["e2e"]["queries"][2:]
+        # Planned from the tree alone; the other systems run client_promql.
+        self.assertNotIn("promql", q3)
+        self.assertEqual(q3["client_promql"], manifest["queries"][2]["promql"])
+        self.assertEqual(q3["expr"]["rqe"]["grouping"], ["job"])
+        self.assertEqual(q4["expr"]["rqe"]["grouping"], ["job"])
+        self.assertNotIn("topk_by", q4["expr"]["rqe"])
+
+    def test_pooled_and_per_series_quantiles_are_different_rqes(self):
+        manifest = self.manifest()
+        pooled = json.loads(json.dumps(manifest["queries"][2]))
+        pooled["id"] = "q6"
+        pooled["rqes"][0]["pooled"] = True
+        pooled["promql"] = "quantile by (job) (0.99, quantile_over_time(0.99, data[100s]))"
+        manifest["queries"].append(pooled)
+        workload = random_manifest_table(manifest, "test", {})["workloads"][0]
+        self.assertIn("q6", {r["query_id"] for r in workload["rqes"]})
+
+    def test_a_pooled_sum_is_refused(self):
+        manifest = self.manifest()
+        manifest["queries"][1]["rqes"][0]["pooled"] = True
+        with self.assertRaisesRegex(ValueError, "pooled sum"):
+            random_manifest_table(manifest, "test", {})
+
+    def test_a_quantile_promql_asking_another_phi_is_refused(self):
+        for pooled, promql in [
+                (False, "avg by (job) (quantile_over_time(0.5, data[100s]))"),
+                (True, "quantile by (job) (0.5, quantile_over_time(0.99, data[100s]))"),
+                (True, "quantile by (job) (0.99, quantile_over_time(0.9, data[100s]))")]:
+            with self.subTest(promql=promql):
+                manifest = self.manifest()
+                manifest["queries"][2]["rqes"][0]["pooled"] = pooled
+                manifest["queries"][2]["promql"] = promql
+                with self.assertRaisesRegex(ValueError, "0.99 quantiles"):
+                    random_manifest_table(manifest, "test", {})
+
     def test_other_capabilities_have_no_tree(self):
         for capability in ["topk_by_count", "rate", "cardinality"]:
             with self.subTest(capability=capability):
@@ -794,6 +860,8 @@ class RandomManifestTest(unittest.TestCase):
         def with_q6(phi):
             manifest = self.manifest()
             manifest["queries"][2]["rqes"][0]["phi"] = 0.9
+            manifest["queries"][2]["promql"] = (
+                "avg by (job) (quantile_over_time(0.9, data[100s]))")
             q6 = json.loads(json.dumps(manifest["queries"][2]))
             q6["id"] = "q6"
             q6["promql"] = f"avg by (job, label_0) (quantile_over_time({phi}, data[100s]))"
@@ -854,7 +922,7 @@ class RandomManifestTest(unittest.TestCase):
         # A per-series quantile over 10 s at 10/s holds 100 samples.
         manifest = self.manifest()
         manifest["queries"][2]["promql"] = (
-            "avg by (job) (quantile_over_time(0.90, data[10s]))")
+            "avg by (job) (quantile_over_time(0.99, data[10s]))")
         manifest["queries"][2]["rqes"][0]["lookback_ms"] = 10_000
         with mock.patch("sys.stderr"):
             workload = random_manifest_table(manifest, "test", {})["workloads"][0]
