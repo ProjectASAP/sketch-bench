@@ -1,0 +1,134 @@
+use std::time::Instant;
+
+use anyhow::{Context, Result};
+use asap_planner::{
+    plan_installable, CostInputs, DeploymentCapabilities, FrontendInput, InstallablePlan,
+    PlanningModels, PlanningWorkload, SelectedPlanReport, UserInput,
+};
+use serde_json::{json, Value};
+
+use crate::spec::{QuerySpec, Spec};
+
+#[derive(Debug, Clone, Copy)]
+pub struct Arm {
+    pub max_error: Option<f64>,
+    pub failure_probability: f64,
+    pub raw_data_retained: bool,
+    pub ignore_guarantees: bool,
+}
+
+impl Arm {
+    pub fn describe(&self) -> Value {
+        json!({
+            "max_error": self.max_error,
+            "failure_probability": self.max_error.map(|_| self.failure_probability),
+            "raw_data_retained": self.raw_data_retained,
+            "ignore_guarantees": self.ignore_guarantees,
+        })
+    }
+}
+
+pub fn workload(spec: &Spec, query: &QuerySpec, arm: &Arm) -> Result<PlanningWorkload> {
+    let requirements = match arm.max_error {
+        None => json!({}),
+        Some(max_error) => json!({"accuracy": {
+            "max_error": max_error,
+            "failure_probability": arm.failure_probability,
+        }}),
+    };
+    let rows_per_second = 1000.0 / spec.sample_interval_ms as f64;
+    let document = json!({
+        "query_workload": {
+            "language": "promql",
+            "repeating_queries": [{
+                "query": query.promql,
+                "demand": {"fixed_interval": query.interval_ms},
+                "requirements": requirements,
+                "predictability": {"predictable": {"known_at": null}},
+            }],
+        },
+        "data_workload": {
+            "arrival": {"ingesting": {"rows_per_second": rows_per_second}},
+            "sources": {spec.metric.clone(): {
+                "series_count": 1,
+                "sample_interval": spec.sample_interval_ms,
+                "max_distinct_per_evaluation": spec.max_distinct_per_evaluation,
+            }},
+        },
+    });
+    serde_json::from_value(document).context("building the planning workload")
+}
+
+pub struct Planned {
+    pub plan: InstallablePlan,
+    pub report: Option<SelectedPlanReport>,
+    pub planning_ms: f64,
+}
+
+pub async fn plan(spec: &Spec, query: &QuerySpec, arm: &Arm) -> Result<Planned, String> {
+    let workload = workload(spec, query, arm).map_err(|e| format!("{e:#}"))?;
+    let capabilities = DeploymentCapabilities {
+        raw_data_retained: arm.raw_data_retained,
+        ..Default::default()
+    };
+    let plan_selection = CostInputs {
+        ignore_accuracy_guarantees: arm.ignore_guarantees,
+        ..Default::default()
+    };
+    let started = Instant::now();
+    let (plan, report) = plan_installable(UserInput::new(
+        &workload,
+        FrontendInput::Promql { histograms: None },
+        PlanningModels::builtin()
+            .with_deployment_capabilities(&capabilities)
+            .with_plan_selection(&plan_selection),
+    ))
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(Planned {
+        plan,
+        report,
+        planning_ms: started.elapsed().as_secs_f64() * 1e3,
+    })
+}
+
+fn sketches(node: &Value, out: &mut Vec<Value>) {
+    match node {
+        Value::Object(map) => {
+            match map.get("Sketch") {
+                Some(Value::Array(parts)) if !parts.is_empty() => out.push(parts[0].clone()),
+                Some(sketch) => out.push(sketch.clone()),
+                None => {}
+            }
+            for value in map.values() {
+                sketches(value, out);
+            }
+        }
+        Value::Array(items) => items.iter().for_each(|item| sketches(item, out)),
+        _ => {}
+    }
+}
+
+pub fn summary(planned: &Planned) -> Result<Value> {
+    let dag = &planned.plan.dag;
+    let mut found = Vec::new();
+    for node in &dag.nodes {
+        sketches(&serde_json::to_value(&node.payload)?, &mut found);
+    }
+    found.dedup();
+    let views = planned.plan.materialized_views()?;
+    let report = planned.report.as_ref();
+    Ok(json!({
+        "selected_candidate_id": report.map(|r| r.selected_candidate_id.clone()),
+        "cost_per_second": report.and_then(|r| r.cost_per_second),
+        "predicted_peak_memory_bytes": report.and_then(|r| r.predicted_usage.as_ref().map(|u| u.peak_memory_bytes)),
+        "sketches": found,
+        "materialized_views": views.iter().map(|v| json!({
+            "node_id": v.node_id,
+            "refresh": v.refresh,
+            "retention_ms": v.retention_ms,
+        })).collect::<Vec<_>>(),
+        "nodes": dag.nodes.len(),
+        "planning_ms": planned.planning_ms,
+    }))
+}

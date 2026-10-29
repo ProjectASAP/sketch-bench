@@ -1,0 +1,20 @@
+[package]
+name = "aqpbm-inprocess"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Runs recurring queries through ASAPPlanner's planner and executor in process, over generated samples, at every evaluation time."
+
+[dependencies]
+asap-planner = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "bb981e9bc7c762dadc1998b89d9767d927474a26", default-features = false, features = ["promql", "test-support"] }
+asap-executor = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "bb981e9bc7c762dadc1998b89d9767d927474a26" }
+asap-types = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "bb981e9bc7c762dadc1998b89d9767d927474a26" }
+aqpbm-datagen.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rand.workspace = true
+rand_xoshiro.workspace = true
+futures = "0.3"
+tokio = { version = "1", features = ["rt", "macros"] }

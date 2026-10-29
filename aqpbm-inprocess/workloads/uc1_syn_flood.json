@@ -1,0 +1,21 @@
+{
+  "use_case": "ddos_syn_flood",
+  "metric": "src_ip",
+  "labels": {"vm": "instance1"},
+  "start_ms": 1767225600000,
+  "duration_ms": 1800000,
+  "sample_interval_ms": 1,
+  "max_distinct_per_evaluation": 10000,
+  "seed": 11,
+  "baseline": {"kind": "zipf", "skewness": 1.1, "population_size": 2000, "seed": 12},
+  "attack": {"kind": "uniform", "lower_bound": 1000000, "upper_bound": 4294967296, "seed": 13},
+  "attacks": [
+    {"start_offset_ms": 300000, "end_offset_ms": 660000, "ramp_ms": 30000, "attack_share": 0.6},
+    {"start_offset_ms": 1200000, "end_offset_ms": 1440000, "ramp_ms": 60000, "attack_share": 0.4}
+  ],
+  "queries": [
+    {"id": "entropy_10s", "promql": "entropy_over_time(src_ip{vm=\"instance1\"}[10s])", "window_ms": 10000, "interval_ms": 5000, "threshold": 8.5, "unit": "entropy"},
+    {"id": "distinct_10s", "promql": "distinct_over_time(src_ip{vm=\"instance1\"}[10s])", "window_ms": 10000, "interval_ms": 5000, "threshold": 3000, "unit": "addresses"},
+    {"id": "distinct_5s", "promql": "distinct_over_time(src_ip{vm=\"instance1\"}[5s])", "window_ms": 5000, "interval_ms": 5000, "threshold": 1700, "unit": "addresses"}
+  ]
+}
