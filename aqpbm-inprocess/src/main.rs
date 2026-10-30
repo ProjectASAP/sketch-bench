@@ -83,7 +83,7 @@ async fn main() -> Result<()> {
                 continue;
             }
         };
-        let plan_summary = summary(&planned)?;
+        let plan_summary = summary(&planned, arm.max_error.map(|_| arm.failure_probability))?;
         eprintln!("{}: plan {}", query.id, plan_summary);
         let mut driver = Driver::new(planned.plan, args.check_reference)
             .with_context(|| format!("installing the plan of {}", query.id))?;
@@ -135,7 +135,7 @@ async fn main() -> Result<()> {
     let document = json!({
         "use_case": spec.use_case,
         "arm": arm.describe(),
-        "planner_rev": "41c515465646773ce04065a652f88f52bd864ce5",
+        "planner_rev": env!("ASAP_PLANNER_REV"),
         "samples": samples,
         "queries": queries,
     });

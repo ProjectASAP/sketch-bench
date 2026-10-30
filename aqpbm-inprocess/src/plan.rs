@@ -7,6 +7,7 @@ use asap_planner::{
 };
 use serde_json::{json, Value};
 
+use crate::sketch_analytics::{analytics, statistics};
 use crate::spec::{QuerySpec, Spec};
 
 #[derive(Debug, Clone, Copy)]
@@ -125,13 +126,25 @@ fn sketches(node: &Value, out: &mut Vec<Value>) {
     }
 }
 
-pub fn summary(planned: &Planned) -> Result<Value> {
+pub fn summary(planned: &Planned, failure_probability: Option<f64>) -> Result<Value> {
     let dag = &planned.plan.dag;
-    let mut found = Vec::new();
+    let mut all = Vec::new();
+    let mut planned_statistics = Vec::new();
     for node in &dag.nodes {
-        sketches(&serde_json::to_value(&node.payload)?, &mut found);
+        let payload = serde_json::to_value(&node.payload)?;
+        sketches(&payload, &mut all);
+        statistics(&payload, &mut planned_statistics);
     }
-    found.dedup();
+    let mut found: Vec<Value> = Vec::new();
+    for sketch in all {
+        if !found.contains(&sketch) {
+            found.push(sketch);
+        }
+    }
+    let sketch_analytics = found
+        .iter()
+        .map(|sketch| analytics(sketch, &planned_statistics, failure_probability))
+        .collect::<Result<Vec<_>>>()?;
     let views = planned.plan.materialized_views()?;
     let report = planned.report.as_ref();
     Ok(json!({
@@ -139,6 +152,7 @@ pub fn summary(planned: &Planned) -> Result<Value> {
         "cost_per_second": report.and_then(|r| r.cost_per_second),
         "predicted_peak_memory_bytes": report.and_then(|r| r.predicted_usage.as_ref().map(|u| u.peak_memory_bytes)),
         "sketches": found,
+        "sketch_analytics": sketch_analytics,
         "materialized_views": views.iter().map(|v| json!({
             "node_id": v.node_id,
             "refresh": v.refresh,

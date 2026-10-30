@@ -108,6 +108,27 @@ def describe_plan(plan):
     return f"{'; '.join(sketches) or 'exact'} ({where})"
 
 
+def sketch_bounds(query):
+    plan = query["plan"]
+    rows = []
+    for sketch, analytics in zip(plan["sketches"], plan.get("sketch_analytics", [])):
+        for readout in analytics["readouts"] or [{}]:
+            error = readout.get("error") or {}
+            rows.append({
+                "query": query["id"],
+                "sketch": f"{sketch.get('algorithm', '?')} {json.dumps(sketch.get('params'), separators=(',', ':'))}",
+                "statistic": readout.get("statistic"),
+                "bound metric": error.get("metric"),
+                "epsilon": error.get("epsilon"),
+                "delta": error.get("delta"),
+                "merged error": readout.get("merged_error"),
+                "sketchlib bytes per state": analytics["memory_bytes"],
+                "planner peak bytes for the plan": plan["predicted_peak_memory_bytes"],
+                "update ops": analytics["update_ops"],
+            })
+    return rows
+
+
 def short_reason(reason):
     m = re.search(r'choice \d+: ([^"]+?)(?: AccuracyTarget|")', reason)
     return m.group(1) if m else reason[:160]
@@ -223,6 +244,7 @@ def write_arm(data, case, prefix, arm, exact, approx):
     }
     derived = case["derive"](rows, planned)
     details["max_relative_error"] = max_relative_errors(derived)
+    details["sketch_bounds"] = [r for q in planned for r in sketch_bounds(q)]
     details["fidelity"] = headlines(derived)
     write_run(data, run_id, use_case, rows + derived, details, case["split"])
     print(f"{run_id}: {len(plans)} queries, {len(unsupported)} unsupported", file=sys.stderr)

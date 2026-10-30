@@ -630,6 +630,31 @@ def overview_dashboard():
                              "&var-signal=${__data.fields.signal}"
                              "&from=${__data.fields.start}&to=${__data.fields.end}"}]}]}]},
              "options": {"showHeader": True}}, 0, 0, 24, 30)
+    bounds = ('$[$exists(details.sketch_bounds)].( $e := $; $e.details.sketch_bounds.( '
+              '$merge([$, {"run_id": $e.run_id, '
+              '"max relative error": $lookup($e.details.max_relative_error, query)}]) ) )')
+    text = ("run_id", "query", "sketch", "statistic", "bound metric", "merged error")
+    numbers = ("epsilon", "delta", "max relative error", "sketchlib bytes per state", "planner peak bytes for the plan",
+               "update ops")
+    b.panel({"type": "table",
+             "title": "Every planned sketch: asap_sketchlib's error bound and memory next to the measured error "
+                      "and the planner's memory",
+             "targets": [iq("A", INDEX, bounds, [col(k, k, "string") for k in text]
+                            + [col(k, k, "number") for k in numbers])],
+             "transformations": [{"id": "organize", "options": {
+                 "indexByName": {k: i for i, k in enumerate(text[:5] + ("epsilon", "delta", "max relative error",
+                                                                        "merged error") + numbers[3:])},
+                 "excludeByName": {}, "renameByName": {}}},
+                 {"id": "sortBy", "options": {"sort": [{"field": "run_id"}]}}],
+             "fieldConfig": {"defaults": {"custom": {"minWidth": 60, "cellOptions": {"type": "auto", "wrapText": True}}},
+                             "overrides": [
+                 {"matcher": {"id": "byName", "options": "max relative error"},
+                  "properties": [{"id": "unit", "value": "percentunit"}, {"id": "decimals", "value": 1}]},
+                 {"matcher": {"id": "byRegexp", "options": "bytes"},
+                  "properties": [{"id": "unit", "value": "bytes"}]},
+                 {"matcher": {"id": "byName", "options": "sketch"},
+                  "properties": [{"id": "custom.width", "value": 230}]}]},
+             "options": {"showHeader": True}}, 0, 30, 24, 15)
     return dashboard("overview", "Approximate query fidelity overview", b, [])
 
 

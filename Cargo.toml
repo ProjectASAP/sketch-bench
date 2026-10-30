@@ -6,8 +6,8 @@ members = [
     "aqpbm-core",
     "sketch-bench",
     "aqpbm-cli",
-    "aqpbm-planeval",
     "aqpbm-inprocess",
+    "aqpbm-planeval",
     "rqe-optimizer",
 ]
 

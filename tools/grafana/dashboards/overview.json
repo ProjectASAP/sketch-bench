@@ -322,6 +322,191 @@
         "type": "yesoreyeram-infinity-datasource",
         "uid": "approx-rows"
       }
+    },
+    {
+      "type": "table",
+      "title": "Every planned sketch: asap_sketchlib's error bound and memory next to the measured error and the planner's memory",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/index.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[$exists(details.sketch_bounds)].( $e := $; $e.details.sketch_bounds.( $merge([$, {\"run_id\": $e.run_id, \"max relative error\": $lookup($e.details.max_relative_error, query)}]) ) ); $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "run_id",
+              "text": "run_id",
+              "type": "string"
+            },
+            {
+              "selector": "query",
+              "text": "query",
+              "type": "string"
+            },
+            {
+              "selector": "sketch",
+              "text": "sketch",
+              "type": "string"
+            },
+            {
+              "selector": "statistic",
+              "text": "statistic",
+              "type": "string"
+            },
+            {
+              "selector": "bound metric",
+              "text": "bound metric",
+              "type": "string"
+            },
+            {
+              "selector": "merged error",
+              "text": "merged error",
+              "type": "string"
+            },
+            {
+              "selector": "epsilon",
+              "text": "epsilon",
+              "type": "number"
+            },
+            {
+              "selector": "delta",
+              "text": "delta",
+              "type": "number"
+            },
+            {
+              "selector": "max relative error",
+              "text": "max relative error",
+              "type": "number"
+            },
+            {
+              "selector": "sketchlib bytes per state",
+              "text": "sketchlib bytes per state",
+              "type": "number"
+            },
+            {
+              "selector": "planner peak bytes for the plan",
+              "text": "planner peak bytes for the plan",
+              "type": "number"
+            },
+            {
+              "selector": "update ops",
+              "text": "update ops",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "run_id": 0,
+              "query": 1,
+              "sketch": 2,
+              "statistic": 3,
+              "bound metric": 4,
+              "epsilon": 5,
+              "delta": 6,
+              "max relative error": 7,
+              "merged error": 8,
+              "sketchlib bytes per state": 9,
+              "planner peak bytes for the plan": 10,
+              "update ops": 11
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "run_id"
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "minWidth": 60,
+            "cellOptions": {
+              "type": "auto",
+              "wrapText": true
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max relative error"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sketch"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 230
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true
+      },
+      "id": 2,
+      "gridPos": {
+        "x": 0,
+        "y": 30,
+        "w": 24,
+        "h": 15
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
     }
   ]
 }
