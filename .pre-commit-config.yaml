@@ -4,6 +4,8 @@ repos:
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
+        # Exporter test fixtures, kept identical to ASAPQuery's rqe-optimizer copy.
+        exclude: ^scripts/testdata/
       - id: check-yaml
       - id: check-added-large-files
       - id: check-case-conflict

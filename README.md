@@ -519,4 +519,5 @@ separate by crates may not be necessary at this moments -->
 
 [Sketch benchmark wrapper](./docs/sketch-bench.md)
 
-[End-to-end planning flow: traces to an rqe-optimizer plan](./docs/e2e_planning_flow.md)
+[End-to-end planning flow: traces to an rqe-optimizer plan](https://github.com/ProjectASAP/ASAPQuery/blob/main/rqe-optimizer/docs/e2e_planning_flow.md)
+(rqe-optimizer, its evaluation runner and its results are in ProjectASAP/ASAPQuery)
