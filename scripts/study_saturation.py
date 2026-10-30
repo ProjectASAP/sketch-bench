@@ -117,7 +117,7 @@ OPTIMIZER_FAMILIES = ("topk", "cardinality", "quantile")
 TOPK_HEAPS = (32, 128, 512, 2048)
 # The k a top-k answer is graded at: curves run at each, a config at k
 # carrying ` topk_k=k` (its heap defaults to k). TOPK_K is left implicit,
-# so its points keep their old keys. Kept equal to rqe-optimizer's TOPK_K
+# so its points keep their old keys. Kept equal to ASAPQuery rqe-optimizer's TOPK_K
 # and sketch-bench's (the cost table's top-k rows are graded at it).
 TOPK_K = 32
 TOPK_KS = (10, 32, 100)

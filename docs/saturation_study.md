@@ -6,7 +6,7 @@ records the cost of the sketch at the largest N measured, and finds the stream
 length N* past which an exact answer costs 10x (100x) more than the sketch.
 
 It is stacked on PR #129 (`dev-milind-turboprom`) and does not change
-`rqe-optimizer` or its atomic-cost table; it only adds a Pareto generator
+`rqe-optimizer` (now in ASAPQuery) or its atomic-cost table; it only adds a Pareto generator
 (`--dataset pareto`, at `--dtype f64` or `i64`) and
 `scripts/study_saturation.py`.
 
@@ -79,7 +79,7 @@ atomic-costs` to `rqe_atomic_costs.json` (#174). Top-k configs are measured at h
 2048 (`TOPK_HEAPS`, `heap=`): a deployment merging `m` windows keeps `m · k`
 and rqe-optimizer interpolates between them. The accuracy grid measures top-k
 at each k in `--topk-ks`, at a heap of k. Put it under the curves'
-directory as `optimizer_cost/`, where `rqe-optimizer` reads it. The accuracy
+directory as `optimizer_cost/`, where ASAPQuery's `rqe-optimizer` reads it. The accuracy
 grid also covers that shape (unless `--no-cost-shape`): θ = 1.1 and K = 1e4
 join the grid as a full row and column (a = 2 joins the Pareto values), so
 the grid stays a full cross, each cost-table row is a point on a curve, and
