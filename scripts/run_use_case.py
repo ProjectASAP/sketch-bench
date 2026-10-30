@@ -255,14 +255,14 @@ def main(argv=None):
         description="Run a use case through ASAPPlanner in process: the exact plan, then each approximate arm"
     )
     parser.add_argument("use_case", choices=sorted(USE_CASES))
-    parser.add_argument("--binary", default=os.path.join(REPO, "target", "release", "aqpbm-inprocess"))
+    parser.add_argument("--binary", default=os.path.join(REPO, "target", "release", "planeval"))
     parser.add_argument("--data", default=os.path.join(REPO, "target", "grafana-data"))
-    parser.add_argument("--raw-out", default=os.path.join(REPO, "target", "inprocess"))
+    parser.add_argument("--raw-out", default=os.path.join(REPO, "target", "planeval"))
     parser.add_argument("--arm", action="append", help="repeatable; default every arm of the use case")
     args = parser.parse_args(argv)
     case = USE_CASES[args.use_case]
     prefix = f"uc{args.use_case}"
-    spec = os.path.join(REPO, "aqpbm-inprocess", "workloads", case["spec"])
+    spec = os.path.join(REPO, "aqpbm-planeval", "workloads", case["spec"])
     for arm in args.arm or []:
         if arm not in case["arms"]:
             parser.error(f"arm {arm} is not one of {case['arms']}")

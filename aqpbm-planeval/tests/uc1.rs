@@ -1,10 +1,10 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use aqpbm_inprocess::data::generate;
-use aqpbm_inprocess::plan::{plan, Arm};
-use aqpbm_inprocess::run::Driver;
-use aqpbm_inprocess::spec::Spec;
+use aqpbm_planeval::data::generate;
+use aqpbm_planeval::plan::{plan, Arm};
+use aqpbm_planeval::run::Driver;
+use aqpbm_planeval::spec::Spec;
 
 fn small_spec() -> Spec {
     let spec: Spec = serde_json::from_value(serde_json::json!({
