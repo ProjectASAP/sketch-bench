@@ -134,8 +134,8 @@ def signed_delay_text(s, metric, name, early, late):
     return f"; {name} {s[metric]:.2f} ({s[early]} early, {s[late]} late)"
 
 
-def counted(n, noun):
-    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+def counted(n, noun, plural=None):
+    return f"{n} {noun}" if n == 1 else f"{n} {plural or noun + 's'}"
 
 
 def headline(app, s):
@@ -143,7 +143,7 @@ def headline(app, s):
         total = s["true_positive"] + s["false_positive"] + s["false_negative"] + s["true_negative"]
         return ((s["true_positive"] + s["true_negative"]) / total,
                 f"{s['false_positive']} false positive and {s['false_negative']} false negative evaluations; "
-                f"{s['missed_episodes']} of {s['episodes']} episodes missed; {counted(s['gaps'], 'gap')}"
+                f"{s['missed_episodes']} of {counted(s['episodes'], 'episode')} missed; {counted(s['gaps'], 'gap')}"
                 + delay_text(s, "mean_onset_delay", "mean onset delay")
                 + signed_delay_text(s, "mean_absolute_end_delay", "mean absolute end delay", "early_ends",
                                     "late_ends"))
@@ -155,16 +155,21 @@ def headline(app, s):
                                     "late_actions"))
     if app == rollout.APP:
         return (s["agreement"],
-                f"{s['true_positive'] + s['true_negative']} of {s['rollouts']} rollouts decided the same; "
+                f"{s['true_positive'] + s['true_negative']} of {counted(s['rollouts'], 'rollout')} decided the same; "
                 f"{counted(s['false_positive'], 'false rollback')}, "
                 f"{counted(s['false_negative'], 'missed rollback')}; {counted(s['gaps'], 'gap')} in slower"
                 + signed_delay_text(s, "mean_absolute_rollback_delay", "mean absolute rollback delay",
                                     "early_rollbacks", "late_rollbacks"))
     if app == topk_set.APP:
-        return (s["identical_sets"] / s["evaluations"],
+        size = s["mean_list_size"]
+        return (s["mean_overlap"] / size,
+                f"mean overlap {s['mean_overlap']:.2f} of "
+                f"{counted(int(size) if float(size).is_integer() else round(size, 2), 'client')}; "
+                f"identical lists {s['identical_sets']} of {s['evaluations']}; "
                 f"{s['true_positive']} true positive, {s['false_positive']} false positive and "
                 f"{s['false_negative']} false negative client-evaluations; precision {s['precision']:.3f}; "
-                f"{s['missed_entries']} of {s['entries']} entries missed; {counted(s['gaps'], 'gap')}"
+                f"{s['missed_entries']} of {counted(s['entries'], 'entry', 'entries')} missed; "
+                f"{counted(s['gaps'], 'gap')}"
                 + delay_text(s, "mean_onset_delay", "mean onset delay"))
     raise ValueError(f"no headline for application {app}")
 

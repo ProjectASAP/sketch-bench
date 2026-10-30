@@ -795,7 +795,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and metric=\"slower\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and metric=\"slower\" and labels.arm=\"exact\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
           "columns": [
             {
               "selector": "time",
@@ -824,7 +824,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and metric=\"slower\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and metric=\"slower\" and labels.arm=\"approx\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
           "columns": [
             {
               "selector": "time",
@@ -853,7 +853,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and metric=\"action\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and metric=\"action\" and labels.arm=\"exact\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
           "columns": [
             {
               "selector": "time",
@@ -882,7 +882,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and metric=\"action\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and metric=\"action\" and labels.arm=\"approx\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
           "columns": [
             {
               "selector": "time",
@@ -911,7 +911,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and metric=\"annotation\"]; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and metric=\"annotation\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
           "columns": [
             {
               "selector": "time",
@@ -1127,7 +1127,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"rollout_controller\"]{metric: value}; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := ( $m := $[labels.app=\"rollout_controller\"]; $exists($m) ? ( $s := $m{metric: value}; $s ) : [] ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "true_positive",
@@ -1221,7 +1221,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"rollout_controller\"]{metric: value}; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := ( $m := $[labels.app=\"rollout_controller\"]; $exists($m) ? ( $s := $m{metric: value}; $s ) : [] ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "rollouts",

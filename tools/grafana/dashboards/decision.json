@@ -91,6 +91,47 @@
           }
         },
         "sort": 0
+      },
+      {
+        "name": "container_in_run",
+        "label": "container_in_run",
+        "type": "query",
+        "datasource": {
+          "type": "yesoreyeram-infinity-datasource",
+          "uid": "approx-rows"
+        },
+        "refresh": 1,
+        "query": {
+          "queryType": "infinity",
+          "query": "",
+          "refId": "variable",
+          "infinityQuery": {
+            "refId": "variable",
+            "datasource": {
+              "type": "yesoreyeram-infinity-datasource",
+              "uid": "approx-rows"
+            },
+            "type": "json",
+            "source": "url",
+            "parser": "backend",
+            "format": "table",
+            "url": "http://localhost:8000/runs/${run}/fidelity_summary.json",
+            "url_options": {
+              "method": "GET",
+              "data": ""
+            },
+            "root_selector": "( $r := ( $m := $[metric=\"disagreements\" and labels.container in [${container:doublequote}]].labels; $a := $[metric=\"disagreements\"].labels; $exists($m) ? $m : $a[0] ); $exists($r) ? $r : [] )",
+            "columns": [
+              {
+                "selector": "container",
+                "text": "container_in_run",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "hide": 2,
+        "skipUrlSync": true
       }
     ]
   },
@@ -412,7 +453,7 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "http://localhost:8000/runs/${run}/query_result/${container}.json",
+          "url": "http://localhost:8000/runs/${run}/query_result/${container_in_run}.json",
           "url_options": {
             "method": "GET",
             "data": ""
@@ -441,7 +482,7 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "http://localhost:8000/runs/${run}/query_result/${container}.json",
+          "url": "http://localhost:8000/runs/${run}/query_result/${container_in_run}.json",
           "url_options": {
             "method": "GET",
             "data": ""
@@ -591,7 +632,7 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "http://localhost:8000/runs/${run}/query_result/${container}.json",
+          "url": "http://localhost:8000/runs/${run}/query_result/${container_in_run}.json",
           "url_options": {
             "method": "GET",
             "data": ""
@@ -620,7 +661,7 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "http://localhost:8000/runs/${run}/query_result/${container}.json",
+          "url": "http://localhost:8000/runs/${run}/query_result/${container_in_run}.json",
           "url_options": {
             "method": "GET",
             "data": ""
@@ -770,7 +811,7 @@
           "source": "url",
           "parser": "backend",
           "format": "timeseries",
-          "url": "http://localhost:8000/runs/${run}/low_level/${container}.json",
+          "url": "http://localhost:8000/runs/${run}/low_level/${container_in_run}.json",
           "url_options": {
             "method": "GET",
             "data": ""
@@ -856,12 +897,12 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "http://localhost:8000/runs/${run}/app_state/${container}.json",
+          "url": "http://localhost:8000/runs/${run}/app_state/${container_in_run}.json",
           "url_options": {
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"action\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"action\" and labels.arm=\"exact\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
           "columns": [
             {
               "selector": "time",
@@ -885,12 +926,12 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "http://localhost:8000/runs/${run}/app_state/${container}.json",
+          "url": "http://localhost:8000/runs/${run}/app_state/${container_in_run}.json",
           "url_options": {
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"action\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"action\" and labels.arm=\"approx\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
           "columns": [
             {
               "selector": "time",
@@ -914,12 +955,12 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "http://localhost:8000/runs/${run}/app_state/${container}.json",
+          "url": "http://localhost:8000/runs/${run}/app_state/${container_in_run}.json",
           "url_options": {
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"annotation\"]; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"annotation\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
           "columns": [
             {
               "selector": "time",
@@ -1083,12 +1124,12 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "http://localhost:8000/runs/${run}/app_state/${container}.json",
+          "url": "http://localhost:8000/runs/${run}/app_state/${container_in_run}.json",
           "url_options": {
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"decision\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"decision\" and labels.arm=\"exact\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
           "columns": [
             {
               "selector": "time",
@@ -1112,12 +1153,12 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "http://localhost:8000/runs/${run}/app_state/${container}.json",
+          "url": "http://localhost:8000/runs/${run}/app_state/${container_in_run}.json",
           "url_options": {
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"decision\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"decision\" and labels.arm=\"approx\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
           "columns": [
             {
               "selector": "time",
@@ -1287,7 +1328,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"autoscaler\" and $not($exists(labels.container))]{metric: value}; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := ( $m := $[labels.app=\"autoscaler\" and $not($exists(labels.container))]; $exists($m) ? ( $s := $m{metric: value}; $s ) : [] ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "true_positive",
@@ -1381,7 +1422,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := ( $s := $[labels.app=\"autoscaler\" and $not($exists(labels.container))]{metric: value}; [\"up\", \"down\"].( $a := $; {\"action\": $a, \"matched\": $lookup($s, $a & \"_true_positive\"), \"early\": $lookup($s, $a & \"_early_actions\"), \"late\": $lookup($s, $a & \"_late_actions\"), \"false\": $lookup($s, $a & \"_false_positive\"), \"missed\": $lookup($s, $a & \"_false_negative\"), \"mean absolute onset delay\": $lookup($s, $a & \"_mean_absolute_onset_delay\")} ) ); $exists($r) ? $r : [] )",
+          "root_selector": "( $r := ( $m := $[labels.app=\"autoscaler\" and $not($exists(labels.container))]; $exists($m) ? ( $s := $m{metric: value}; [\"up\", \"down\"].( $a := $; {\"action\": $a, \"matched\": $lookup($s, $a & \"_true_positive\"), \"early\": $lookup($s, $a & \"_early_actions\"), \"late\": $lookup($s, $a & \"_late_actions\"), \"false\": $lookup($s, $a & \"_false_positive\"), \"missed\": $lookup($s, $a & \"_false_negative\"), \"mean absolute onset delay\": $lookup($s, $a & \"_mean_absolute_onset_delay\")} ) ) : [] ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "action",
@@ -1481,7 +1522,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := ( $s := $[labels.app=\"autoscaler\" and $not($exists(labels.container))]{metric: value}; [\"up\", \"down\", \"none\"].( $e := $; {\"exact\": $e, \"approx up\": $lookup($s, \"exact_\" & $e & \"_approx_up\"), \"approx down\": $lookup($s, \"exact_\" & $e & \"_approx_down\"), \"approx none\": $lookup($s, \"exact_\" & $e & \"_approx_none\")} ) ); $exists($r) ? $r : [] )",
+          "root_selector": "( $r := ( $m := $[labels.app=\"autoscaler\" and $not($exists(labels.container))]; $exists($m) ? ( $s := $m{metric: value}; [\"up\", \"down\", \"none\"].( $e := $; {\"exact\": $e, \"approx up\": $lookup($s, \"exact_\" & $e & \"_approx_up\"), \"approx down\": $lookup($s, \"exact_\" & $e & \"_approx_down\"), \"approx none\": $lookup($s, \"exact_\" & $e & \"_approx_none\")} ) ) : [] ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "exact",

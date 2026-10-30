@@ -66,6 +66,13 @@ def write_run(out_dir, run_id, use_case, rows, details=None, split=None):
                 raise ValueError(f"{split[name]} {entity!r} cannot name a file")
             name = os.path.join(r["kind"], entity)
         files[r["kind"]].setdefault(name, []).append(r)
+    for kind, by_name in files.items():
+        folded = {}
+        for name in by_name:
+            other = folded.setdefault(name.casefold(), name)
+            if other != name:
+                raise ValueError(f"{split[kind]} {os.path.basename(other)!r} and {os.path.basename(name)!r} "
+                                 "name the same file on a case-insensitive filesystem")
     path = run_dir(out_dir, run_id)
     os.makedirs(path, exist_ok=True)
     for kind, by_name in files.items():
@@ -100,7 +107,8 @@ def read_run(out_dir, run_id, kind):
     path = run_dir(out_dir, run_id)
     names = [f"{kind}.json"]
     if os.path.isdir(os.path.join(path, kind)):
-        names += sorted(os.path.join(kind, name) for name in os.listdir(os.path.join(path, kind)))
+        names += sorted(os.path.join(kind, name) for name in os.listdir(os.path.join(path, kind))
+                        if name.endswith(".json"))
     rows = []
     for name in names:
         with open(os.path.join(path, name)) as f:

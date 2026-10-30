@@ -195,6 +195,10 @@
             },
             "properties": [
               {
+                "id": "description",
+                "value": "Defined per application. Threshold alert: evaluations where exact and approx agree on firing. Autoscaler: matched scaling actions over matched, false and missed ones. Rollout controller: rollouts decided the same. Top clients: mean clients shared by the exact and approx top lists, as a fraction of the list size."
+              },
+              {
                 "id": "unit",
                 "value": "percentunit"
               },

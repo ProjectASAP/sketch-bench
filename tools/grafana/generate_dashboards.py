@@ -10,10 +10,10 @@ INDEX = DATA + "index.json"
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboards")
 
 
-def iq(ref, url, root="", columns=None):
+def iq(ref, url, root="", columns=None, empty="[]"):
     return {"refId": ref, "datasource": DS, "type": "json", "source": "url", "parser": "backend",
             "format": "table", "url": url, "url_options": {"method": "GET", "data": ""},
-            "root_selector": or_empty(root) if root else "", "columns": columns or []}
+            "root_selector": or_empty(root, empty) if root else "", "columns": columns or []}
 
 
 def col(selector, text, type_):
@@ -23,20 +23,24 @@ def col(selector, text, type_):
 T = col("time", "time", "timestamp_epoch")
 
 
-def rows_of(ref, path, sel, name, type_="number", by=None):
+def rows_of(ref, path, sel, name, type_="number", by=None, empty="[]"):
     columns = [T, col("value", name, type_)]
     root = f"$[{sel}]"
     if by:
         root = f'$[{sel}].{{"time": time, "value": value, "{by}": labels.{by}}}'
         columns.append(col(by, by, "string"))
-    target = iq(ref, RUN + path + ".json", root, columns)
+    target = iq(ref, RUN + path + ".json", root, columns, empty)
     if by:
         target["format"] = "timeseries"
     return target
 
 
-def or_empty(root):
-    return f"( $r := {root}; $exists($r) ? $r : [] )"
+def or_empty(root, empty="[]"):
+    return f"( $r := {root}; $exists($r) ? $r : {empty} )"
+
+
+def metric_values(sel, body="$s"):
+    return f"( $m := $[{sel}]; $exists($m) ? ( $s := $m{{metric: value}}; {body} ) : [] )"
 
 
 def entity_file(kind, variable):
@@ -94,7 +98,8 @@ def value_mappings(states):
 
 def strip_panel(title, rows, states, path="app_state"):
     return {"type": "state-timeline", "title": title,
-            "targets": [rows_of(chr(ord("A") + i), path, sel, name, "string")
+            "targets": [rows_of(chr(ord("A") + i), path, sel, name, "string",
+                                empty='( $exists($$[0]) ? [{"time": $$[0].time}] : [] )')
                         for i, (sel, name) in enumerate(rows)],
             "fieldConfig": {"defaults": {"custom": {"fillOpacity": 80, "lineWidth": 0},
                                          "color": {"mode": "fixed", "fixedColor": "transparent"},
@@ -107,7 +112,7 @@ def strip_panel(title, rows, states, path="app_state"):
 def outcome_stat(title, summary, sel, units=None):
     names = {metric: f"{text} ({units[metric]})" if units else text for metric, text in OUTCOMES.items()}
     return {"type": "stat", "title": title,
-            "targets": [iq("A", summary, f"$[{sel}]{{metric: value}}",
+            "targets": [iq("A", summary, metric_values(sel),
                            by_metric_columns(*names.items()))],
             "transformations": order(*names.values()),
             "fieldConfig": {"defaults": TEXT, "overrides": []},
@@ -135,6 +140,14 @@ def by_disagreements(name, key):
               f'($a.value = $b.value and $a.labels.{key} > $b.labels.{key}) }}); $s.labels )')
     out = variable(name, RUN + "fidelity_summary.json", ranked, key)
     out["sort"] = 0
+    return out
+
+
+def in_run(name, key, chosen):
+    root = (f'( $m := $[metric="disagreements" and labels.{key} in [${{{chosen}:doublequote}}]].labels; '
+            f'$a := $[metric="disagreements"].labels; $exists($m) ? $m : $a[0] )')
+    out = variable(name, RUN + "fidelity_summary.json", root, key)
+    out.update(hide=2, skipUrlSync=True)
     return out
 
 
@@ -269,7 +282,7 @@ def alert_dashboard():
 
     b.row("Fidelity", 32)
     summary = RUN + "fidelity_summary.json"
-    by_metric = f"$[{sel}]{{metric: value}}"
+    by_metric = metric_values(sel)
     b.panel(outcome_stat("Evaluations by outcome", summary, sel), 0, 33, 6, 8)
     b.panel({"type": "stat", "title": "Episodes",
              "targets": [iq("A", summary, by_metric, by_metric_columns(
@@ -287,9 +300,9 @@ def alert_dashboard():
              "options": STAT}, 6, 33, 6, 8)
     b.panel({"type": "table", "title": "Confusion matrix (evaluations)",
              "targets": [iq("A", summary,
-                            f'( $s := $[{sel}]{{metric: value}}; ['
+                            metric_values(sel, '['
                             '{"exact": "firing", "approx firing": $s.true_positive, "approx ok": $s.false_negative}, '
-                            '{"exact": "ok", "approx firing": $s.false_positive, "approx ok": $s.true_negative}] )',
+                            '{"exact": "ok", "approx firing": $s.false_positive, "approx ok": $s.true_negative}]'),
                             [col("exact", "exact", "string"), col("approx firing", "approx firing", "number"),
                              col("approx ok", "approx ok", "number")])],
              "transformations": order("exact", "approx firing", "approx ok"),
@@ -327,7 +340,7 @@ def decision_dashboard():
     for i, (query, title, unit, low, high) in enumerate((("p95_cpu", "p95 CPU", "none", 0.4, 0.8),
                                                          ("p95_memory", "p95 memory", "bytes", 0.75e9, 1.5e9))):
         sel = f'{here} and labels.query="{query}"'
-        results = entity_file("query_result", "container")
+        results = entity_file("query_result", "container_in_run")
         b.panel({"type": "timeseries", "title": f"{title} of ${{container}}: exact vs approx",
                  "targets": [rows_of("A", results, f'{sel} and labels.arm="exact"', "exact"),
                              rows_of("B", results, f'{sel} and labels.arm="approx"', "approx")],
@@ -339,7 +352,7 @@ def decision_dashboard():
                                  "overrides": [by_ref("A", "blue", 2), by_ref("B", "orange")] + named("exact", "approx")},
                  "options": LEGEND}, 12 * i, 9, 12, 8)
     b.panel({"type": "timeseries", "title": "Relative error of approx for ${container}",
-             "targets": [rows_of("A", entity_file("low_level", "container"), f'{here} and metric="relative_error"',
+             "targets": [rows_of("A", entity_file("low_level", "container_in_run"), f'{here} and metric="relative_error"',
                                  "relative_error", by="query")],
              "fieldConfig": {"defaults": {**LINES, "unit": "percentunit", "displayName": "${__field.labels.query}"},
                              "overrides": []},
@@ -351,12 +364,12 @@ def decision_dashboard():
                         [(f'{here} and metric="action" and labels.arm="exact"', "exact action"),
                          (f'{here} and metric="action" and labels.arm="approx"', "approx action"),
                          (f'{here} and metric="annotation"', "annotation")], scaling,
-                        entity_file("app_state", "container")), 0, 24, 24, 6)
+                        entity_file("app_state", "container_in_run")), 0, 24, 24, 6)
     b.panel(strip_panel("${container}: scaling decision per evaluation",
                         [(f'{here} and metric="decision" and labels.arm="exact"', "exact decision"),
                          (f'{here} and metric="decision" and labels.arm="approx"', "approx decision")],
                         {**scaling, "none": {"color": "green", "text": "no change"}},
-                        entity_file("app_state", "container")), 0, 30, 24, 5)
+                        entity_file("app_state", "container_in_run")), 0, 30, 24, 5)
 
     b.row("Fidelity over all containers", 35)
     b.panel(outcome_stat("Scaling outcomes", summary, overall,
@@ -365,18 +378,19 @@ def decision_dashboard():
     fields = (("true_positive", "matched"), ("early_actions", "early"), ("late_actions", "late"),
               ("false_positive", "false"), ("false_negative", "missed"),
               ("mean_absolute_onset_delay", "mean absolute onset delay"))
-    per_action = (f'( $s := $[{overall}]{{metric: value}}; ["up", "down"].( $a := $; {{"action": $a, '
-                  + ", ".join(f'"{text}": $lookup($s, $a & "_{metric}")' for metric, text in fields)
-                  + "} ) )")
+    per_action = metric_values(overall, '["up", "down"].( $a := $; {"action": $a, '
+                               + ", ".join(f'"{text}": $lookup($s, $a & "_{metric}")' for metric, text in fields)
+                               + "} )")
     b.panel({"type": "table", "title": "Scaling actions by kind",
              "targets": [iq("A", summary, per_action, [col("action", "action", "string")]
                             + [col(text, text, "number") for _, text in fields])],
              "transformations": order("action", *[text for _, text in fields]),
              "fieldConfig": {"defaults": {"custom": {"minWidth": 60}}, "overrides": []},
              "options": {"showHeader": True}}, 6, 36, 7, 7)
-    matrix = (f'( $s := $[{overall}]{{metric: value}}; ["up", "down", "none"].( $e := $; {{"exact": $e, '
-              + ", ".join(f'"approx {a}": $lookup($s, "exact_" & $e & "_approx_{a}")' for a in ("up", "down", "none"))
-              + "} ) )")
+    matrix = metric_values(overall, '["up", "down", "none"].( $e := $; {"exact": $e, '
+                           + ", ".join(f'"approx {a}": $lookup($s, "exact_" & $e & "_approx_{a}")'
+                                       for a in ("up", "down", "none"))
+                           + "} )")
     b.panel({"type": "table", "title": "Decisions, exact by approx (container-evaluations)",
              "targets": [iq("A", summary, matrix, [col("exact", "exact", "string")]
                             + [col(f"approx {a}", f"approx {a}", "number") for a in ("up", "down", "none")])],
@@ -398,7 +412,8 @@ def decision_dashboard():
                                  '& $string(value) & " evaluations"}',
                                  [T, col("text", "text", "string")])}]
     return dashboard(uid, "Autoscaler decision", b,
-                     [run_variable(use_cases), by_disagreements("container", "container")], annotations)
+                     [run_variable(use_cases), by_disagreements("container", "container"),
+                      in_run("container_in_run", "container", "container")], annotations)
 
 
 def rollout_dashboard():
@@ -446,7 +461,7 @@ def rollout_dashboard():
     b.row("Fidelity over rollouts", 40)
     b.panel(outcome_stat("Rollouts by outcome (positive: rollback)", summary, app), 0, 41, 6, 8)
     b.panel({"type": "stat", "title": "Rollouts",
-             "targets": [iq("A", summary, f"$[{app}]{{metric: value}}", by_metric_columns(
+             "targets": [iq("A", summary, metric_values(app), by_metric_columns(
                  ("rollouts", "rollouts"), ("agreement", "same decision"),
                  ("mean_absolute_rollback_delay", "mean absolute rollback delay (evaluations)"),
                  ("early_rollbacks", "early rollbacks"), ("late_rollbacks", "late rollbacks"),
@@ -480,7 +495,7 @@ def topk_dashboard():
     uid = "topk"
     use_cases = ["top_clients"]
     app = 'labels.app="topk_set"'
-    here = f'{app} and labels.client_id="${{client}}"'
+    here = f'{app} and labels.client_id="${{client_in_run}}"'
     overall = f'{app} and $not($exists(labels.client_id))'
     summary = RUN + "fidelity_summary.json"
     b = Board()
@@ -514,17 +529,18 @@ def topk_dashboard():
                              "overrides": [by_ref("A", "green", 2), by_ref("B", "orange")] + named("in both", "approx only")},
              "options": LEGEND}, 0, 19, 18, 7)
     b.panel(disagreement_panel(uid, "client", "client_id", "Clients with the most disagreements"), 18, 19, 6, 7)
-    strip = strip_panel("Client ${client}: capped per evaluation, with what differs",
+    strip = strip_panel("Client ${client_in_run}: capped per evaluation, with what differs",
                         [(f'{here} and metric="capped" and labels.arm="exact"', "exact capped"),
                          (f'{here} and metric="capped" and labels.arm="approx"', "approx capped"),
                          (f'{here} and metric="annotation"', "annotation")],
-                        {"capped": {"color": "red", "text": "capped"}, "not capped": OFF}, entity_file("app_state", "client"))
-    strip.update(repeat="client", repeatDirection="v")
+                        {"capped": {"color": "red", "text": "capped"}, "not capped": OFF},
+                        entity_file("app_state", "client_in_run"))
+    strip.update(repeat="client_in_run", repeatDirection="v")
     b.panel(strip, 0, 26, 24, 5)
 
     b.row("Fidelity", 31)
     b.panel(outcome_stat("Client-evaluations by outcome", summary, overall), 0, 32, 6, 8)
-    by_metric = f"$[{overall}]{{metric: value}}"
+    by_metric = metric_values(overall)
     b.panel({"type": "stat", "title": "Top list per evaluation",
              "targets": [iq("A", summary, by_metric, by_metric_columns(
                  ("precision", "precision"), ("recall", "recall"), ("identical_sets", "identical lists"),
@@ -552,7 +568,15 @@ def topk_dashboard():
              "options": {"showHeader": True}}, 18, 32, 6, 8)
     client = by_disagreements("client", "client_id")
     client.update(multi=True, includeAll=False)
-    return dashboard(uid, "Top clients", b, [run_variable(use_cases), client])
+    shown = in_run("client_in_run", "client_id", "client")
+    shown.update(multi=True, includeAll=True, current={"text": ["All"], "value": ["$__all"]})
+    return dashboard(uid, "Top clients", b, [run_variable(use_cases), client, shown])
+
+
+AGREEMENT = ("Defined per application. Threshold alert: evaluations where exact and approx agree on firing. "
+             "Autoscaler: matched scaling actions over matched, false and missed ones. "
+             "Rollout controller: rollouts decided the same. "
+             "Top clients: mean clients shared by the exact and approx top lists, as a fraction of the list size.")
 
 
 def overview_dashboard():
@@ -585,7 +609,8 @@ def overview_dashboard():
                   "properties": [{"id": "unit", "value": "percentunit"}, {"id": "decimals", "value": 1},
                                  {"id": "custom.width", "value": 110}]},
                  {"matcher": {"id": "byName", "options": "agreement"},
-                  "properties": [{"id": "unit", "value": "percentunit"}, {"id": "decimals", "value": 1},
+                  "properties": [{"id": "description", "value": AGREEMENT},
+                                 {"id": "unit", "value": "percentunit"}, {"id": "decimals", "value": 1},
                                  {"id": "min", "value": 0}, {"id": "max", "value": 1},
                                  {"id": "custom.width", "value": 110},
                                  {"id": "custom.cellOptions", "value": {"type": "color-background", "mode": "basic"}},

@@ -713,7 +713,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.signal=\"${signal}\" and metric=\"alert\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.signal=\"${signal}\" and metric=\"alert\" and labels.arm=\"exact\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
           "columns": [
             {
               "selector": "time",
@@ -742,7 +742,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.signal=\"${signal}\" and metric=\"alert\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.signal=\"${signal}\" and metric=\"alert\" and labels.arm=\"approx\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
           "columns": [
             {
               "selector": "time",
@@ -771,7 +771,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.signal=\"${signal}\" and metric=\"annotation\"]; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.signal=\"${signal}\" and metric=\"annotation\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
           "columns": [
             {
               "selector": "time",
@@ -953,7 +953,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.signal=\"${signal}\"]{metric: value}; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := ( $m := $[labels.signal=\"${signal}\"]; $exists($m) ? ( $s := $m{metric: value}; $s ) : [] ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "true_positive",
@@ -1047,7 +1047,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.signal=\"${signal}\"]{metric: value}; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := ( $m := $[labels.signal=\"${signal}\"]; $exists($m) ? ( $s := $m{metric: value}; $s ) : [] ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "episodes",
@@ -1182,7 +1182,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := ( $s := $[labels.signal=\"${signal}\"]{metric: value}; [{\"exact\": \"firing\", \"approx firing\": $s.true_positive, \"approx ok\": $s.false_negative}, {\"exact\": \"ok\", \"approx firing\": $s.false_positive, \"approx ok\": $s.true_negative}] ); $exists($r) ? $r : [] )",
+          "root_selector": "( $r := ( $m := $[labels.signal=\"${signal}\"]; $exists($m) ? ( $s := $m{metric: value}; [{\"exact\": \"firing\", \"approx firing\": $s.true_positive, \"approx ok\": $s.false_negative}, {\"exact\": \"ok\", \"approx firing\": $s.false_positive, \"approx ok\": $s.true_negative}] ) : [] ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "exact",

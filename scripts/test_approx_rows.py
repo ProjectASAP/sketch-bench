@@ -91,6 +91,21 @@ class WriteRunTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 write_run(out, "r1", "uc", [r], split={"app_state": "container"})
 
+    def test_split_rejects_entities_differing_only_in_case(self):
+        with tempfile.TemporaryDirectory() as out:
+            rows = [row(1000, "app_state", "r1", {"container": c}, "state", "on", "state") for c in ("c1", "C1")]
+            with self.assertRaises(ValueError):
+                write_run(out, "r1", "uc", rows, split={"app_state": "container"})
+            self.assertFalse(os.path.exists(os.path.join(out, "runs")))
+
+    def test_read_skips_files_that_are_not_json(self):
+        with tempfile.TemporaryDirectory() as out:
+            rows = [row(1000, "app_state", "r1", {"container": "c1"}, "state", "on", "state")]
+            write_run(out, "r1", "uc", rows, split={"app_state": "container"})
+            with open(os.path.join(out, "runs", "r1", "app_state", ".DS_Store"), "wb") as f:
+                f.write(b"\x00\x00\x00\x01Bud1")
+            self.assertEqual(read_run(out, "r1", "app_state"), rows)
+
     def test_details_kept_in_index(self):
         with tempfile.TemporaryDirectory() as out:
             write_run(out, "r1", "uc", [sample()], details={"arm": "a"})

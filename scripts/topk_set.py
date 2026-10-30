@@ -92,6 +92,7 @@ def derive(query_rows, signal, query, key):
         ("false_negative", pairs[(True, False)], "client-evaluations"),
         ("true_negative", pairs[(False, False)], "client-evaluations"),
         ("mean_overlap", sum(overlaps) / len(overlaps), "clients"),
+        ("mean_list_size", exact_size / len(times), "clients"),
         ("precision", sum(overlaps) / approx_size if approx_size else 0, "ratio"),
         ("recall", sum(overlaps) / exact_size if exact_size else 0, "ratio"),
         ("identical_sets", identical, "evaluations"),

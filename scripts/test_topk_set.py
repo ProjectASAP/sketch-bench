@@ -26,6 +26,7 @@ class DeriveTest(unittest.TestCase):
         self.assertEqual(summary["identical_sets"], 2)
         self.assertEqual(summary["intruder_slots"], 1)
         self.assertEqual(summary["precision"], 5 / 6)
+        self.assertEqual((summary["mean_overlap"], summary["mean_list_size"]), (5 / 3, 2))
         self.assertEqual(summary["entries"], 3)
         self.assertEqual(summary["mean_onset_delay"], 1 / 3)
         events = sorted((r["time"] // 1000, r["labels"]["client_id"], r["metric"]) for r in rows

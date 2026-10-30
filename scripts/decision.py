@@ -22,19 +22,17 @@ def actions_of(decisions):
 
 
 def match_actions(exact, approx, window=MATCH_WINDOW):
-    matched, missed = {}, []
-    for i, action in enumerate(exact):
-        if action == NOTHING:
-            continue
-        near = [j for j in range(max(0, i - window), min(len(approx), i + window + 1))
-                if approx[j] == action and j not in matched.values()]
-        if near:
-            matched[i] = min(near, key=lambda j: (abs(j - i), j))
-        else:
-            missed.append(i)
-    taken = set(matched.values())
+    candidates = sorted((abs(j - i), j, i) for i, action in enumerate(exact) if action != NOTHING
+                        for j in range(max(0, i - window), min(len(approx), i + window + 1))
+                        if approx[j] == action)
+    matched, taken = {}, set()
+    for _, j, i in candidates:
+        if i not in matched and j not in taken:
+            matched[i] = j
+            taken.add(j)
+    missed = [i for i, a in enumerate(exact) if a != NOTHING and i not in matched]
     false = [j for j, a in enumerate(approx) if a != NOTHING and j not in taken]
-    return matched, missed, false
+    return dict(sorted(matched.items())), missed, false
 
 
 def by_entity(query_rows, query, key):

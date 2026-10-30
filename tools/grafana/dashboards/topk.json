@@ -93,6 +93,57 @@
         "sort": 0,
         "multi": true,
         "includeAll": false
+      },
+      {
+        "name": "client_in_run",
+        "label": "client_in_run",
+        "type": "query",
+        "datasource": {
+          "type": "yesoreyeram-infinity-datasource",
+          "uid": "approx-rows"
+        },
+        "refresh": 1,
+        "query": {
+          "queryType": "infinity",
+          "query": "",
+          "refId": "variable",
+          "infinityQuery": {
+            "refId": "variable",
+            "datasource": {
+              "type": "yesoreyeram-infinity-datasource",
+              "uid": "approx-rows"
+            },
+            "type": "json",
+            "source": "url",
+            "parser": "backend",
+            "format": "table",
+            "url": "http://localhost:8000/runs/${run}/fidelity_summary.json",
+            "url_options": {
+              "method": "GET",
+              "data": ""
+            },
+            "root_selector": "( $r := ( $m := $[metric=\"disagreements\" and labels.client_id in [${client:doublequote}]].labels; $a := $[metric=\"disagreements\"].labels; $exists($m) ? $m : $a[0] ); $exists($r) ? $r : [] )",
+            "columns": [
+              {
+                "selector": "client_id",
+                "text": "client_in_run",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "hide": 2,
+        "skipUrlSync": true,
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
       }
     ]
   },
@@ -823,7 +874,7 @@
     },
     {
       "type": "state-timeline",
-      "title": "Client ${client}: capped per evaluation, with what differs",
+      "title": "Client ${client_in_run}: capped per evaluation, with what differs",
       "targets": [
         {
           "refId": "A",
@@ -835,12 +886,12 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "http://localhost:8000/runs/${run}/app_state/${client}.json",
+          "url": "http://localhost:8000/runs/${run}/app_state/${client_in_run}.json",
           "url_options": {
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"topk_set\" and labels.client_id=\"${client}\" and metric=\"capped\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.app=\"topk_set\" and labels.client_id=\"${client_in_run}\" and metric=\"capped\" and labels.arm=\"exact\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
           "columns": [
             {
               "selector": "time",
@@ -864,12 +915,12 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "http://localhost:8000/runs/${run}/app_state/${client}.json",
+          "url": "http://localhost:8000/runs/${run}/app_state/${client_in_run}.json",
           "url_options": {
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"topk_set\" and labels.client_id=\"${client}\" and metric=\"capped\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.app=\"topk_set\" and labels.client_id=\"${client_in_run}\" and metric=\"capped\" and labels.arm=\"approx\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
           "columns": [
             {
               "selector": "time",
@@ -893,12 +944,12 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "http://localhost:8000/runs/${run}/app_state/${client}.json",
+          "url": "http://localhost:8000/runs/${run}/app_state/${client_in_run}.json",
           "url_options": {
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"topk_set\" and labels.client_id=\"${client}\" and metric=\"annotation\"]; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.app=\"topk_set\" and labels.client_id=\"${client_in_run}\" and metric=\"annotation\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
           "columns": [
             {
               "selector": "time",
@@ -1036,7 +1087,7 @@
           "sort": "none"
         }
       },
-      "repeat": "client",
+      "repeat": "client_in_run",
       "repeatDirection": "v",
       "id": 10,
       "gridPos": {
@@ -1082,7 +1133,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"topk_set\" and $not($exists(labels.client_id))]{metric: value}; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := ( $m := $[labels.app=\"topk_set\" and $not($exists(labels.client_id))]; $exists($m) ? ( $s := $m{metric: value}; $s ) : [] ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "true_positive",
@@ -1176,7 +1227,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"topk_set\" and $not($exists(labels.client_id))]{metric: value}; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := ( $m := $[labels.app=\"topk_set\" and $not($exists(labels.client_id))]; $exists($m) ? ( $s := $m{metric: value}; $s ) : [] ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "precision",
@@ -1293,7 +1344,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"topk_set\" and $not($exists(labels.client_id))]{metric: value}; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := ( $m := $[labels.app=\"topk_set\" and $not($exists(labels.client_id))]; $exists($m) ? ( $s := $m{metric: value}; $s ) : [] ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "entries",

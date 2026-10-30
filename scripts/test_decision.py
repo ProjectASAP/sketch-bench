@@ -59,6 +59,20 @@ class ActionsTest(unittest.TestCase):
         self.assertEqual(match_actions(["none", "up", "none", "up", "none"], ["none", "none", "up", "none", "none"]),
                          ({1: 2}, [3], []))
 
+    def test_late_by_two_is_matched_with_a_positive_delay(self):
+        self.assertEqual(match_actions(["none", "up", "none", "none", "none"], ["none", "none", "none", "up", "none"]),
+                         ({1: 3}, [], []))
+
+    def test_closest_pair_is_taken_first_whatever_the_exact_order(self):
+        exact = ["none", "none", "none", "up", "none", "up", "none"]
+        approx = ["none", "none", "none", "none", "none", "up", "none"]
+        self.assertEqual(match_actions(exact, approx), ({5: 5}, [3], []))
+
+    def test_tie_on_one_approx_action_goes_to_the_earlier_exact_action(self):
+        exact = ["none", "none", "none", "up", "none", "up", "none"]
+        approx = ["none", "up", "none", "none", "up", "none", "none"]
+        self.assertEqual(match_actions(exact, approx), ({3: 4}, [5], [1]))
+
     def test_kinds_must_agree(self):
         self.assertEqual(match_actions(["none", "up", "none"], ["none", "down", "none"]), ({}, [1], [1]))
 
