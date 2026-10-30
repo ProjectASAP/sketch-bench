@@ -41,7 +41,7 @@
               "method": "GET",
               "data": ""
             },
-            "root_selector": "$[use_case in [\"k8s_autoscaling\"]]",
+            "root_selector": "( $r := $[use_case in [\"k8s_autoscaling\"]]; $exists($r) ? $r : [] )",
             "columns": [
               {
                 "selector": "run_id",
@@ -80,7 +80,7 @@
               "method": "GET",
               "data": ""
             },
-            "root_selector": "$[metric=\"disagreements\"].labels",
+            "root_selector": "( $r := ( $s := $sort($[metric=\"disagreements\"], function($a, $b) { $a.value < $b.value or ($a.value = $b.value and $a.labels.container > $b.labels.container) }); $s.labels ); $exists($r) ? $r : [] )",
             "columns": [
               {
                 "selector": "container",
@@ -90,7 +90,7 @@
             ]
           }
         },
-        "sort": 1
+        "sort": 0
       }
     ]
   },
@@ -181,7 +181,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[use_case in [\"k8s_autoscaling\"]]",
+          "root_selector": "( $r := $[use_case in [\"k8s_autoscaling\"]]; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "run_id",
@@ -313,7 +313,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $e := $[run_id=\"${run}\"]; $append($e.details.plans ~> $each(function($v, $k) { {\"query\": $k, \"approx plan\": $v, \"exact plan\": $lookup($e.details.exact_plans, $k), \"promql\": $lookup($e.details.promql, $k)} }), $e.details.unsupported ~> $each(function($v, $k) { {\"query\": $k, \"why no approx plan\": $v, \"promql\": $lookup($e.details.promql, $k)} })) )",
+          "root_selector": "( $r := ( $e := $[run_id=\"${run}\"]; $append($e.details.plans ~> $each(function($v, $k) { {\"query\": $k, \"approx plan\": $v, \"exact plan\": $lookup($e.details.exact_plans, $k), \"promql\": $lookup($e.details.promql, $k)} }), $e.details.unsupported ~> $each(function($v, $k) { {\"query\": $k, \"why no approx plan\": $v, \"promql\": $lookup($e.details.promql, $k)} })) ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "query",
@@ -412,7 +412,7 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "http://localhost:8000/runs/${run}/query_result.json",
+          "url": "http://localhost:8000/runs/${run}/query_result/${container}.json",
           "url_options": {
             "method": "GET",
             "data": ""
@@ -441,7 +441,7 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "http://localhost:8000/runs/${run}/query_result.json",
+          "url": "http://localhost:8000/runs/${run}/query_result/${container}.json",
           "url_options": {
             "method": "GET",
             "data": ""
@@ -480,7 +480,7 @@
               },
               {
                 "color": "green",
-                "value": 0.3
+                "value": 0.4
               },
               {
                 "color": "red",
@@ -591,7 +591,7 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "http://localhost:8000/runs/${run}/query_result.json",
+          "url": "http://localhost:8000/runs/${run}/query_result/${container}.json",
           "url_options": {
             "method": "GET",
             "data": ""
@@ -620,7 +620,7 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "http://localhost:8000/runs/${run}/query_result.json",
+          "url": "http://localhost:8000/runs/${run}/query_result/${container}.json",
           "url_options": {
             "method": "GET",
             "data": ""
@@ -659,7 +659,7 @@
               },
               {
                 "color": "green",
-                "value": 500000000.0
+                "value": 750000000.0
               },
               {
                 "color": "red",
@@ -770,7 +770,7 @@
           "source": "url",
           "parser": "backend",
           "format": "timeseries",
-          "url": "http://localhost:8000/runs/${run}/low_level.json",
+          "url": "http://localhost:8000/runs/${run}/low_level/${container}.json",
           "url_options": {
             "method": "GET",
             "data": ""
@@ -844,7 +844,7 @@
     },
     {
       "type": "state-timeline",
-      "title": "${container}: scaling decision",
+      "title": "${container}: scaling action per evaluation, with what differs",
       "targets": [
         {
           "refId": "A",
@@ -856,12 +856,12 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "http://localhost:8000/runs/${run}/app_state.json",
+          "url": "http://localhost:8000/runs/${run}/app_state/${container}.json",
           "url_options": {
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.container=\"${container}\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"action\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "time",
@@ -870,7 +870,7 @@
             },
             {
               "selector": "value",
-              "text": "exact",
+              "text": "exact action",
               "type": "string"
             }
           ]
@@ -885,12 +885,12 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "http://localhost:8000/runs/${run}/app_state.json",
+          "url": "http://localhost:8000/runs/${run}/app_state/${container}.json",
           "url_options": {
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.container=\"${container}\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"action\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "time",
@@ -899,7 +899,36 @@
             },
             {
               "selector": "value",
-              "text": "approx",
+              "text": "approx action",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/app_state/${container}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"annotation\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "annotation",
               "type": "string"
             }
           ]
@@ -919,20 +948,58 @@
             {
               "type": "value",
               "options": {
+                "none": {
+                  "color": "transparent",
+                  "text": " ",
+                  "index": 0
+                },
+                "onset delay": {
+                  "color": "#FADE2A",
+                  "index": 1
+                },
+                "gap": {
+                  "color": "#8F3BB8",
+                  "index": 2
+                },
+                "end delay": {
+                  "color": "#19B5B5",
+                  "index": 3
+                },
+                "false positive": {
+                  "color": "#FF9830",
+                  "index": 4
+                },
+                "false negative": {
+                  "color": "#D3369E",
+                  "index": 5
+                },
+                "missed episode": {
+                  "color": "#F5A3C7",
+                  "index": 6
+                },
+                "decision delay": {
+                  "color": "#A0703C",
+                  "index": 7
+                },
                 "up": {
                   "color": "red",
-                  "index": 0,
-                  "text": "scale up"
+                  "text": "scale up",
+                  "index": 8
                 },
                 "down": {
                   "color": "blue",
-                  "index": 1,
-                  "text": "scale down"
-                },
-                "none": {
-                  "color": "green",
-                  "index": 2,
-                  "text": "no change"
+                  "text": "scale down",
+                  "index": 9
+                }
+              }
+            },
+            {
+              "type": "regex",
+              "options": {
+                "pattern": ".+, .+",
+                "result": {
+                  "color": "#9E9E9E",
+                  "index": 10
                 }
               }
             }
@@ -942,37 +1009,48 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "exact"
+              "options": "exact action"
             },
             "properties": [
               {
                 "id": "displayName",
-                "value": "exact"
+                "value": "exact action"
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "approx"
+              "options": "approx action"
             },
             "properties": [
               {
                 "id": "displayName",
-                "value": "approx"
+                "value": "approx action"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "annotation"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "annotation"
               }
             ]
           }
         ]
       },
       "options": {
-        "mergeValues": true,
-        "showValue": "never",
+        "mergeValues": false,
+        "showValue": "auto",
         "rowHeight": 0.8,
+        "alignValue": "center",
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+          "showLegend": false
         },
         "tooltip": {
           "mode": "multi",
@@ -992,17 +1070,397 @@
       }
     },
     {
+      "type": "state-timeline",
+      "title": "${container}: scaling decision per evaluation",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/app_state/${container}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"decision\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "exact decision",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/app_state/${container}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"decision\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "approx decision",
+              "type": "string"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 0
+          },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "transparent"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "none": {
+                  "color": "green",
+                  "text": "no change",
+                  "index": 0
+                },
+                "onset delay": {
+                  "color": "#FADE2A",
+                  "index": 1
+                },
+                "gap": {
+                  "color": "#8F3BB8",
+                  "index": 2
+                },
+                "end delay": {
+                  "color": "#19B5B5",
+                  "index": 3
+                },
+                "false positive": {
+                  "color": "#FF9830",
+                  "index": 4
+                },
+                "false negative": {
+                  "color": "#D3369E",
+                  "index": 5
+                },
+                "missed episode": {
+                  "color": "#F5A3C7",
+                  "index": 6
+                },
+                "decision delay": {
+                  "color": "#A0703C",
+                  "index": 7
+                },
+                "up": {
+                  "color": "red",
+                  "text": "scale up",
+                  "index": 8
+                },
+                "down": {
+                  "color": "blue",
+                  "text": "scale down",
+                  "index": 9
+                }
+              }
+            },
+            {
+              "type": "regex",
+              "options": {
+                "pattern": ".+, .+",
+                "result": {
+                  "color": "#9E9E9E",
+                  "index": 10
+                }
+              }
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "exact decision"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "exact decision"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "approx decision"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "approx decision"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "mergeValues": false,
+        "showValue": "auto",
+        "rowHeight": 0.8,
+        "alignValue": "center",
+        "legend": {
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
       "id": 10,
+      "gridPos": {
+        "x": 0,
+        "y": 30,
+        "w": 24,
+        "h": 5
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "id": 11,
       "type": "row",
       "title": "Fidelity over all containers",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 30,
+        "y": 35,
         "w": 24,
         "h": 1
       },
       "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Scaling outcomes",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/fidelity_summary.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.app=\"autoscaler\" and $not($exists(labels.container))]{metric: value}; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "true_positive",
+              "text": "true positive (actions)",
+              "type": "number"
+            },
+            {
+              "selector": "false_positive",
+              "text": "false positive (actions)",
+              "type": "number"
+            },
+            {
+              "selector": "false_negative",
+              "text": "false negative (actions)",
+              "type": "number"
+            },
+            {
+              "selector": "true_negative",
+              "text": "true negative (container-evaluations)",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "true positive (actions)": 0,
+              "false positive (actions)": 1,
+              "false negative (actions)": 2,
+              "true negative (container-evaluations)": 3
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "none",
+        "graphMode": "none",
+        "orientation": "horizontal",
+        "justifyMode": "auto"
+      },
+      "id": 12,
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 6,
+        "h": 7
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Scaling actions by kind",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/fidelity_summary.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := ( $s := $[labels.app=\"autoscaler\" and $not($exists(labels.container))]{metric: value}; [\"up\", \"down\"].( $a := $; {\"action\": $a, \"matched\": $lookup($s, $a & \"_true_positive\"), \"early\": $lookup($s, $a & \"_early_actions\"), \"late\": $lookup($s, $a & \"_late_actions\"), \"false\": $lookup($s, $a & \"_false_positive\"), \"missed\": $lookup($s, $a & \"_false_negative\"), \"mean absolute onset delay\": $lookup($s, $a & \"_mean_absolute_onset_delay\")} ) ); $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "action",
+              "text": "action",
+              "type": "string"
+            },
+            {
+              "selector": "matched",
+              "text": "matched",
+              "type": "number"
+            },
+            {
+              "selector": "early",
+              "text": "early",
+              "type": "number"
+            },
+            {
+              "selector": "late",
+              "text": "late",
+              "type": "number"
+            },
+            {
+              "selector": "false",
+              "text": "false",
+              "type": "number"
+            },
+            {
+              "selector": "missed",
+              "text": "missed",
+              "type": "number"
+            },
+            {
+              "selector": "mean absolute onset delay",
+              "text": "mean absolute onset delay",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "action": 0,
+              "matched": 1,
+              "early": 2,
+              "late": 3,
+              "false": 4,
+              "missed": 5,
+              "mean absolute onset delay": 6
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "minWidth": 60
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "id": 13,
+      "gridPos": {
+        "x": 6,
+        "y": 36,
+        "w": 7,
+        "h": 7
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
     },
     {
       "type": "table",
@@ -1023,7 +1481,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $s := $[labels.app=\"autoscaler\" and $not($exists(labels.container))]{metric: value}; [\"up\", \"down\", \"none\"].( $e := $; {\"exact\": $e, \"approx up\": $lookup($s, \"exact_\" & $e & \"_approx_up\"), \"approx down\": $lookup($s, \"exact_\" & $e & \"_approx_down\"), \"approx none\": $lookup($s, \"exact_\" & $e & \"_approx_none\")} ) )",
+          "root_selector": "( $r := ( $s := $[labels.app=\"autoscaler\" and $not($exists(labels.container))]{metric: value}; [\"up\", \"down\", \"none\"].( $e := $; {\"exact\": $e, \"approx up\": $lookup($s, \"exact_\" & $e & \"_approx_up\"), \"approx down\": $lookup($s, \"exact_\" & $e & \"_approx_down\"), \"approx none\": $lookup($s, \"exact_\" & $e & \"_approx_none\")} ) ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "exact",
@@ -1074,11 +1532,11 @@
       "options": {
         "showHeader": true
       },
-      "id": 11,
+      "id": 14,
       "gridPos": {
-        "x": 0,
-        "y": 31,
-        "w": 8,
+        "x": 13,
+        "y": 36,
+        "w": 6,
         "h": 7
       },
       "datasource": {
@@ -1088,101 +1546,7 @@
     },
     {
       "type": "table",
-      "title": "Scaling episodes by action",
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "yesoreyeram-infinity-datasource",
-            "uid": "approx-rows"
-          },
-          "type": "json",
-          "source": "url",
-          "parser": "backend",
-          "format": "table",
-          "url": "http://localhost:8000/runs/${run}/fidelity_summary.json",
-          "url_options": {
-            "method": "GET",
-            "data": ""
-          },
-          "root_selector": "( $s := $[labels.app=\"autoscaler\" and $not($exists(labels.container))]{metric: value}; [\"up\", \"down\"].( $a := $; {\"action\": $a, \"exact episodes\": $lookup($s, $a & \"_episodes\"), \"missed\": $lookup($s, $a & \"_missed_episodes\"), \"mean onset delay\": $lookup($s, $a & \"_mean_onset_delay\"), \"breaks\": $lookup($s, $a & \"_breaks\"), \"false actions\": $lookup($s, $a & \"_false_actions\")} ) )",
-          "columns": [
-            {
-              "selector": "action",
-              "text": "action",
-              "type": "string"
-            },
-            {
-              "selector": "exact episodes",
-              "text": "exact episodes",
-              "type": "number"
-            },
-            {
-              "selector": "missed",
-              "text": "missed",
-              "type": "number"
-            },
-            {
-              "selector": "mean onset delay",
-              "text": "mean onset delay",
-              "type": "number"
-            },
-            {
-              "selector": "breaks",
-              "text": "breaks",
-              "type": "number"
-            },
-            {
-              "selector": "false actions",
-              "text": "false actions",
-              "type": "number"
-            }
-          ]
-        }
-      ],
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "indexByName": {
-              "action": 0,
-              "exact episodes": 1,
-              "missed": 2,
-              "mean onset delay": 3,
-              "breaks": 4,
-              "false actions": 5
-            },
-            "excludeByName": {},
-            "renameByName": {}
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "minWidth": 60
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "showHeader": true
-      },
-      "id": 12,
-      "gridPos": {
-        "x": 8,
-        "y": 31,
-        "w": 9,
-        "h": 7
-      },
-      "datasource": {
-        "type": "yesoreyeram-infinity-datasource",
-        "uid": "approx-rows"
-      }
-    },
-    {
-      "type": "table",
-      "title": "Containers with the most disagreements",
+      "title": "Containers with the most action disagreements",
       "targets": [
         {
           "refId": "A",
@@ -1262,11 +1626,11 @@
       "options": {
         "showHeader": true
       },
-      "id": 13,
+      "id": 15,
       "gridPos": {
-        "x": 17,
-        "y": 31,
-        "w": 7,
+        "x": 19,
+        "y": 36,
+        "w": 5,
         "h": 7
       },
       "datasource": {
@@ -1344,10 +1708,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 14,
+      "id": 16,
       "gridPos": {
         "x": 0,
-        "y": 38,
+        "y": 43,
         "w": 24,
         "h": 6
       },

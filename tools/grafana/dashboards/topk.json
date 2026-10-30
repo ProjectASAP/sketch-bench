@@ -41,7 +41,7 @@
               "method": "GET",
               "data": ""
             },
-            "root_selector": "$[use_case in [\"top_clients\"]]",
+            "root_selector": "( $r := $[use_case in [\"top_clients\"]]; $exists($r) ? $r : [] )",
             "columns": [
               {
                 "selector": "run_id",
@@ -51,6 +51,48 @@
             ]
           }
         }
+      },
+      {
+        "name": "client",
+        "label": "client",
+        "type": "query",
+        "datasource": {
+          "type": "yesoreyeram-infinity-datasource",
+          "uid": "approx-rows"
+        },
+        "refresh": 1,
+        "query": {
+          "queryType": "infinity",
+          "query": "",
+          "refId": "variable",
+          "infinityQuery": {
+            "refId": "variable",
+            "datasource": {
+              "type": "yesoreyeram-infinity-datasource",
+              "uid": "approx-rows"
+            },
+            "type": "json",
+            "source": "url",
+            "parser": "backend",
+            "format": "table",
+            "url": "http://localhost:8000/runs/${run}/fidelity_summary.json",
+            "url_options": {
+              "method": "GET",
+              "data": ""
+            },
+            "root_selector": "( $r := ( $s := $sort($[metric=\"disagreements\"], function($a, $b) { $a.value < $b.value or ($a.value = $b.value and $a.labels.client_id > $b.labels.client_id) }); $s.labels ); $exists($r) ? $r : [] )",
+            "columns": [
+              {
+                "selector": "client_id",
+                "text": "client",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "sort": 0,
+        "multi": true,
+        "includeAll": false
       }
     ]
   },
@@ -103,7 +145,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[use_case in [\"top_clients\"]]",
+          "root_selector": "( $r := $[use_case in [\"top_clients\"]]; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "run_id",
@@ -235,7 +277,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $e := $[run_id=\"${run}\"]; $append($e.details.plans ~> $each(function($v, $k) { {\"query\": $k, \"approx plan\": $v, \"exact plan\": $lookup($e.details.exact_plans, $k), \"promql\": $lookup($e.details.promql, $k)} }), $e.details.unsupported ~> $each(function($v, $k) { {\"query\": $k, \"why no approx plan\": $v, \"promql\": $lookup($e.details.promql, $k)} })) )",
+          "root_selector": "( $r := ( $e := $[run_id=\"${run}\"]; $append($e.details.plans ~> $each(function($v, $k) { {\"query\": $k, \"approx plan\": $v, \"exact plan\": $lookup($e.details.exact_plans, $k), \"promql\": $lookup($e.details.promql, $k)} }), $e.details.unsupported ~> $each(function($v, $k) { {\"query\": $k, \"why no approx plan\": $v, \"promql\": $lookup($e.details.promql, $k)} })) ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "query",
@@ -516,7 +558,7 @@
     {
       "id": 7,
       "type": "row",
-      "title": "Application: top clients",
+      "title": "Application: rate limiter",
       "collapsed": false,
       "gridPos": {
         "x": 0,
@@ -677,8 +719,8 @@
       "gridPos": {
         "x": 0,
         "y": 19,
-        "w": 24,
-        "h": 6
+        "w": 18,
+        "h": 7
       },
       "datasource": {
         "type": "yesoreyeram-infinity-datasource",
@@ -686,8 +728,8 @@
       }
     },
     {
-      "type": "state-timeline",
-      "title": "Membership in the top list, by client",
+      "type": "table",
+      "title": "Clients with the most disagreements",
       "targets": [
         {
           "refId": "A",
@@ -698,13 +740,107 @@
           "type": "json",
           "source": "url",
           "parser": "backend",
-          "format": "timeseries",
-          "url": "http://localhost:8000/runs/${run}/app_state.json",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/fidelity_summary.json",
           "url_options": {
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"topk_set\" and metric=\"membership\"].{\"time\": time, \"value\": value, \"client_id\": labels.client_id}; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[metric=\"disagreements\" and value > 0].{\"client_id\": labels.client_id, \"disagreements\": value}; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "client_id",
+              "text": "client_id",
+              "type": "string"
+            },
+            {
+              "selector": "disagreements",
+              "text": "disagreements",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "disagreements",
+                "desc": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "limit",
+          "options": {
+            "limitField": 20
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "minWidth": 60
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "client_id"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Show this client",
+                    "url": "/d/topk/topk?var-run=${run}&var-client=${__data.fields.client_id}&${__url_time_range}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true
+      },
+      "id": 9,
+      "gridPos": {
+        "x": 18,
+        "y": 19,
+        "w": 6,
+        "h": 7
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "state-timeline",
+      "title": "Client ${client}: capped per evaluation, with what differs",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/app_state/${client}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.app=\"topk_set\" and labels.client_id=\"${client}\" and metric=\"capped\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "time",
@@ -713,12 +849,65 @@
             },
             {
               "selector": "value",
-              "text": "membership",
-              "type": "number"
+              "text": "exact capped",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/app_state/${client}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.app=\"topk_set\" and labels.client_id=\"${client}\" and metric=\"capped\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
             },
             {
-              "selector": "client_id",
-              "text": "client_id",
+              "selector": "value",
+              "text": "approx capped",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/app_state/${client}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.app=\"topk_set\" and labels.client_id=\"${client}\" and metric=\"annotation\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "annotation",
               "type": "string"
             }
           ]
@@ -730,7 +919,6 @@
             "fillOpacity": 80,
             "lineWidth": 0
           },
-          "displayName": "${__field.labels.client_id}",
           "color": {
             "mode": "fixed",
             "fixedColor": "transparent"
@@ -739,52 +927,123 @@
             {
               "type": "value",
               "options": {
-                "3": {
-                  "color": "green",
-                  "index": 0,
-                  "text": "both"
-                },
-                "2": {
-                  "color": "red",
-                  "index": 1,
-                  "text": "exact only"
-                },
-                "1": {
-                  "color": "orange",
-                  "index": 2,
-                  "text": "approx only"
-                },
-                "0": {
+                "none": {
                   "color": "transparent",
-                  "index": 3,
-                  "text": "neither"
+                  "text": " ",
+                  "index": 0
+                },
+                "onset delay": {
+                  "color": "#FADE2A",
+                  "index": 1
+                },
+                "gap": {
+                  "color": "#8F3BB8",
+                  "index": 2
+                },
+                "end delay": {
+                  "color": "#19B5B5",
+                  "index": 3
+                },
+                "false positive": {
+                  "color": "#FF9830",
+                  "index": 4
+                },
+                "false negative": {
+                  "color": "#D3369E",
+                  "index": 5
+                },
+                "missed episode": {
+                  "color": "#F5A3C7",
+                  "index": 6
+                },
+                "decision delay": {
+                  "color": "#A0703C",
+                  "index": 7
+                },
+                "capped": {
+                  "color": "red",
+                  "text": "capped",
+                  "index": 8
+                },
+                "not capped": {
+                  "color": "transparent",
+                  "text": " ",
+                  "index": 9
+                }
+              }
+            },
+            {
+              "type": "regex",
+              "options": {
+                "pattern": ".+, .+",
+                "result": {
+                  "color": "#9E9E9E",
+                  "index": 10
                 }
               }
             }
           ]
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "exact capped"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "exact capped"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "approx capped"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "approx capped"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "annotation"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "annotation"
+              }
+            ]
+          }
+        ]
       },
       "options": {
-        "mergeValues": true,
-        "showValue": "never",
+        "mergeValues": false,
+        "showValue": "auto",
         "rowHeight": 0.8,
+        "alignValue": "center",
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+          "showLegend": false
         },
         "tooltip": {
           "mode": "multi",
           "sort": "none"
         }
       },
-      "id": 9,
+      "repeat": "client",
+      "repeatDirection": "v",
+      "id": 10,
       "gridPos": {
         "x": 0,
-        "y": 25,
+        "y": 26,
         "w": 24,
-        "h": 14
+        "h": 5
       },
       "datasource": {
         "type": "yesoreyeram-infinity-datasource",
@@ -792,17 +1051,111 @@
       }
     },
     {
-      "id": 10,
+      "id": 11,
       "type": "row",
       "title": "Fidelity",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 39,
+        "y": 31,
         "w": 24,
         "h": 1
       },
       "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Client-evaluations by outcome",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/fidelity_summary.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.app=\"topk_set\" and $not($exists(labels.client_id))]{metric: value}; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "true_positive",
+              "text": "true positive",
+              "type": "number"
+            },
+            {
+              "selector": "false_positive",
+              "text": "false positive",
+              "type": "number"
+            },
+            {
+              "selector": "false_negative",
+              "text": "false negative",
+              "type": "number"
+            },
+            {
+              "selector": "true_negative",
+              "text": "true negative",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "true positive": 0,
+              "false positive": 1,
+              "false negative": 2,
+              "true negative": 3
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "none",
+        "graphMode": "none",
+        "orientation": "horizontal",
+        "justifyMode": "auto"
+      },
+      "id": 12,
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
     },
     {
       "type": "stat",
@@ -823,7 +1176,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[labels.app=\"topk_set\"]{metric: value}",
+          "root_selector": "( $r := $[labels.app=\"topk_set\" and $not($exists(labels.client_id))]{metric: value}; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "precision",
@@ -909,11 +1262,11 @@
         "orientation": "horizontal",
         "justifyMode": "auto"
       },
-      "id": 11,
+      "id": 13,
       "gridPos": {
-        "x": 0,
-        "y": 40,
-        "w": 8,
+        "x": 6,
+        "y": 32,
+        "w": 6,
         "h": 8
       },
       "datasource": {
@@ -940,7 +1293,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[labels.app=\"topk_set\"]{metric: value}",
+          "root_selector": "( $r := $[labels.app=\"topk_set\" and $not($exists(labels.client_id))]{metric: value}; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "entries",
@@ -958,8 +1311,8 @@
               "type": "number"
             },
             {
-              "selector": "breaks",
-              "text": "breaks",
+              "selector": "gaps",
+              "text": "gaps",
               "type": "number"
             },
             {
@@ -978,7 +1331,7 @@
               "entries": 0,
               "missed": 1,
               "mean onset delay (evaluations)": 2,
-              "breaks": 3,
+              "gaps": 3,
               "approx-only spans": 4
             },
             "excludeByName": {},
@@ -1009,11 +1362,11 @@
         "orientation": "horizontal",
         "justifyMode": "auto"
       },
-      "id": 12,
+      "id": 14,
       "gridPos": {
-        "x": 8,
-        "y": 40,
-        "w": 8,
+        "x": 12,
+        "y": 32,
+        "w": 6,
         "h": 8
       },
       "datasource": {
@@ -1091,11 +1444,11 @@
       "options": {
         "showHeader": true
       },
-      "id": 13,
+      "id": 15,
       "gridPos": {
-        "x": 16,
-        "y": 40,
-        "w": 8,
+        "x": 18,
+        "y": 32,
+        "w": 6,
         "h": 8
       },
       "datasource": {

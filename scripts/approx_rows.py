@@ -2,6 +2,8 @@
 
 import json
 import os
+import re
+import shutil
 
 SCHEMA_VERSION = 1
 KINDS = ("query_result", "low_level", "app_state", "fidelity_event", "fidelity_summary")
@@ -48,21 +50,32 @@ def run_dir(out_dir, run_id):
     return os.path.join(out_dir, "runs", run_id)
 
 
-def write_run(out_dir, run_id, use_case, rows, details=None):
+def write_run(out_dir, run_id, use_case, rows, details=None, split=None):
     if not rows:
         raise ValueError(f"run {run_id} has no rows")
-    by_kind = {kind: [] for kind in KINDS}
+    split = split or {}
+    files = {kind: {kind: []} for kind in KINDS}
     for r in rows:
         check(r)
         if r["run_id"] != run_id:
             raise ValueError(f"row of run {r['run_id']} written into run {run_id}")
-        by_kind[r["kind"]].append(r)
+        name = r["kind"]
+        entity = r["labels"].get(split.get(name))
+        if entity is not None:
+            if not re.fullmatch(r"[\w-][\w.-]*", entity):
+                raise ValueError(f"{split[name]} {entity!r} cannot name a file")
+            name = os.path.join(r["kind"], entity)
+        files[r["kind"]].setdefault(name, []).append(r)
     path = run_dir(out_dir, run_id)
     os.makedirs(path, exist_ok=True)
-    for kind, kind_rows in by_kind.items():
-        kind_rows.sort(key=lambda r: r["time"])
-        with open(os.path.join(path, f"{kind}.json"), "w") as f:
-            json.dump(kind_rows, f)
+    for kind, by_name in files.items():
+        shutil.rmtree(os.path.join(path, kind), ignore_errors=True)
+        if len(by_name) > 1:
+            os.makedirs(os.path.join(path, kind))
+        for name, file_rows in by_name.items():
+            file_rows.sort(key=lambda r: r["time"])
+            with open(os.path.join(path, f"{name}.json"), "w") as f:
+                json.dump(file_rows, f)
     times = [r["time"] for r in rows]
     entry = {"run_id": run_id, "use_case": use_case, "start": min(times), "end": max(times)}
     if details is not None:
@@ -84,8 +97,14 @@ def read_index(out_dir):
 def read_run(out_dir, run_id, kind):
     if kind not in KINDS:
         raise ValueError(f"kind {kind!r} is not one of {KINDS}")
-    with open(os.path.join(run_dir(out_dir, run_id), f"{kind}.json")) as f:
-        rows = json.load(f)
+    path = run_dir(out_dir, run_id)
+    names = [f"{kind}.json"]
+    if os.path.isdir(os.path.join(path, kind)):
+        names += sorted(os.path.join(kind, name) for name in os.listdir(os.path.join(path, kind)))
+    rows = []
+    for name in names:
+        with open(os.path.join(path, name)) as f:
+            rows += json.load(f)
     for r in rows:
         check(r)
-    return rows
+    return sorted(rows, key=lambda r: r["time"])

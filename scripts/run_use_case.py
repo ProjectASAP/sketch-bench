@@ -7,8 +7,8 @@ import re
 import subprocess
 import sys
 
-import comparison_alert
 import decision
+import rollout
 import threshold_alert
 import topk_set
 from approx_rows import row, write_run
@@ -35,11 +35,11 @@ def uc1_derive(rows, queries):
 
 
 def uc4_derive(rows, queries):
-    return comparison_alert.derive(rows, "canary_slower", "p99_canary", "p99_stable", 1.1)
+    return rollout.derive(rows, "canary_slower", "p99_canary", "p99_stable", 1.1)
 
 
 def uc2_derive(rows, queries):
-    rule = {"cpu_up": 0.8, "memory_up": 1.5e9, "cpu_down": 0.3, "memory_down": 0.5e9}
+    rule = {"cpu_up": 0.8, "memory_up": 1.5e9, "cpu_down": 0.4, "memory_down": 0.75e9}
     return decision.derive(rows, "scale_decision", "p95_cpu", "p95_memory", "container", rule)
 
 
@@ -56,6 +56,7 @@ USE_CASES = {
         "derive": uc1_derive,
         "dashboard": "threshold-alert",
         "needs_every_query": False,
+        "split": {},
     },
     "2": {
         "spec": "uc2_autoscaling.json",
@@ -64,14 +65,16 @@ USE_CASES = {
         "derive": uc2_derive,
         "dashboard": "decision",
         "needs_every_query": True,
+        "split": {"query_result": "container", "low_level": "container", "app_state": "container"},
     },
     "4": {
         "spec": "uc4_canary.json",
         "arms": ["raw-eps0.01", "noraw-eps0.05", "noraw-eps0.01", "noraw-eps0.005", "noraw-eps0.001"],
         "signal": lambda query: "canary_slower",
         "derive": uc4_derive,
-        "dashboard": "threshold-alert",
+        "dashboard": "rollout",
         "needs_every_query": True,
+        "split": {},
     },
     "5": {
         "spec": "uc5_top_clients.json",
@@ -80,6 +83,7 @@ USE_CASES = {
         "derive": uc5_derive,
         "dashboard": "topk",
         "needs_every_query": True,
+        "split": {"app_state": "client_id"},
     },
 }
 
@@ -120,22 +124,48 @@ def query_rows(run_id, use_case, signal, exact_query, approx_query):
     return sorted(rows, key=lambda r: r["time"])
 
 
+def delay_text(s, metric, name):
+    return f"; {name} {s[metric]:.2f}" if metric in s else ""
+
+
+def signed_delay_text(s, metric, name, early, late):
+    if metric not in s:
+        return ""
+    return f"; {name} {s[metric]:.2f} ({s[early]} early, {s[late]} late)"
+
+
+def counted(n, noun):
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
 def headline(app, s):
-    if app in (threshold_alert.APP, comparison_alert.APP):
+    if app == threshold_alert.APP:
         total = s["true_positive"] + s["false_positive"] + s["false_negative"] + s["true_negative"]
         return ((s["true_positive"] + s["true_negative"]) / total,
                 f"{s['false_positive']} false positive and {s['false_negative']} false negative evaluations; "
-                f"{s['missed_episodes']} of {s['episodes']} episodes missed; {s['breaks']} breaks")
+                f"{s['missed_episodes']} of {s['episodes']} episodes missed; {counted(s['gaps'], 'gap')}"
+                + delay_text(s, "mean_onset_delay", "mean onset delay")
+                + signed_delay_text(s, "mean_absolute_end_delay", "mean absolute end delay", "early_ends",
+                                    "late_ends"))
     if app == decision.APP:
+        return (s["action_agreement"],
+                f"{s['true_positive']} matched, {s['false_positive']} false and {s['false_negative']} missed "
+                f"scaling actions ({s['up_true_positive']} up, {s['down_true_positive']} down matched)"
+                + signed_delay_text(s, "mean_absolute_onset_delay", "mean absolute onset delay", "early_actions",
+                                    "late_actions"))
+    if app == rollout.APP:
         return (s["agreement"],
-                f"{s['exact_none_approx_up']} extra and {s['exact_up_approx_none']} missing scale-ups; "
-                f"{s['exact_none_approx_down']} extra and {s['exact_down_approx_none']} missing scale-downs; "
-                f"{s['up_missed_episodes'] + s['down_missed_episodes']} of "
-                f"{s['up_episodes'] + s['down_episodes']} scaling episodes missed")
+                f"{s['true_positive'] + s['true_negative']} of {s['rollouts']} rollouts decided the same; "
+                f"{counted(s['false_positive'], 'false rollback')}, "
+                f"{counted(s['false_negative'], 'missed rollback')}; {counted(s['gaps'], 'gap')} in slower"
+                + signed_delay_text(s, "mean_absolute_rollback_delay", "mean absolute rollback delay",
+                                    "early_rollbacks", "late_rollbacks"))
     if app == topk_set.APP:
         return (s["identical_sets"] / s["evaluations"],
-                f"precision {s['precision']:.3f}; {s['intruder_slots']} approx-only slots; "
-                f"{s['missed_entries']} of {s['entries']} entries missed")
+                f"{s['true_positive']} true positive, {s['false_positive']} false positive and "
+                f"{s['false_negative']} false negative client-evaluations; precision {s['precision']:.3f}; "
+                f"{s['missed_entries']} of {s['entries']} entries missed; {counted(s['gaps'], 'gap')}"
+                + delay_text(s, "mean_onset_delay", "mean onset delay"))
     raise ValueError(f"no headline for application {app}")
 
 
@@ -189,7 +219,7 @@ def write_arm(data, case, prefix, arm, exact, approx):
     derived = case["derive"](rows, planned)
     details["max_relative_error"] = max_relative_errors(derived)
     details["fidelity"] = headlines(derived)
-    write_run(data, run_id, use_case, rows + derived, details)
+    write_run(data, run_id, use_case, rows + derived, details, case["split"])
     print(f"{run_id}: {len(plans)} queries, {len(unsupported)} unsupported", file=sys.stderr)
 
 

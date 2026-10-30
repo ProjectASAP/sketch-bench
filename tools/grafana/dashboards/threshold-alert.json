@@ -41,7 +41,7 @@
               "method": "GET",
               "data": ""
             },
-            "root_selector": "$[use_case in [\"ddos_syn_flood\", \"canary_release\"]]",
+            "root_selector": "( $r := $[use_case in [\"ddos_syn_flood\"]]; $exists($r) ? $r : [] )",
             "columns": [
               {
                 "selector": "run_id",
@@ -80,7 +80,7 @@
               "method": "GET",
               "data": ""
             },
-            "root_selector": "$[metric=\"episodes\"].labels",
+            "root_selector": "( $r := $[metric=\"episodes\"].labels; $exists($r) ? $r : [] )",
             "columns": [
               {
                 "selector": "signal",
@@ -130,7 +130,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[labels.signal=\"${signal}\"].{\"time\": time, \"text\": metric & \": \" & $string(value) & \" evaluations\"}",
+          "root_selector": "( $r := $[labels.signal=\"${signal}\"].{\"time\": time, \"text\": metric & \": \" & $string(value) & \" evaluations\"}; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "time",
@@ -180,7 +180,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[use_case in [\"ddos_syn_flood\", \"canary_release\"]]",
+          "root_selector": "( $r := $[use_case in [\"ddos_syn_flood\"]]; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "run_id",
@@ -312,7 +312,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $e := $[run_id=\"${run}\"]; $append($e.details.plans ~> $each(function($v, $k) { {\"query\": $k, \"approx plan\": $v, \"exact plan\": $lookup($e.details.exact_plans, $k), \"promql\": $lookup($e.details.promql, $k)} }), $e.details.unsupported ~> $each(function($v, $k) { {\"query\": $k, \"why no approx plan\": $v, \"promql\": $lookup($e.details.promql, $k)} })) )",
+          "root_selector": "( $r := ( $e := $[run_id=\"${run}\"]; $append($e.details.plans ~> $each(function($v, $k) { {\"query\": $k, \"approx plan\": $v, \"exact plan\": $lookup($e.details.exact_plans, $k), \"promql\": $lookup($e.details.promql, $k)} }), $e.details.unsupported ~> $each(function($v, $k) { {\"query\": $k, \"why no approx plan\": $v, \"promql\": $lookup($e.details.promql, $k)} })) ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "query",
@@ -695,232 +695,8 @@
       "panels": []
     },
     {
-      "type": "timeseries",
-      "title": "Compared ratio (comparison alerts only)",
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "yesoreyeram-infinity-datasource",
-            "uid": "approx-rows"
-          },
-          "type": "json",
-          "source": "url",
-          "parser": "backend",
-          "format": "table",
-          "url": "http://localhost:8000/runs/${run}/app_state.json",
-          "url_options": {
-            "method": "GET",
-            "data": ""
-          },
-          "root_selector": "( $r := $[labels.signal=\"${signal}\" and metric=\"ratio\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
-          "columns": [
-            {
-              "selector": "time",
-              "text": "time",
-              "type": "timestamp_epoch"
-            },
-            {
-              "selector": "value",
-              "text": "exact",
-              "type": "number"
-            }
-          ]
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "yesoreyeram-infinity-datasource",
-            "uid": "approx-rows"
-          },
-          "type": "json",
-          "source": "url",
-          "parser": "backend",
-          "format": "table",
-          "url": "http://localhost:8000/runs/${run}/app_state.json",
-          "url_options": {
-            "method": "GET",
-            "data": ""
-          },
-          "root_selector": "( $r := $[labels.signal=\"${signal}\" and metric=\"ratio\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
-          "columns": [
-            {
-              "selector": "time",
-              "text": "time",
-              "type": "timestamp_epoch"
-            },
-            {
-              "selector": "value",
-              "text": "approx",
-              "type": "number"
-            }
-          ]
-        },
-        {
-          "refId": "C",
-          "datasource": {
-            "type": "yesoreyeram-infinity-datasource",
-            "uid": "approx-rows"
-          },
-          "type": "json",
-          "source": "url",
-          "parser": "backend",
-          "format": "table",
-          "url": "http://localhost:8000/runs/${run}/app_state.json",
-          "url_options": {
-            "method": "GET",
-            "data": ""
-          },
-          "root_selector": "( $r := $[labels.signal=\"${signal}\" and metric=\"tolerance\"]; $exists($r) ? $r : [] )",
-          "columns": [
-            {
-              "selector": "time",
-              "text": "time",
-              "type": "timestamp_epoch"
-            },
-            {
-              "selector": "value",
-              "text": "tolerance",
-              "type": "number"
-            }
-          ]
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "lineWidth": 1,
-            "showPoints": "never"
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byFrameRefID",
-              "options": "A"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "blue"
-                }
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 2
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID",
-              "options": "B"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "orange"
-                }
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 1
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID",
-              "options": "C"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "red"
-                }
-              },
-              {
-                "id": "custom.lineStyle",
-                "value": {
-                  "fill": "dash",
-                  "dash": [
-                    10,
-                    10
-                  ]
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "exact"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "exact"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "approx"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "approx"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "tolerance"
-            },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "tolerance"
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "id": 8,
-      "gridPos": {
-        "x": 0,
-        "y": 25,
-        "w": 24,
-        "h": 7
-      },
-      "datasource": {
-        "type": "yesoreyeram-infinity-datasource",
-        "uid": "approx-rows"
-      }
-    },
-    {
       "type": "state-timeline",
-      "title": "${signal}: alert state",
+      "title": "${signal}: alert per evaluation, with what differs",
       "targets": [
         {
           "refId": "A",
@@ -946,7 +722,7 @@
             },
             {
               "selector": "value",
-              "text": "exact",
+              "text": "exact alert",
               "type": "string"
             }
           ]
@@ -975,7 +751,36 @@
             },
             {
               "selector": "value",
-              "text": "approx",
+              "text": "approx alert",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/app_state.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.signal=\"${signal}\" and metric=\"annotation\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "annotation",
               "type": "string"
             }
           ]
@@ -995,15 +800,58 @@
             {
               "type": "value",
               "options": {
+                "none": {
+                  "color": "transparent",
+                  "text": " ",
+                  "index": 0
+                },
+                "onset delay": {
+                  "color": "#FADE2A",
+                  "index": 1
+                },
+                "gap": {
+                  "color": "#8F3BB8",
+                  "index": 2
+                },
+                "end delay": {
+                  "color": "#19B5B5",
+                  "index": 3
+                },
+                "false positive": {
+                  "color": "#FF9830",
+                  "index": 4
+                },
+                "false negative": {
+                  "color": "#D3369E",
+                  "index": 5
+                },
+                "missed episode": {
+                  "color": "#F5A3C7",
+                  "index": 6
+                },
+                "decision delay": {
+                  "color": "#A0703C",
+                  "index": 7
+                },
                 "firing": {
                   "color": "red",
-                  "index": 0,
-                  "text": "firing"
+                  "text": "firing",
+                  "index": 8
                 },
                 "ok": {
-                  "color": "green",
-                  "index": 1,
-                  "text": "ok"
+                  "color": "transparent",
+                  "text": " ",
+                  "index": 9
+                }
+              }
+            },
+            {
+              "type": "regex",
+              "options": {
+                "pattern": ".+, .+",
+                "result": {
+                  "color": "#9E9E9E",
+                  "index": 10
                 }
               }
             }
@@ -1013,49 +861,60 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "exact"
+              "options": "exact alert"
             },
             "properties": [
               {
                 "id": "displayName",
-                "value": "exact"
+                "value": "exact alert"
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "approx"
+              "options": "approx alert"
             },
             "properties": [
               {
                 "id": "displayName",
-                "value": "approx"
+                "value": "approx alert"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "annotation"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "annotation"
               }
             ]
           }
         ]
       },
       "options": {
-        "mergeValues": true,
-        "showValue": "never",
+        "mergeValues": false,
+        "showValue": "auto",
         "rowHeight": 0.8,
+        "alignValue": "center",
         "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+          "showLegend": false
         },
         "tooltip": {
           "mode": "multi",
           "sort": "none"
         }
       },
-      "id": 9,
+      "id": 8,
       "gridPos": {
         "x": 0,
-        "y": 32,
+        "y": 25,
         "w": 24,
-        "h": 6
+        "h": 7
       },
       "datasource": {
         "type": "yesoreyeram-infinity-datasource",
@@ -1063,13 +922,13 @@
       }
     },
     {
-      "id": 10,
+      "id": 9,
       "type": "row",
       "title": "Fidelity",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 38,
+        "y": 32,
         "w": 24,
         "h": 1
       },
@@ -1094,7 +953,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[labels.signal=\"${signal}\"]{metric: value}",
+          "root_selector": "( $r := $[labels.signal=\"${signal}\"]{metric: value}; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "true_positive",
@@ -1157,10 +1016,10 @@
         "orientation": "horizontal",
         "justifyMode": "auto"
       },
-      "id": 11,
+      "id": 10,
       "gridPos": {
         "x": 0,
-        "y": 39,
+        "y": 33,
         "w": 6,
         "h": 8
       },
@@ -1188,7 +1047,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[labels.signal=\"${signal}\"]{metric: value}",
+          "root_selector": "( $r := $[labels.signal=\"${signal}\"]{metric: value}; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "episodes",
@@ -1206,8 +1065,23 @@
               "type": "number"
             },
             {
-              "selector": "breaks",
-              "text": "breaks",
+              "selector": "mean_absolute_end_delay",
+              "text": "mean absolute end delay (evaluations)",
+              "type": "number"
+            },
+            {
+              "selector": "early_ends",
+              "text": "early ends",
+              "type": "number"
+            },
+            {
+              "selector": "late_ends",
+              "text": "late ends",
+              "type": "number"
+            },
+            {
+              "selector": "gaps",
+              "text": "gaps",
               "type": "number"
             },
             {
@@ -1226,8 +1100,11 @@
               "exact episodes": 0,
               "missed episodes": 1,
               "mean onset delay (evaluations)": 2,
-              "breaks": 3,
-              "episode coverage": 4
+              "mean absolute end delay (evaluations)": 3,
+              "early ends": 4,
+              "late ends": 5,
+              "gaps": 6,
+              "episode coverage": 7
             },
             "excludeByName": {},
             "renameByName": {}
@@ -1274,10 +1151,10 @@
         "orientation": "horizontal",
         "justifyMode": "auto"
       },
-      "id": 12,
+      "id": 11,
       "gridPos": {
         "x": 6,
-        "y": 39,
+        "y": 33,
         "w": 6,
         "h": 8
       },
@@ -1305,7 +1182,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $s := $[labels.signal=\"${signal}\"]{metric: value}; [{\"exact\": \"firing\", \"approx firing\": $s.true_positive, \"approx ok\": $s.false_negative}, {\"exact\": \"ok\", \"approx firing\": $s.false_positive, \"approx ok\": $s.true_negative}] )",
+          "root_selector": "( $r := ( $s := $[labels.signal=\"${signal}\"]{metric: value}; [{\"exact\": \"firing\", \"approx firing\": $s.true_positive, \"approx ok\": $s.false_negative}, {\"exact\": \"ok\", \"approx firing\": $s.false_positive, \"approx ok\": $s.true_negative}] ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "exact",
@@ -1350,10 +1227,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 13,
+      "id": 12,
       "gridPos": {
         "x": 12,
-        "y": 39,
+        "y": 33,
         "w": 6,
         "h": 8
       },
@@ -1426,10 +1303,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 14,
+      "id": 13,
       "gridPos": {
         "x": 18,
-        "y": 39,
+        "y": 33,
         "w": 6,
         "h": 8
       },

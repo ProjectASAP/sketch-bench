@@ -52,6 +52,9 @@ class WriteRunTest(unittest.TestCase):
             write_run(out, "r1", "uc", rows)
             self.assertEqual(sorted(os.listdir(os.path.join(out, "runs", "r1"))),
                              sorted(f"{k}.json" for k in KINDS))
+            write_run(out, "r1", "uc", rows, split={"query_result": "container"})
+            self.assertEqual(sorted(os.listdir(os.path.join(out, "runs", "r1"))),
+                             sorted(f"{k}.json" for k in KINDS))
             self.assertEqual([r["time"] for r in read_run(out, "r1", "query_result")], [1000, 2000])
             self.assertEqual(read_run(out, "r1", "app_state"), [])
             self.assertEqual(read_index(out),
@@ -64,6 +67,29 @@ class WriteRunTest(unittest.TestCase):
             write_run(out, "r1", "uc", [sample("r1", time=5000)])
             self.assertEqual([(e["run_id"], e["end"]) for e in read_index(out)],
                              [("r1", 5000), ("r2", 1000)])
+
+    def test_split_writes_one_file_per_entity(self):
+        with tempfile.TemporaryDirectory() as out:
+            rows = [row(t, "app_state", "r1", labels, "state", "on", "state")
+                    for t, labels in ((2000, {"container": "c1"}), (1000, {"container": "c1"}),
+                                      (1000, {"container": "c2"}), (1000, {}))]
+            write_run(out, "r1", "uc", rows + [sample()], split={"app_state": "container"})
+            path = os.path.join(out, "runs", "r1")
+            self.assertEqual(sorted(os.listdir(os.path.join(path, "app_state"))), ["c1.json", "c2.json"])
+            with open(os.path.join(path, "app_state", "c1.json")) as f:
+                self.assertEqual([r["time"] for r in json.load(f)], [1000, 2000])
+            with open(os.path.join(path, "app_state.json")) as f:
+                self.assertEqual([r["labels"] for r in json.load(f)], [{}])
+            self.assertEqual(len(read_run(out, "r1", "app_state")), 4)
+            write_run(out, "r1", "uc", rows)
+            self.assertFalse(os.path.exists(os.path.join(path, "app_state")))
+            self.assertEqual(len(read_run(out, "r1", "app_state")), 4)
+
+    def test_split_rejects_entity_that_cannot_name_a_file(self):
+        with tempfile.TemporaryDirectory() as out:
+            r = row(1000, "app_state", "r1", {"container": "../c1"}, "state", "on", "state")
+            with self.assertRaises(ValueError):
+                write_run(out, "r1", "uc", [r], split={"app_state": "container"})
 
     def test_details_kept_in_index(self):
         with tempfile.TemporaryDirectory() as out:

@@ -37,28 +37,49 @@ class SpansTest(unittest.TestCase):
 
 
 class DeriveTest(unittest.TestCase):
-    def test_late_onset_break_and_false_positives(self):
+    def test_use_case_document_example(self):
+        out = derive(query_rows(on_off("001111110000"), on_off("000110111010")), {"q": THRESHOLD})
+        summary = by_metric(out, "fidelity_summary")
+        self.assertEqual((summary["true_positive"], summary["false_positive"],
+                          summary["false_negative"], summary["true_negative"]), (4, 2, 2, 4))
+        self.assertEqual((summary["mean_onset_delay"], summary["mean_absolute_end_delay"], summary["gaps"]), (1, 1, 1))
+        self.assertEqual((summary["early_ends"], summary["late_ends"]), (0, 1))
+        self.assertEqual(events(out), [(3, "onset_delay", 1), (5, "gap", 1), (8, "end_delay", 1),
+                                       (10, "false_positive", 1)])
+        marks = {r["time"] // 1000 + 1: r["value"] for r in out
+                 if r["metric"] == "annotation" and r["value"] != "none"}
+        self.assertEqual(marks, {4: "onset delay", 6: "gap", 9: "end delay", 11: "false positive"})
+
+    def test_end_delay_stops_at_the_next_episode(self):
+        out = derive(query_rows(on_off("0110110"), on_off("0111110")), {"q": THRESHOLD})
+        self.assertEqual(events(out), [(3, "end_delay", 1)])
+
+    def test_late_onset_gap_and_false_positives(self):
         out = derive(query_rows(on_off("0011111000"), on_off("0100101010")), {"q": THRESHOLD})
         summary = by_metric(out, "fidelity_summary")
         self.assertEqual((summary["true_positive"], summary["false_positive"],
                           summary["false_negative"], summary["true_negative"]), (2, 2, 3, 3))
         self.assertEqual(summary["episodes"], 1)
-        self.assertEqual(summary["breaks"], 1)
+        self.assertEqual(summary["gaps"], 1)
         self.assertEqual(summary["mean_onset_delay"], 2)
         self.assertAlmostEqual(summary["episode_coverage"], 2 / 5)
-        self.assertEqual(events(out), [(1, "false_positive", 1), (2, "late_onset", 2),
-                                       (5, "break", 1), (8, "false_positive", 1)])
+        self.assertEqual((summary["mean_absolute_end_delay"], summary["early_ends"], summary["late_ends"]), (0, 0, 0))
+        self.assertEqual(events(out), [(1, "false_positive", 1), (4, "onset_delay", 2),
+                                       (5, "gap", 1), (8, "false_positive", 1)])
 
     def test_missed_episode_has_no_onset_delay(self):
         out = derive(query_rows(on_off("0110"), on_off("0000")), {"q": THRESHOLD})
         summary = by_metric(out, "fidelity_summary")
         self.assertEqual(summary["missed_episodes"], 1)
         self.assertNotIn("mean_onset_delay", summary)
+        self.assertNotIn("mean_absolute_end_delay", summary)
         self.assertEqual(events(out), [(1, "missed_episode", 2)])
 
-    def test_approx_stopping_early_is_a_break(self):
+    def test_approx_stopping_early_is_a_negative_end_delay(self):
         out = derive(query_rows(on_off("1111"), on_off("1100")), {"q": THRESHOLD})
-        self.assertEqual(events(out), [(2, "break", 2)])
+        self.assertEqual(events(out), [(2, "end_delay", -2)])
+        summary = by_metric(out, "fidelity_summary")
+        self.assertEqual((summary["mean_absolute_end_delay"], summary["early_ends"], summary["late_ends"]), (2, 1, 0))
 
     def test_value_at_threshold_is_not_firing(self):
         out = derive(query_rows([THRESHOLD], [THRESHOLD + 0.1]), {"q": THRESHOLD})

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 
 from approx_rows import row
-from threshold_alert import episodes_of, relative_errors
+from threshold_alert import EVENT_LABELS, NOTHING, annotations, delay_summary, relative_errors
 
 APP = "autoscaler"
-DECISIONS = ("up", "down", "none")
+DECISIONS = ("up", "down", NOTHING)
 ACTIONS = ("up", "down")
+MATCH_WINDOW = 2
 
 
 def decide(cpu, memory, rule):
@@ -13,7 +14,27 @@ def decide(cpu, memory, rule):
         return "up"
     if cpu < rule["cpu_down"] and memory < rule["memory_down"]:
         return "down"
-    return "none"
+    return NOTHING
+
+
+def actions_of(decisions):
+    return [d if i > 0 and d != NOTHING and decisions[i - 1] != d else NOTHING for i, d in enumerate(decisions)]
+
+
+def match_actions(exact, approx, window=MATCH_WINDOW):
+    matched, missed = {}, []
+    for i, action in enumerate(exact):
+        if action == NOTHING:
+            continue
+        near = [j for j in range(max(0, i - window), min(len(approx), i + window + 1))
+                if approx[j] == action and j not in matched.values()]
+        if near:
+            matched[i] = min(near, key=lambda j: (abs(j - i), j))
+        else:
+            missed.append(i)
+    taken = set(matched.values())
+    false = [j for j, a in enumerate(approx) if a != NOTHING and j not in taken]
+    return matched, missed, false
 
 
 def by_entity(query_rows, query, key):
@@ -48,8 +69,11 @@ def derive(query_rows, signal, cpu_query, memory_query, key, rule):
     use_case = next(iter(cpu_labels.values()))["use_case"]
     app = {"use_case": use_case, "signal": signal, "app": APP}
     pairs = {(e, a): 0 for e in DECISIONS for a in DECISIONS}
-    totals = {action: {"episodes": 0, "missed": 0, "breaks": 0, "delays": [], "false_actions": 0} for action in ACTIONS}
+    totals = {action: {"true_positive": 0, "false_positive": 0, "false_negative": 0, "delays": []}
+              for action in ACTIONS}
+    true_negative = 0
     last = None
+    disagreements = []
     out = []
     for entity in sorted(cpu):
         times = sorted(cpu[entity]["exact"])
@@ -63,35 +87,58 @@ def derive(query_rows, signal, cpu_query, memory_query, key, rule):
                                    [values[entity]["approx"][t] for t in times])
         decided = {arm: [decide(cpu[entity][arm][t], memory[entity][arm][t], rule) for t in times]
                    for arm in ("exact", "approx")}
+        acted = {arm: actions_of(decisions) for arm, decisions in decided.items()}
         here = {**app, key: entity}
-        for arm, decisions in decided.items():
+        for arm in ("exact", "approx"):
             out += [row(t, "app_state", run_id, {**here, "arm": arm}, "decision", d, "state")
-                    for t, d in zip(times, decisions)]
+                    for t, d in zip(times, decided[arm])]
+            out += [row(t, "app_state", run_id, {**here, "arm": arm}, "action", a, "state")
+                    for t, a in zip(times, acted[arm])]
         for e, a in zip(decided["exact"], decided["approx"]):
             pairs[(e, a)] += 1
-        for action in ACTIONS:
-            found = episodes_of([d == action for d in decided["exact"]], [d == action for d in decided["approx"]])
-            for i, metric, length in found["events"]:
-                out.append(row(times[i], "fidelity_event", run_id, {**here, "action": action}, metric, length,
-                               "evaluations"))
-            total = totals[action]
-            total["episodes"] += found["episodes"]
-            total["missed"] += found["missed"]
-            total["breaks"] += found["breaks"]
-            total["delays"] += found["delays"]
-            total["false_actions"] += sum(1 for _, metric, _ in found["events"] if metric == "false_positive")
-        disagreements = sum(1 for e, a in zip(decided["exact"], decided["approx"]) if e != a)
-        out.append(row(times[-1], "fidelity_summary", run_id, here, "disagreements", disagreements, "evaluations"))
 
+        exact, approx = acted["exact"], acted["approx"]
+        matched, missed, false = match_actions(exact, approx)
+        cells = []
+        for i, j in matched.items():
+            totals[exact[i]]["true_positive"] += 1
+            totals[exact[i]]["delays"].append(j - i)
+            if j != i:
+                cells.append((j, j + 1, EVENT_LABELS["onset_delay"]))
+                out.append(row(times[j], "fidelity_event", run_id, {**here, "action": exact[i]}, "onset_delay",
+                               j - i, "evaluations"))
+        for i in missed:
+            totals[exact[i]]["false_negative"] += 1
+            cells.append((i, i + 1, EVENT_LABELS["false_negative"]))
+            out.append(row(times[i], "fidelity_event", run_id, {**here, "action": exact[i]}, "false_negative", 1,
+                           "evaluations"))
+        for j in false:
+            totals[approx[j]]["false_positive"] += 1
+            cells.append((j, j + 1, EVENT_LABELS["false_positive"]))
+            out.append(row(times[j], "fidelity_event", run_id, {**here, "action": approx[j]}, "false_positive", 1,
+                           "evaluations"))
+        out += [row(t, "app_state", run_id, here, "annotation", mark, "state")
+                for t, mark in zip(times, annotations(len(times), cells))]
+        true_negative += sum(1 for e, a in zip(exact, approx) if e == NOTHING and a == NOTHING)
+        disagreements.append((sum(1 for e, a in zip(exact, approx) if e != a), entity, times[-1]))
+
+    for count, entity, t in sorted(disagreements, key=lambda d: (-d[0], d[1])):
+        out.append(row(t, "fidelity_summary", run_id, {**app, key: entity}, "disagreements", count, "evaluations"))
     summary = [(f"exact_{e}_approx_{a}", n, "evaluations") for (e, a), n in pairs.items()]
     evaluations = sum(pairs.values())
-    summary.append(("agreement", sum(n for (e, a), n in pairs.items() if e == a) / evaluations, "ratio"))
+    summary.append(("decision_agreement", sum(n for (e, a), n in pairs.items() if e == a) / evaluations, "ratio"))
+    counts = {metric: sum(total[metric] for total in totals.values())
+              for metric in ("true_positive", "false_positive", "false_negative")}
+    summary += [(metric, n, "actions") for metric, n in counts.items()]
+    summary.append(("true_negative", true_negative, "evaluations"))
+    actions = sum(counts.values())
+    summary.append(("action_agreement", counts["true_positive"] / actions if actions else 1.0, "ratio"))
+    summary += delay_summary([d for total in totals.values() for d in total["delays"]], "onset_delay", "actions",
+                             "early_actions", "late_actions")
     for action, total in totals.items():
-        summary += [(f"{action}_episodes", total["episodes"], "episodes"),
-                    (f"{action}_missed_episodes", total["missed"], "episodes"),
-                    (f"{action}_breaks", total["breaks"], "breaks"),
-                    (f"{action}_false_actions", total["false_actions"], "spans")]
-        if total["delays"]:
-            summary.append((f"{action}_mean_onset_delay", sum(total["delays"]) / len(total["delays"]), "evaluations"))
+        summary += [(f"{action}_{metric}", total[metric], "actions")
+                    for metric in ("true_positive", "false_positive", "false_negative")]
+        summary += [(f"{action}_{metric}", value, unit) for metric, value, unit in
+                    delay_summary(total["delays"], "onset_delay", "actions", "early_actions", "late_actions")]
     out += [row(last, "fidelity_summary", run_id, app, metric, value, unit) for metric, value, unit in summary]
     return out

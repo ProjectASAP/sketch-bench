@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
 from approx_rows import row
-from threshold_alert import episodes_of
+from threshold_alert import annotations, cells_of, episodes_of, mean
 
 APP = "topk_set"
-BOTH, EXACT_ONLY, APPROX_ONLY, NEITHER = 3, 2, 1, 0
+CAPPED, NOT_CAPPED = "capped", "not capped"
 
 
 def members(query_rows, query, key):
@@ -58,25 +58,39 @@ def derive(query_rows, signal, query, key):
             ranked = sorted(chosen, key=lambda m: (-chosen[m], m))
             out.append(row(t, "app_state", run_id, {**app, "arm": arm}, "ranking", ", ".join(ranked), "clients"))
 
-    found = {"episodes": 0, "missed": 0, "breaks": 0, "delays": [], "false_members": 0}
+    found = {"episodes": 0, "missed": 0, "gaps": 0, "delays": [], "false_members": 0}
+    pairs = {(e, a): 0 for e in (True, False) for a in (True, False)}
+    disagreements = []
     everyone = set().union(*(set(sets[arm][t]) for arm in sets for t in times))
     for member in sorted(everyone):
-        exact_on = [member in sets["exact"][t] for t in times]
-        approx_on = [member in sets["approx"][t] for t in times]
+        on = {arm: [member in sets[arm][t] for t in times] for arm in ("exact", "approx")}
         here = {**app, key: member}
-        for t, e, a in zip(times, exact_on, approx_on):
-            state = BOTH if e and a else EXACT_ONLY if e else APPROX_ONLY if a else NEITHER
-            out.append(row(t, "app_state", run_id, here, "membership", state, "state"))
-        episodes = episodes_of(exact_on, approx_on)
+        episodes = episodes_of(on["exact"], on["approx"])
+        marks = annotations(len(times), cells_of(episodes["events"]))
+        for n, t in enumerate(times):
+            for arm in ("exact", "approx"):
+                out.append(row(t, "app_state", run_id, {**here, "arm": arm}, "capped",
+                               CAPPED if on[arm][n] else NOT_CAPPED, "state"))
+            out.append(row(t, "app_state", run_id, here, "annotation", marks[n], "state"))
+        for e, a in zip(on["exact"], on["approx"]):
+            pairs[(e, a)] += 1
         for i, metric, length in episodes["events"]:
             out.append(row(times[i], "fidelity_event", run_id, here, metric, length, "evaluations"))
         found["episodes"] += episodes["episodes"]
         found["missed"] += episodes["missed"]
-        found["breaks"] += episodes["breaks"]
+        found["gaps"] += episodes["gaps"]
         found["delays"] += episodes["delays"]
         found["false_members"] += sum(1 for _, metric, _ in episodes["events"] if metric == "false_positive")
+        disagreements.append((sum(1 for e, a in zip(on["exact"], on["approx"]) if e != a), member))
 
+    for count, member in sorted(disagreements, key=lambda d: (-d[0], d[1])):
+        out.append(row(times[-1], "fidelity_summary", run_id, {**app, key: member}, "disagreements", count,
+                       "evaluations"))
     summary = [
+        ("true_positive", pairs[(True, True)], "client-evaluations"),
+        ("false_positive", pairs[(False, True)], "client-evaluations"),
+        ("false_negative", pairs[(True, False)], "client-evaluations"),
+        ("true_negative", pairs[(False, False)], "client-evaluations"),
         ("mean_overlap", sum(overlaps) / len(overlaps), "clients"),
         ("precision", sum(overlaps) / approx_size if approx_size else 0, "ratio"),
         ("recall", sum(overlaps) / exact_size if exact_size else 0, "ratio"),
@@ -85,10 +99,10 @@ def derive(query_rows, signal, query, key):
         ("intruder_slots", intruders, "client-evaluations"),
         ("entries", found["episodes"], "episodes"),
         ("missed_entries", found["missed"], "episodes"),
-        ("breaks", found["breaks"], "breaks"),
+        ("gaps", found["gaps"], "gaps"),
         ("false_member_spans", found["false_members"], "spans"),
     ]
     if found["delays"]:
-        summary.append(("mean_onset_delay", sum(found["delays"]) / len(found["delays"]), "evaluations"))
+        summary.append(("mean_onset_delay", mean(found["delays"]), "evaluations"))
     out += [row(times[-1], "fidelity_summary", run_id, app, metric, value, unit) for metric, value, unit in summary]
     return out
