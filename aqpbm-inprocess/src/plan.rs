@@ -31,12 +31,32 @@ impl Arm {
 pub fn workload(spec: &Spec, query: &QuerySpec, arm: &Arm) -> Result<PlanningWorkload> {
     let requirements = match arm.max_error {
         None => json!({}),
-        Some(max_error) => json!({"accuracy": {
-            "max_error": max_error,
-            "failure_probability": arm.failure_probability,
-        }}),
+        Some(max_error) => {
+            let mut accuracy = json!({
+                "max_error": max_error,
+                "failure_probability": arm.failure_probability,
+            });
+            if let Some(metric) = &query.accuracy_metric {
+                accuracy["accuracy_metric"] = json!(metric);
+            }
+            json!({"accuracy": accuracy})
+        }
     };
-    let rows_per_second = 1000.0 / spec.sample_interval_ms as f64;
+    let rows_per_second: f64 = spec.metrics.iter().map(|m| m.rows_per_second()).sum();
+    let mut sources = serde_json::Map::new();
+    for metric in &spec.metrics {
+        let mut source = json!({
+            "series_count": metric.series_count(),
+            "sample_interval": metric.planned_sample_interval_ms(),
+        });
+        if let Some(distinct) = metric.max_distinct_per_evaluation {
+            source["max_distinct_per_evaluation"] = json!(distinct);
+        }
+        if metric.non_negative {
+            source["values_non_negative"] = json!(true);
+        }
+        sources.insert(metric.name.clone(), source);
+    }
     let document = json!({
         "query_workload": {
             "language": "promql",
@@ -49,11 +69,7 @@ pub fn workload(spec: &Spec, query: &QuerySpec, arm: &Arm) -> Result<PlanningWor
         },
         "data_workload": {
             "arrival": {"ingesting": {"rows_per_second": rows_per_second}},
-            "sources": {spec.metric.clone(): {
-                "series_count": 1,
-                "sample_interval": spec.sample_interval_ms,
-                "max_distinct_per_evaluation": spec.max_distinct_per_evaluation,
-            }},
+            "sources": sources,
         },
     });
     serde_json::from_value(document).context("building the planning workload")

@@ -41,7 +41,7 @@
               "method": "GET",
               "data": ""
             },
-            "root_selector": "",
+            "root_selector": "$[use_case in [\"ddos_syn_flood\", \"canary_release\"]]",
             "columns": [
               {
                 "selector": "run_id",
@@ -53,8 +53,8 @@
         }
       },
       {
-        "name": "query",
-        "label": "query",
+        "name": "signal",
+        "label": "signal",
         "type": "query",
         "datasource": {
           "type": "yesoreyeram-infinity-datasource",
@@ -83,8 +83,8 @@
             "root_selector": "$[metric=\"episodes\"].labels",
             "columns": [
               {
-                "selector": "query",
-                "text": "query",
+                "selector": "signal",
+                "text": "signal",
                 "type": "string"
               }
             ]
@@ -130,7 +130,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[labels.query=\"${query}\"].{\"time\": time, \"text\": metric & \": \" & $string(value) & \" evaluations\"}",
+          "root_selector": "$[labels.signal=\"${signal}\"].{\"time\": time, \"text\": metric & \": \" & $string(value) & \" evaluations\"}",
           "columns": [
             {
               "selector": "time",
@@ -180,7 +180,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "",
+          "root_selector": "$[use_case in [\"ddos_syn_flood\", \"canary_release\"]]",
           "columns": [
             {
               "selector": "run_id",
@@ -215,6 +215,11 @@
             {
               "selector": "details.arm.ignore_guarantees",
               "text": "ignore_guarantees",
+              "type": "string"
+            },
+            {
+              "selector": "details.planner_rev",
+              "text": "planner_rev",
               "type": "string"
             }
           ]
@@ -265,7 +270,8 @@
               "ignore_guarantees": 3,
               "use_case": 4,
               "start": 5,
-              "end": 6
+              "end": 6,
+              "planner_rev": 7
             },
             "excludeByName": {},
             "renameByName": {}
@@ -279,7 +285,7 @@
       "gridPos": {
         "x": 0,
         "y": 1,
-        "w": 14,
+        "w": 12,
         "h": 7
       },
       "datasource": {
@@ -289,7 +295,7 @@
     },
     {
       "type": "table",
-      "title": "Plans of ${query} in ${run}",
+      "title": "Plans in ${run}",
       "targets": [
         {
           "refId": "A",
@@ -306,16 +312,16 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[run_id=\"${run}\"].{\"approx plan\": $lookup(details.plans, \"${query}\"), \"why no approx plan\": $lookup(details.unsupported, \"${query}\"), \"exact plan\": $lookup(details.exact_plans, \"${query}\"), \"planner rev\": $substring(details.planner_rev, 0, 8)}",
+          "root_selector": "( $e := $[run_id=\"${run}\"]; $append($e.details.plans ~> $each(function($v, $k) { {\"query\": $k, \"approx plan\": $v, \"exact plan\": $lookup($e.details.exact_plans, $k), \"promql\": $lookup($e.details.promql, $k)} }), $e.details.unsupported ~> $each(function($v, $k) { {\"query\": $k, \"why no approx plan\": $v, \"promql\": $lookup($e.details.promql, $k)} })) )",
           "columns": [
             {
-              "selector": "approx plan",
-              "text": "approx plan",
+              "selector": "query",
+              "text": "query",
               "type": "string"
             },
             {
-              "selector": "why no approx plan",
-              "text": "why no approx plan",
+              "selector": "approx plan",
+              "text": "approx plan",
               "type": "string"
             },
             {
@@ -324,8 +330,13 @@
               "type": "string"
             },
             {
-              "selector": "planner rev",
-              "text": "planner rev",
+              "selector": "why no approx plan",
+              "text": "why no approx plan",
+              "type": "string"
+            },
+            {
+              "selector": "promql",
+              "text": "promql",
               "type": "string"
             }
           ]
@@ -333,13 +344,17 @@
       ],
       "transformations": [
         {
-          "id": "reduce",
+          "id": "organize",
           "options": {
-            "reducers": [
-              "lastNotNull"
-            ],
-            "mode": "seriesToRows",
-            "includeTimeField": false
+            "indexByName": {
+              "query": 0,
+              "approx plan": 1,
+              "exact plan": 2,
+              "why no approx plan": 3,
+              "promql": 4
+            },
+            "excludeByName": {},
+            "renameByName": {}
           }
         }
       ],
@@ -350,40 +365,18 @@
               "type": "auto",
               "wrapText": true
             }
-          },
-          "mappings": [
-            {
-              "type": "special",
-              "options": {
-                "match": "nan",
-                "result": {
-                  "text": "none",
-                  "index": 0
-                }
-              }
-            },
-            {
-              "type": "special",
-              "options": {
-                "match": "null",
-                "result": {
-                  "text": "none",
-                  "index": 1
-                }
-              }
-            }
-          ]
+          }
         },
         "overrides": []
       },
       "options": {
-        "showHeader": false
+        "showHeader": true
       },
       "id": 3,
       "gridPos": {
-        "x": 14,
+        "x": 12,
         "y": 1,
-        "w": 10,
+        "w": 12,
         "h": 7
       },
       "datasource": {
@@ -406,7 +399,304 @@
     },
     {
       "type": "timeseries",
-      "title": "${query}: exact vs approx",
+      "title": "Queries behind ${signal}: exact vs approx",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "timeseries",
+          "url": "http://localhost:8000/runs/${run}/query_result.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.signal=\"${signal}\" and labels.arm=\"exact\"].{\"time\": time, \"value\": value, \"query\": labels.query}; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "exact",
+              "type": "number"
+            },
+            {
+              "selector": "query",
+              "text": "query",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "timeseries",
+          "url": "http://localhost:8000/runs/${run}/query_result.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.signal=\"${signal}\" and labels.arm=\"approx\"].{\"time\": time, \"value\": value, \"query\": labels.query}; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "approx",
+              "type": "number"
+            },
+            {
+              "selector": "query",
+              "text": "query",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/app_state.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.signal=\"${signal}\" and metric=\"threshold\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "threshold",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "displayName": "${__field.labels.query} ${__field.name}"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "threshold"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "threshold"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "id": 5,
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 24,
+        "h": 9
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Relative error of approx",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "timeseries",
+          "url": "http://localhost:8000/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.signal=\"${signal}\" and metric=\"relative_error\"].{\"time\": time, \"value\": value, \"query\": labels.query}; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "relative_error",
+              "type": "number"
+            },
+            {
+              "selector": "query",
+              "text": "query",
+              "type": "string"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "unit": "percentunit",
+          "displayName": "${__field.labels.query}"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "id": 6,
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 24,
+        "h": 6
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "id": 7,
+      "type": "row",
+      "title": "Application: alert",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Compared ratio (comparison alerts only)",
       "targets": [
         {
           "refId": "A",
@@ -418,12 +708,12 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "http://localhost:8000/runs/${run}/query_result.json",
+          "url": "http://localhost:8000/runs/${run}/app_state.json",
           "url_options": {
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[labels.query=\"${query}\" and labels.arm=\"exact\"]",
+          "root_selector": "( $r := $[labels.signal=\"${signal}\" and metric=\"ratio\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "time",
@@ -447,12 +737,12 @@
           "source": "url",
           "parser": "backend",
           "format": "table",
-          "url": "http://localhost:8000/runs/${run}/query_result.json",
+          "url": "http://localhost:8000/runs/${run}/app_state.json",
           "url_options": {
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[labels.query=\"${query}\" and labels.arm=\"approx\"]",
+          "root_selector": "( $r := $[labels.signal=\"${signal}\" and metric=\"ratio\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "time",
@@ -481,7 +771,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[labels.query=\"${query}\" and metric=\"threshold\"]",
+          "root_selector": "( $r := $[labels.signal=\"${signal}\" and metric=\"tolerance\"]; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "time",
@@ -490,7 +780,7 @@
             },
             {
               "selector": "value",
-              "text": "threshold",
+              "text": "tolerance",
               "type": "number"
             }
           ]
@@ -506,8 +796,8 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "exact"
+              "id": "byFrameRefID",
+              "options": "A"
             },
             "properties": [
               {
@@ -525,8 +815,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "approx"
+              "id": "byFrameRefID",
+              "options": "B"
             },
             "properties": [
               {
@@ -535,13 +825,17 @@
                   "mode": "fixed",
                   "fixedColor": "orange"
                 }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "threshold"
+              "id": "byFrameRefID",
+              "options": "C"
             },
             "properties": [
               {
@@ -590,12 +884,12 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "threshold"
+              "options": "tolerance"
             },
             "properties": [
               {
                 "id": "displayName",
-                "value": "threshold"
+                "value": "tolerance"
               }
             ]
           }
@@ -612,101 +906,21 @@
           "sort": "none"
         }
       },
-      "id": 5,
+      "id": 8,
       "gridPos": {
         "x": 0,
-        "y": 9,
+        "y": 25,
         "w": 24,
-        "h": 9
+        "h": 7
       },
       "datasource": {
         "type": "yesoreyeram-infinity-datasource",
         "uid": "approx-rows"
       }
-    },
-    {
-      "type": "timeseries",
-      "title": "${query}: relative error of approx",
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "yesoreyeram-infinity-datasource",
-            "uid": "approx-rows"
-          },
-          "type": "json",
-          "source": "url",
-          "parser": "backend",
-          "format": "table",
-          "url": "http://localhost:8000/runs/${run}/low_level.json",
-          "url_options": {
-            "method": "GET",
-            "data": ""
-          },
-          "root_selector": "$[labels.query=\"${query}\" and metric=\"relative_error\"]",
-          "columns": [
-            {
-              "selector": "time",
-              "text": "time",
-              "type": "timestamp_epoch"
-            },
-            {
-              "selector": "value",
-              "text": "relative_error",
-              "type": "number"
-            }
-          ]
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "custom": {
-            "lineWidth": 1,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "showLegend": false,
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "id": 6,
-      "gridPos": {
-        "x": 0,
-        "y": 18,
-        "w": 24,
-        "h": 5
-      },
-      "datasource": {
-        "type": "yesoreyeram-infinity-datasource",
-        "uid": "approx-rows"
-      }
-    },
-    {
-      "id": 7,
-      "type": "row",
-      "title": "Application: threshold alert",
-      "collapsed": false,
-      "gridPos": {
-        "x": 0,
-        "y": 23,
-        "w": 24,
-        "h": 1
-      },
-      "panels": []
     },
     {
       "type": "state-timeline",
-      "title": "${query}: alert state",
+      "title": "${signal}: alert state",
       "targets": [
         {
           "refId": "A",
@@ -723,7 +937,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[labels.query=\"${query}\" and metric=\"alert\" and labels.arm=\"exact\"]",
+          "root_selector": "( $r := $[labels.signal=\"${signal}\" and metric=\"alert\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "time",
@@ -752,7 +966,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[labels.query=\"${query}\" and metric=\"alert\" and labels.arm=\"approx\"]",
+          "root_selector": "( $r := $[labels.signal=\"${signal}\" and metric=\"alert\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "time",
@@ -827,19 +1041,19 @@
         "showValue": "never",
         "rowHeight": 0.8,
         "legend": {
-          "showLegend": true,
           "displayMode": "list",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
           "sort": "none"
         }
       },
-      "id": 8,
+      "id": 9,
       "gridPos": {
         "x": 0,
-        "y": 24,
+        "y": 32,
         "w": 24,
         "h": 6
       },
@@ -849,13 +1063,13 @@
       }
     },
     {
-      "id": 9,
+      "id": 10,
       "type": "row",
       "title": "Fidelity",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 30,
+        "y": 38,
         "w": 24,
         "h": 1
       },
@@ -880,7 +1094,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[labels.query=\"${query}\"]{metric: value}",
+          "root_selector": "$[labels.signal=\"${signal}\"]{metric: value}",
           "columns": [
             {
               "selector": "true_positive",
@@ -943,10 +1157,10 @@
         "orientation": "horizontal",
         "justifyMode": "auto"
       },
-      "id": 10,
+      "id": 11,
       "gridPos": {
         "x": 0,
-        "y": 31,
+        "y": 39,
         "w": 6,
         "h": 8
       },
@@ -974,7 +1188,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[labels.query=\"${query}\"]{metric: value}",
+          "root_selector": "$[labels.signal=\"${signal}\"]{metric: value}",
           "columns": [
             {
               "selector": "episodes",
@@ -1060,10 +1274,10 @@
         "orientation": "horizontal",
         "justifyMode": "auto"
       },
-      "id": 11,
+      "id": 12,
       "gridPos": {
         "x": 6,
-        "y": 31,
+        "y": 39,
         "w": 6,
         "h": 8
       },
@@ -1091,7 +1305,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $s := $[labels.query=\"${query}\"]{metric: value}; [{\"exact\": \"firing\", \"approx firing\": $s.true_positive, \"approx ok\": $s.false_negative}, {\"exact\": \"ok\", \"approx firing\": $s.false_positive, \"approx ok\": $s.true_negative}] )",
+          "root_selector": "( $s := $[labels.signal=\"${signal}\"]{metric: value}; [{\"exact\": \"firing\", \"approx firing\": $s.true_positive, \"approx ok\": $s.false_negative}, {\"exact\": \"ok\", \"approx firing\": $s.false_positive, \"approx ok\": $s.true_negative}] )",
           "columns": [
             {
               "selector": "exact",
@@ -1136,10 +1350,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 12,
+      "id": 13,
       "gridPos": {
         "x": 12,
-        "y": 31,
+        "y": 39,
         "w": 6,
         "h": 8
       },
@@ -1167,7 +1381,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "$[labels.query=\"${query}\"]",
+          "root_selector": "( $r := $[labels.signal=\"${signal}\"]; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "time",
@@ -1212,10 +1426,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 13,
+      "id": 14,
       "gridPos": {
         "x": 18,
-        "y": 31,
+        "y": 39,
         "w": 6,
         "h": 8
       },

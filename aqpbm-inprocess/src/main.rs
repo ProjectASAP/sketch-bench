@@ -62,9 +62,11 @@ async fn main() -> Result<()> {
     };
     let generated = Instant::now();
     let series = generate(&spec)?;
+    let samples: usize = series.iter().map(|s| s.points.len()).sum();
     eprintln!(
-        "generated {} samples in {:.1} s",
-        series.points.len(),
+        "generated {} samples in {} series in {:.1} s",
+        samples,
+        series.len(),
         generated.elapsed().as_secs_f64()
     );
     let mut queries = Vec::new();
@@ -133,8 +135,8 @@ async fn main() -> Result<()> {
     let document = json!({
         "use_case": spec.use_case,
         "arm": arm.describe(),
-        "planner_rev": "bb981e9bc7c762dadc1998b89d9767d927474a26",
-        "samples": series.points.len(),
+        "planner_rev": "41c515465646773ce04065a652f88f52bd864ce5",
+        "samples": samples,
         "queries": queries,
     });
     std::fs::write(&args.out, serde_json::to_string(&document)?)

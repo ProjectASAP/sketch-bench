@@ -61,38 +61,49 @@ def derive(query_rows, thresholds):
     return out
 
 
+def relative_errors(run_id, labels, times, exact, approx):
+    return [row(t, "low_level", run_id, labels, "relative_error", abs(a - e) / abs(e), "ratio")
+            for t, e, a in zip(times, exact, approx) if e != 0]
+
+
 def derive_query(run_id, labels, unit, times, exact, approx, threshold):
     app = {**labels, "app": APP}
-    exact_on = [e > threshold for e in exact]
-    approx_on = [a > threshold for a in approx]
-    out = []
-    for t, e, a, e_on, a_on in zip(times, exact, approx, exact_on, approx_on):
-        if e != 0:
-            out.append(row(t, "low_level", run_id, labels, "relative_error", abs(a - e) / abs(e), "ratio"))
-        out.append(row(t, "app_state", run_id, {**app, "arm": "exact"}, "alert", FIRING if e_on else OK, "state"))
-        out.append(row(t, "app_state", run_id, {**app, "arm": "approx"}, "alert", FIRING if a_on else OK, "state"))
-        out.append(row(t, "app_state", run_id, app, "threshold", threshold, unit))
+    out = relative_errors(run_id, labels, times, exact, approx)
+    out += [row(t, "app_state", run_id, app, "threshold", threshold, unit) for t in times]
+    return out + alert_fidelity(run_id, app, times, [e > threshold for e in exact], [a > threshold for a in approx])
 
-    def event(i, metric, length):
-        out.append(row(times[i], "fidelity_event", run_id, app, metric, length, "evaluations"))
 
-    delays, breaks, missed = [], 0, 0
+def episodes_of(exact_on, approx_on):
+    events, delays, breaks, missed = [], [], 0, 0
     episodes = spans(exact_on, True)
     for start, end in episodes:
         hits = [i for i in range(start, end) if approx_on[i]]
         if not hits:
             missed += 1
-            event(start, "missed_episode", end - start)
+            events.append((start, "missed_episode", end - start))
             continue
         onset = hits[0]
         delays.append(onset - start)
         if onset > start:
-            event(start, "late_onset", onset - start)
+            events.append((start, "late_onset", onset - start))
         for gap_start, gap_end in spans(approx_on[onset:end], False):
             breaks += 1
-            event(onset + gap_start, "break", gap_end - gap_start)
+            events.append((onset + gap_start, "break", gap_end - gap_start))
     for start, end in spans([a and not e for e, a in zip(exact_on, approx_on)], True):
-        event(start, "false_positive", end - start)
+        events.append((start, "false_positive", end - start))
+    return {"events": events, "delays": delays, "breaks": breaks, "missed": missed, "episodes": len(episodes)}
+
+
+def alert_fidelity(run_id, app, times, exact_on, approx_on):
+    out = []
+    for t, e_on, a_on in zip(times, exact_on, approx_on):
+        out.append(row(t, "app_state", run_id, {**app, "arm": "exact"}, "alert", FIRING if e_on else OK, "state"))
+        out.append(row(t, "app_state", run_id, {**app, "arm": "approx"}, "alert", FIRING if a_on else OK, "state"))
+
+    found = episodes_of(exact_on, approx_on)
+    for i, metric, length in found["events"]:
+        out.append(row(times[i], "fidelity_event", run_id, app, metric, length, "evaluations"))
+    delays, breaks, missed, episodes = found["delays"], found["breaks"], found["missed"], found["episodes"]
 
     pairs = list(zip(exact_on, approx_on))
     tp = pairs.count((True, True))
@@ -102,7 +113,7 @@ def derive_query(run_id, labels, unit, times, exact, approx, threshold):
         ("false_positive", pairs.count((False, True)), "evaluations"),
         ("false_negative", fn, "evaluations"),
         ("true_negative", pairs.count((False, False)), "evaluations"),
-        ("episodes", len(episodes), "episodes"),
+        ("episodes", episodes, "episodes"),
         ("missed_episodes", missed, "episodes"),
         ("breaks", breaks, "breaks"),
     ]

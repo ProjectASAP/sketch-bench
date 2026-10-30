@@ -14,7 +14,7 @@ use asap_types::ir::schema::{DataType, FieldDataType, Schema, PROMQL_SERIES_IDEN
 use asap_types::ir::NonASAPOp;
 use futures::{executor::block_on, StreamExt};
 
-use crate::data::Series;
+use crate::data::{between, up_to, Series, Slice};
 
 pub type Answer = (BTreeMap<String, String>, f64);
 
@@ -81,11 +81,7 @@ fn row(
         .collect()
 }
 
-fn time_series_store(
-    dag: &PhysicalASAPDAG,
-    series: &Series,
-    points: &[(i64, f64)],
-) -> Result<InMemoryDataStore> {
+fn time_series_store(dag: &PhysicalASAPDAG, slices: &[Slice]) -> Result<InMemoryDataStore> {
     let mut schemas: BTreeMap<&str, Schema> = BTreeMap::new();
     for node in &dag.nodes {
         let PhysicalASAPOperatorPayload::NonASAP(NonASAPOp::Scan {
@@ -103,18 +99,21 @@ fn time_series_store(
             }
         }
     }
-    let identity = serde_json::to_string(&series.labels)?;
     let mut store = InMemoryDataStore::default();
     for (metric, schema) in schemas {
         let schema = Arc::new(schema);
-        let rows = if series.labels.get("__name__").map(String::as_str) == Some(metric) {
-            points
-                .iter()
-                .map(|&p| row(&schema, &series.labels, &identity, p))
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let mut rows = Vec::new();
+        for (series, points) in slices {
+            if series.labels.get("__name__").map(String::as_str) != Some(metric) {
+                continue;
+            }
+            let identity = serde_json::to_string(&series.labels)?;
+            rows.extend(
+                points
+                    .iter()
+                    .map(|&p| row(&schema, &series.labels, &identity, p)),
+            );
+        }
         let batch = Batch::try_new(schema.clone(), rows).map_err(|e| anyhow!("{e}"))?;
         store = store
             .with_raw_data(
@@ -132,8 +131,7 @@ fn time_series_store(
 fn execute(
     dag: &PhysicalASAPDAG,
     views: BTreeMap<u64, Batch>,
-    series: &Series,
-    points: &[(i64, f64)],
+    slices: &[Slice],
     ids: &[u64],
     scope: Scope,
 ) -> Result<Vec<Vec<Batch>>> {
@@ -149,7 +147,7 @@ fn execute(
         bail!("a bound state is not one of the plan's materialized views");
     }
     let compiled = compile(dag, &read, ids).map_err(|e| anyhow!("compiling: {e}"))?;
-    let mut store = time_series_store(dag, series, points)?;
+    let mut store = time_series_store(dag, slices)?;
     for (id, batch) in views {
         store = store
             .with_materialized_view(id as _, vec![batch])
@@ -236,7 +234,7 @@ impl Driver {
         plan.dag.roots.iter().map(|&root| root as u64).collect()
     }
 
-    pub fn evaluate(&mut self, series: &Series, evaluation_ms: i64) -> Result<Evaluation> {
+    pub fn evaluate(&mut self, series: &[Series], evaluation_ms: i64) -> Result<Evaluation> {
         let dag = &self.plan.dag;
         let mut views_refreshed = 0;
         let mut built: BTreeMap<u64, (Batch, (i64, i64))> = BTreeMap::new();
@@ -279,9 +277,9 @@ impl Driver {
                         evaluation_time_ms: evaluation_ms,
                     },
                 };
-                let points = series.between(span.0, span.1);
+                let slices = between(series, span.0, span.1);
                 let batches =
-                    execute(dag, sources, series, points, &[view.node_id as u64], scope)?.remove(0);
+                    execute(dag, sources, &slices, &[view.node_id as u64], scope)?.remove(0);
                 let schema = batches
                     .first()
                     .map(|b| b.schema().clone())
@@ -321,22 +319,14 @@ impl Driver {
             }
         }
         let raw = match self.raw_lookback_ms {
-            Some(lookback) => series.between(evaluation_ms - lookback as i64, evaluation_ms),
-            None => series.up_to(evaluation_ms),
+            Some(lookback) => between(series, evaluation_ms - lookback as i64, evaluation_ms),
+            None => up_to(series, evaluation_ms),
         };
         let query = Scope::Query {
             evaluation_time_ms: evaluation_ms,
         };
         let answers_now = answers(
-            &execute(
-                dag,
-                inputs,
-                series,
-                raw,
-                &Self::roots(&self.plan),
-                query.clone(),
-            )?
-            .remove(0),
+            &execute(dag, inputs, &raw, &Self::roots(&self.plan), query.clone())?.remove(0),
         )?;
         self.store
             .retain(|_, state| state.start_ms >= evaluation_ms - state.retention_ms as i64);
@@ -350,15 +340,14 @@ impl Driver {
                     .try_fold(0u64, |a, b| b.map(|b| a.max(b)));
                 let raw = match lookback {
                     Some(lookback) => {
-                        series.between(evaluation_ms - lookback as i64, evaluation_ms)
+                        between(series, evaluation_ms - lookback as i64, evaluation_ms)
                     }
-                    None => series.up_to(evaluation_ms),
+                    None => up_to(series, evaluation_ms),
                 };
                 let out = execute(
                     &reference.dag,
                     BTreeMap::new(),
-                    series,
-                    raw,
+                    &raw,
                     &Self::roots(reference),
                     query,
                 )?;

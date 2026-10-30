@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use aqpbm_inprocess::data::generate;
 use aqpbm_inprocess::plan::{plan, Arm};
@@ -8,16 +9,22 @@ use aqpbm_inprocess::spec::Spec;
 fn small_spec() -> Spec {
     let spec: Spec = serde_json::from_value(serde_json::json!({
         "use_case": "test",
-        "metric": "src_ip",
-        "labels": {"vm": "instance1"},
         "start_ms": 1767225600000i64,
         "duration_ms": 60000,
-        "sample_interval_ms": 10,
-        "max_distinct_per_evaluation": 1000,
         "seed": 1,
-        "baseline": {"kind": "zipf", "skewness": 1.1, "population_size": 200, "seed": 2},
-        "attack": {"kind": "uniform", "lower_bound": 1000000, "upper_bound": 4294967296u64, "seed": 3},
-        "attacks": [{"start_offset_ms": 20000, "end_offset_ms": 40000, "ramp_ms": 2000, "attack_share": 0.5}],
+        "metrics": [{
+            "name": "src_ip",
+            "sample_interval_ms": 10,
+            "max_distinct_per_evaluation": 1000,
+            "floor": true,
+            "series": [{
+                "labels": {"vm": "instance1"},
+                "baseline": {"kind": "zipf", "skewness": 1.1, "population_size": 200, "seed": 2},
+                "phases": [{"start_offset_ms": 20000, "end_offset_ms": 40000, "ramp_ms": 2000,
+                    "change": {"mix": {"share": 0.5, "distribution":
+                        {"kind": "uniform", "lower_bound": 1000000, "upper_bound": 4294967296u64, "seed": 3}}}}]
+            }]
+        }],
         "queries": [
             {"id": "distinct_10s", "promql": "distinct_over_time(src_ip{vm=\"instance1\"}[10s])",
              "window_ms": 10000, "interval_ms": 5000, "threshold": 300, "unit": "addresses"}
@@ -52,7 +59,7 @@ async fn exact_distinct_count_equals_the_distinct_values_in_each_window() {
     for t in spec.evaluation_times(&spec.queries[0]) {
         let answers = driver.evaluate(&series, t).unwrap().answers;
         assert_eq!(answers.len(), 1);
-        let distinct: BTreeSet<u64> = series
+        let distinct: BTreeSet<u64> = series[0]
             .between(t - 10000, t)
             .iter()
             .map(|&(_, v)| v as u64)
@@ -85,4 +92,20 @@ async fn panes_built_at_ingestion_answer_as_the_query_time_reference() {
         );
     }
     assert!(refreshed > 0);
+}
+
+#[test]
+fn the_use_case_1_spec_draws_the_samples_it_drew_before_specs_had_many_series() {
+    let spec = Spec::read(Path::new("workloads/uc1_syn_flood.json")).unwrap();
+    let series = generate(&spec).unwrap();
+    assert_eq!(series.len(), 1);
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &(t, v) in &series[0].points {
+        for byte in t.to_le_bytes().into_iter().chain(v.to_bits().to_le_bytes()) {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(0x100_0000_01b3);
+        }
+    }
+    assert_eq!(series[0].points.len(), 1_800_000);
+    assert_eq!(hash, 0x2b28_6d1f_7dab_be70);
 }

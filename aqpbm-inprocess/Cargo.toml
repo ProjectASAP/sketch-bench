@@ -6,9 +6,9 @@ license.workspace = true
 description = "Runs recurring queries through ASAPPlanner's planner and executor in process, over generated samples, at every evaluation time."
 
 [dependencies]
-asap-planner = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "bb981e9bc7c762dadc1998b89d9767d927474a26", default-features = false, features = ["promql", "test-support"] }
-asap-executor = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "bb981e9bc7c762dadc1998b89d9767d927474a26" }
-asap-types = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "bb981e9bc7c762dadc1998b89d9767d927474a26" }
+asap-planner = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "41c515465646773ce04065a652f88f52bd864ce5", default-features = false, features = ["promql", "test-support"] }
+asap-executor = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "41c515465646773ce04065a652f88f52bd864ce5" }
+asap-types = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "41c515465646773ce04065a652f88f52bd864ce5" }
 aqpbm-datagen.workspace = true
 anyhow.workspace = true
 clap.workspace = true

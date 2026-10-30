@@ -9,26 +9,69 @@ use serde::Deserialize;
 #[serde(deny_unknown_fields)]
 pub struct Spec {
     pub use_case: String,
-    pub metric: String,
-    pub labels: BTreeMap<String, String>,
     pub start_ms: i64,
     pub duration_ms: i64,
-    pub sample_interval_ms: i64,
-    pub max_distinct_per_evaluation: u64,
     pub seed: u64,
-    pub baseline: DataDistribution,
-    pub attack: DataDistribution,
-    pub attacks: Vec<Attack>,
+    pub metrics: Vec<MetricSpec>,
     pub queries: Vec<QuerySpec>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Attack {
+pub struct MetricSpec {
+    pub name: String,
+    pub sample_interval_ms: i64,
+    #[serde(default)]
+    pub max_distinct_per_evaluation: Option<u64>,
+    #[serde(default)]
+    pub floor: bool,
+    #[serde(default)]
+    pub non_negative: bool,
+    #[serde(default)]
+    pub label_from_value: Option<String>,
+    #[serde(default)]
+    pub planned_series_count: Option<u64>,
+    pub series: Vec<SeriesGroup>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SeriesGroup {
+    #[serde(default = "one")]
+    pub count: usize,
+    #[serde(default)]
+    pub sample_interval_ms: Option<i64>,
+    pub labels: BTreeMap<String, String>,
+    pub baseline: DataDistribution,
+    #[serde(default)]
+    pub phases: Vec<Phase>,
+}
+
+fn one() -> usize {
+    1
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Phase {
     pub start_offset_ms: i64,
     pub end_offset_ms: i64,
     pub ramp_ms: i64,
-    pub attack_share: f64,
+    #[serde(default)]
+    pub stagger_ms: i64,
+    pub change: Change,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub enum Change {
+    Mix {
+        share: f64,
+        distribution: DataDistribution,
+    },
+    Scale {
+        factor: f64,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -38,8 +81,42 @@ pub struct QuerySpec {
     pub promql: String,
     pub window_ms: i64,
     pub interval_ms: i64,
-    pub threshold: f64,
+    #[serde(default)]
+    pub threshold: Option<f64>,
     pub unit: String,
+    #[serde(default)]
+    pub accuracy_metric: Option<String>,
+}
+
+impl MetricSpec {
+    pub fn series_count(&self) -> u64 {
+        self.planned_series_count
+            .unwrap_or_else(|| self.series.iter().map(|g| g.count as u64).sum())
+    }
+
+    pub fn planned_sample_interval_ms(&self) -> i64 {
+        match self.label_from_value {
+            Some(_) => self.sample_interval_ms * self.series_count() as i64,
+            None => self.sample_interval_ms,
+        }
+    }
+
+    pub fn sample_interval_of(&self, group: &SeriesGroup) -> i64 {
+        group.sample_interval_ms.unwrap_or(self.sample_interval_ms)
+    }
+
+    pub fn rows_per_second(&self) -> f64 {
+        self.series
+            .iter()
+            .map(|g| {
+                let streams = match self.label_from_value {
+                    Some(_) => 1,
+                    None => g.count,
+                };
+                streams as f64 * 1000.0 / self.sample_interval_of(g) as f64
+            })
+            .sum()
+    }
 }
 
 impl Spec {
@@ -53,15 +130,38 @@ impl Spec {
     }
 
     pub fn check(&self) -> Result<()> {
-        if self.duration_ms <= 0 || self.sample_interval_ms <= 0 {
-            bail!("duration_ms and sample_interval_ms must be positive");
+        if self.duration_ms <= 0 {
+            bail!("duration_ms must be positive");
         }
-        for attack in &self.attacks {
-            if !(0.0..=1.0).contains(&attack.attack_share)
-                || attack.start_offset_ms >= attack.end_offset_ms
-                || attack.ramp_ms < 0
+        for metric in &self.metrics {
+            if metric.sample_interval_ms <= 0
+                || metric
+                    .series
+                    .iter()
+                    .any(|g| metric.sample_interval_of(g) <= 0)
             {
-                bail!("attack {attack:?} is not a span with a share in [0, 1]");
+                bail!("metric {} needs a positive sample_interval_ms", metric.name);
+            }
+            if metric.label_from_value.is_some() && metric.planned_series_count.is_none() {
+                bail!(
+                    "metric {} draws its series from values, so it needs planned_series_count",
+                    metric.name
+                );
+            }
+            for phase in metric.series.iter().flat_map(|g| &g.phases) {
+                let share = match phase.change {
+                    Change::Mix { share, .. } => share,
+                    Change::Scale { .. } => 0.0,
+                };
+                if !(0.0..=1.0).contains(&share)
+                    || phase.start_offset_ms >= phase.end_offset_ms
+                    || phase.ramp_ms < 0
+                {
+                    bail!(
+                        "phase {phase:?} of {} is not a span with a share in [0, 1]",
+                        metric.name
+                    );
+                }
             }
         }
         for query in &self.queries {
