@@ -2,11 +2,15 @@
 
 ## 1. DDoS detection
 
-Attackers can exhaust a server's bandwidth or resources with a TCP SYN flood sent from a botnet.
-Victims detect an ongoing attack by monitoring the volume and entropy of source IPs sending to a single destination.
-For example, operators track these indicators for a virtual machine with alerting rules evaluated every 5 seconds, as below.
-Because the best window size is unknown, the rules query several windows (e.g., 10 s and 5 s).
-A target server may receive millions of packets per second, so a window holds 100K to over 1M samples.
+A TCP SYN flood is a DDoS attack.
+A botnet sends many SYN packets to one server, from many source IPs.
+The server runs out of bandwidth or resources.
+During the attack, the server sees many more distinct source IPs, and the entropy of the source IPs changes.
+So operators watch these two numbers for each server.
+They use alerting rules that are evaluated every 5 seconds, as below.
+The best window size is unknown, so the rules query several windows, 10 s and 5 s.
+A target server may receive millions of packets per second.
+So one window holds 100K to over 1M samples.
 Source: PromSketch (Zhu et al., PVLDB 18(8), 2025), §2.2. <https://www.vldb.org/pvldb/vol18/p2348-zhu.pdf>
 
 ```yaml
@@ -48,11 +52,14 @@ a: onset delay   b: gap   c: end delay   d: FP outside the attack
 
 ## 2. Cloud resource scaling
 
-Cloud-native platforms scale resources, such as pods, up and down to reduce cost.
-They decide from aggregate statistics over time windows, such as averages and quantiles of CPU, memory and pod counts.
-For example, recording rules compute each container's 0.95-quantile (p95) of memory and CPU usage, and the average pod count, over the past 5 minutes, as below.
-The cloud resource scheduler reads the stored results.
-A standard Google Cloud cluster can have up to 256 pods per node and 100 nodes, so cluster-level monitoring can query 100K or more series.
+A cloud platform scales resources up and down to save cost, for example the number of pods.
+A scheduler decides when to scale.
+It decides from statistics of CPU, memory and pod count over a recent window.
+For example, every minute, recording rules compute each container's p95 CPU and p95 memory over the past 5 minutes, and the average pod count, as below.
+The rules store the results.
+The scheduler reads the stored results and decides whether to scale each container.
+A standard Google Cloud cluster can have up to 256 pods per node and 100 nodes.
+So cluster-level monitoring can query 100K or more series.
 Source: PromSketch, §2.2.
 
 ```yaml
@@ -96,11 +103,13 @@ a: onset delay   b: FP
 
 ## 3. Video experience monitoring
 
-Video providers need to detect issues that degrade viewer experience, to protect ad and subscription revenue.
-Analysts collect a summary of each viewing session and, every minute, compute statistics of video quality over them.
-They monitor these statistics across subpopulations of viewers, such as cities, devices, ISPs and CDNs, and their combinations.
-For example, to track the entropy of bitrate and the L1 norm of the buffering ratio per city, analysts run the query below.
-The L1 norm of the buffering ratio is a common indicator of streaming anomalies.
+A video provider loses ad and subscription revenue when viewers have a bad experience.
+So it watches video quality, for example bitrate and buffering.
+Each viewing session sends a summary.
+Every minute, analysts compute quality statistics over these summaries.
+They compute them for each group of viewers, for example each city, device, ISP or CDN, and their combinations.
+For example, the query below computes the entropy of bitrate and the L1 norm of the buffering ratio for each city.
+A high L1 norm of the buffering ratio is a common sign of a streaming problem.
 Source: Hydra (Manousis et al., PVLDB 15(11), 2022), §2.1. <https://vldb.org/pvldb/vol15/p3249-manousis.pdf>
 
 ```sql
@@ -142,14 +151,16 @@ a: onset delay   b: gap   c: FP
 
 ## 4. Canary release analysis
 
-Before a full rollout, operators send a small share of traffic to a canary of the new version and compare it with the stable version.
-If the canary's tail latency is clearly worse, the new version is rolled back.
+A team releases a new version of a service.
+Before the full rollout, a small share of the traffic goes to the new version, called the canary.
+The rest of the traffic still goes to the old version, called the stable.
+Every minute, an analysis step compares the p99 latency of both versions over the past 5 minutes, as below.
+If the canary is clearly slower, the new version is rolled back.
 Otherwise, the canary is promoted.
-For example, an analysis step compares the p99 latency of both versions over the past 5 minutes, every minute, as below.
 In Flagger's example, the canary starts with 2% of the traffic and gains 2% per minute, up to 50%.
 So early in a rollout, the canary's p99 rests on far fewer samples than the stable version's.
 Flagger usually reads pre-bucketed histograms (`histogram_quantile`).
-We assume raw latency samples, so the quantile must be computed exactly or sketched.
+We assume raw latency samples, so the quantile is computed exactly or with a sketch.
 Source: Flagger documentation, Deployment Strategies. <https://docs.flagger.app/usage/deployment-strategies>
 
 ```promql
@@ -193,8 +204,10 @@ a: gap, which resets the count   b: decision delay of 3 evaluations
 
 ## 5. Rate limiting top clients
 
-An API service limits the clients that send the most requests, to protect itself from overload.
+A few clients can overload an API service by sending too many requests.
+So the service limits the clients that send the most requests.
 Every minute, it finds the top 10 clients by request count over the past 5 minutes, as below.
+Then it caps the requests of these clients.
 Cloudflare's rate limiter counts requests per client IP and handles several billion requests a day.
 In one sample Cloudflare reports, 400 million requests came from 270,000 distinct client IPs.
 Source: Cloudflare blog, "How we built rate limiting capable of scaling to millions of domains", 2017. <https://blog.cloudflare.com/counting-things-a-lot-of-different-things/>
