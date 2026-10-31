@@ -1,0 +1,48 @@
+{
+  "use_case": "k8s_autoscaling",
+  "start_ms": 1767225600000,
+  "duration_ms": 7200000,
+  "seed": 21,
+  "metrics": [
+    {
+      "name": "container_cpu",
+      "sample_interval_ms": 500,
+      "non_negative": true,
+      "series": [
+        {"count": 120, "labels": {"dimension": "used", "container": "steady-{i}"},
+         "baseline": {"kind": "normal", "mean": 0.45, "standard_deviation": 0.08, "seed": 22}},
+        {"count": 40, "labels": {"dimension": "used", "container": "surge-{i}"},
+         "baseline": {"kind": "normal", "mean": 0.45, "standard_deviation": 0.08, "seed": 23},
+         "phases": [{"start_offset_ms": 1800000, "end_offset_ms": 4800000, "ramp_ms": 900000, "stagger_ms": 30000,
+                     "change": {"scale": {"factor": 1.7}}}]},
+        {"count": 20, "labels": {"dimension": "used", "container": "leak-{i}"},
+         "baseline": {"kind": "normal", "mean": 0.45, "standard_deviation": 0.08, "seed": 24}},
+        {"count": 20, "labels": {"dimension": "used", "container": "idle-{i}"},
+         "baseline": {"kind": "normal", "mean": 0.15, "standard_deviation": 0.03, "seed": 25},
+         "phases": [{"start_offset_ms": 3000000, "end_offset_ms": 6000000, "ramp_ms": 600000, "stagger_ms": 30000,
+                     "change": {"scale": {"factor": 2.2}}}]}
+      ]
+    },
+    {
+      "name": "container_memory",
+      "sample_interval_ms": 500,
+      "non_negative": true,
+      "series": [
+        {"count": 120, "labels": {"dimension": "used", "container": "steady-{i}"},
+         "baseline": {"kind": "normal", "mean": 900000000, "standard_deviation": 80000000, "seed": 26}},
+        {"count": 40, "labels": {"dimension": "used", "container": "surge-{i}"},
+         "baseline": {"kind": "normal", "mean": 900000000, "standard_deviation": 80000000, "seed": 27}},
+        {"count": 20, "labels": {"dimension": "used", "container": "leak-{i}"},
+         "baseline": {"kind": "normal", "mean": 900000000, "standard_deviation": 80000000, "seed": 28},
+         "phases": [{"start_offset_ms": 2400000, "end_offset_ms": 7300000, "ramp_ms": 3600000, "stagger_ms": 60000,
+                     "change": {"scale": {"factor": 1.8}}}]},
+        {"count": 20, "labels": {"dimension": "used", "container": "idle-{i}"},
+         "baseline": {"kind": "normal", "mean": 350000000, "standard_deviation": 30000000, "seed": 29}}
+      ]
+    }
+  ],
+  "queries": [
+    {"id": "p95_cpu", "promql": "quantile_over_time(0.95, container_cpu{dimension=\"used\"}[5m])", "window_ms": 300000, "interval_ms": 60000, "unit": "cores", "accuracy_metric": "rank"},
+    {"id": "p95_memory", "promql": "quantile_over_time(0.95, container_memory{dimension=\"used\"}[5m])", "window_ms": 300000, "interval_ms": 60000, "unit": "bytes", "accuracy_metric": "rank"}
+  ]
+}

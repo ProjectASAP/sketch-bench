@@ -1,0 +1,32 @@
+{
+  "use_case": "canary_release",
+  "start_ms": 1767225600000,
+  "duration_ms": 7200000,
+  "seed": 41,
+  "metrics": [
+    {
+      "name": "request_latency",
+      "sample_interval_ms": 5,
+      "non_negative": true,
+      "series": [
+        {
+          "labels": {"version": "stable"},
+          "baseline": {"kind": "pareto", "alpha": 3.0, "scale": 0.05, "seed": 42}
+        },
+        {
+          "sample_interval_ms": 95,
+          "labels": {"version": "canary"},
+          "baseline": {"kind": "pareto", "alpha": 3.0, "scale": 0.05, "seed": 43},
+          "phases": [
+            {"start_offset_ms": 1800000, "end_offset_ms": 3600000, "ramp_ms": 600000, "change": {"scale": {"factor": 1.08}}},
+            {"start_offset_ms": 4200000, "end_offset_ms": 6600000, "ramp_ms": 600000, "change": {"scale": {"factor": 1.25}}}
+          ]
+        }
+      ]
+    }
+  ],
+  "queries": [
+    {"id": "p99_canary", "promql": "quantile_over_time(0.99, request_latency{version=\"canary\"}[5m])", "window_ms": 300000, "interval_ms": 60000, "unit": "s", "accuracy_metric": "rank"},
+    {"id": "p99_stable", "promql": "quantile_over_time(0.99, request_latency{version=\"stable\"}[5m])", "window_ms": 300000, "interval_ms": 60000, "unit": "s", "accuracy_metric": "rank"}
+  ]
+}
