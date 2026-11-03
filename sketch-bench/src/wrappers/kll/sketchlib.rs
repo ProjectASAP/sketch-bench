@@ -12,7 +12,7 @@ use std::rc::Rc;
 
 /// `k` this library cannot hold is an error naming both, not a run at some
 /// other `k` reported as the one asked for.
-fn lib_kll<T>(k: u32) -> Result<asap_sketchlib::KLL<T>, BuildError>
+fn lib_kll<T>(k: u32) -> Result<asap_sketchlib::Kll<T>, BuildError>
 where
     T: asap_sketchlib::common::numerical::NumericalValue,
 {
@@ -22,15 +22,14 @@ where
              to that range, so any other k would run at a value this record does not name"
         )));
     }
-    Ok(asap_sketchlib::KLL::<T>::init_kll(k as i32))
+    Ok(asap_sketchlib::Kll::<T>::with_k(k as i32))
 }
 
 /// Generic *in the library*: `KLL<T>` stores `T` and orders it with
 /// `T::total_cmp`, converting nothing — so this row's item-type axis measures
 /// the library's own choice, not a wrapper's cast.
 pub struct KllLibPerCall<T: asap_sketchlib::common::numerical::NumericalValue = i64> {
-    inner: asap_sketchlib::KLL<T>,
-    k: u32,
+    inner: asap_sketchlib::Kll<T>,
 }
 
 pub fn build_kll_lib_per_call<T>(config: &ParamSet) -> Result<KllLibPerCall<T>, BuildError>
@@ -40,7 +39,6 @@ where
     let p: KllParams = config.parse()?;
     Ok(KllLibPerCall {
         inner: lib_kll::<T>(p.k)?,
-        k: p.k,
     })
 }
 
@@ -48,12 +46,11 @@ pub fn memory_kll_lib_per_call<T>(sketch: &KllLibPerCall<T>) -> usize
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
-    kll_lib_bytes::<T>(sketch.k)
+    sketch.inner.memory_bytes()
 }
 
 pub struct KllLibCdf<T: asap_sketchlib::common::numerical::NumericalValue = i64> {
-    inner: asap_sketchlib::KLL<T>,
-    k: u32,
+    inner: asap_sketchlib::Kll<T>,
     cdf: Option<asap_sketchlib::sketches::kll::Cdf>,
 }
 
@@ -64,7 +61,6 @@ where
     let p: KllParams = config.parse()?;
     Ok(KllLibCdf {
         inner: lib_kll::<T>(p.k)?,
-        k: p.k,
         cdf: None,
     })
 }
@@ -73,7 +69,7 @@ pub fn memory_kll_lib_cdf<T>(sketch: &KllLibCdf<T>) -> usize
 where
     T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue,
 {
-    kll_lib_bytes::<T>(sketch.k)
+    sketch.inner.memory_bytes()
 }
 
 pub fn insert_kll_lib_per_call<T>(
@@ -331,7 +327,7 @@ where
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for p in probes.iter() {
-                answers.push(cdf.query(*p));
+                answers.push(cdf.value_at(*p));
             }
             let footprint = memory_kll_lib_cdf::<T>(&sketch);
             (answers, footprint)

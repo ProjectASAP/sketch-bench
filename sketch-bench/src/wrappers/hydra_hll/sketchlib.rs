@@ -16,20 +16,18 @@ use std::rc::Rc;
 /// Hydra over HyperLogLog cells.
 pub struct HydraHll {
     pub(super) inner: Hydra,
-    params: HydraHllParams,
 }
 
 /// `label_columns`: the key columns every record carries.
 pub fn build_hydra_hll(config: &ParamSet, label_columns: usize) -> Result<HydraHll, BuildError> {
     let p: HydraHllParams = config.parse()?;
     check_grid(p.rows, p.cols, "hydra-hll")?;
-    // Named through the `ErtlMLE` impl explicitly: `HyperLogLog` is a type
+    // Named through the `Ertl` impl explicitly: `HyperLogLog` is a type
     // alias over the variant, so `new()` is ambiguous between the
     // estimators the alias can carry. The enum fixes this one.
-    let cell = HydraCounter::HLL(HyperLogLog::<asap_sketchlib::ErtlMLE>::new());
+    let cell = HydraCounter::Hll(HyperLogLog::<asap_sketchlib::Ertl>::new());
     Ok(HydraHll {
         inner: new_hydra(p.rows, p.cols, label_columns, cell, "hydra-hll")?,
-        params: p,
     })
 }
 
@@ -40,11 +38,8 @@ impl HydraHll {
     }
 }
 
-/// One byte per register per cell. The cell is fixed-shape, so unlike the
-/// Count-Min row there is no cell parameter in this product.
 pub fn memory_hydra_hll(sketch: &HydraHll) -> usize {
-    let p = &sketch.params;
-    p.rows * p.cols * HLL_CELL_REGISTERS + grid_overhead_bytes(p.rows, p.cols)
+    sketch.inner.memory_bytes()
 }
 
 pub fn insert_hydra_hll<V: CardinalityValue>(

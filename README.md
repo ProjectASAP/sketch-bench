@@ -92,7 +92,7 @@ approxbench: hll/lib config={"lg_k":14} runs=10 warmup=3
         1.635875
       ]
     },
-    "memory_bytes": 16384
+    "memory_bytes": 16400
   },
   "source": "cli",
   "timestamp": "2026-08-25T23:19:34.546016Z"
@@ -232,7 +232,7 @@ This is following the configuration specified by user.
         1.635875
       ]
     },
-    "memory_bytes": 16384
+    "memory_bytes": 16400
 },
 ```
 

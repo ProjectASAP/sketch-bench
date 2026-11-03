@@ -140,7 +140,7 @@ mod tests {
     use super::*;
     use crate::params::ParamSet;
 
-    use asap_sketchlib::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
+    use asap_sketchlib::{HllRegistersP12, HllRegistersP14, HllRegistersP16};
 
     fn params(lg_k: u8) -> ParamSet {
         ParamSet::of(&HllParams { lg_k })
@@ -152,7 +152,7 @@ mod tests {
         n: i64,
     ) {
         for v in 0..n {
-            sketch.inner.insert(&asap_sketchlib::DataInput::I64(v));
+            sketch.inner.update(&asap_sketchlib::DataInput::I64(v));
         }
     }
 
@@ -160,16 +160,15 @@ mod tests {
     /// a dropped `lg_k` would build one sketch under three different labels.
     #[test]
     fn lib_honours_lg_k() {
-        let mut p12 = build_hll_lib::<HllBucketListP12>(&params(12)).expect("P12 builds");
-        let mut p14 = build_hll_lib::<HllBucketListP14>(&params(14)).expect("P14 builds");
-        let mut p16 = build_hll_lib::<HllBucketListP16>(&params(16)).expect("P16 builds");
+        let mut p12 = build_hll_lib::<HllRegistersP12>(&params(12)).expect("P12 builds");
+        let mut p14 = build_hll_lib::<HllRegistersP14>(&params(14)).expect("P14 builds");
+        let mut p16 = build_hll_lib::<HllRegistersP16>(&params(16)).expect("P16 builds");
         assert_eq!(
             (
-                memory_hll_lib(&p12),
-                memory_hll_lib(&p14),
-                memory_hll_lib(&p16)
+                memory_hll_lib(&p14) - memory_hll_lib(&p12),
+                memory_hll_lib(&p16) - memory_hll_lib(&p14)
             ),
-            (1 << 12, 1 << 14, 1 << 16)
+            ((1 << 14) - (1 << 12), (1 << 16) - (1 << 14))
         );
         // Three types, so three calls: the whole point of this row is that the
         // precision is a type and not a field.
@@ -193,10 +192,12 @@ mod tests {
     /// The HIP rows carry the same knob, and the same defect if it were dropped.
     #[test]
     fn lib_hip_honours_lg_k() {
-        let p12 = build_hll_lib_hip::<HllBucketListP12>(&params(12)).expect("P12 builds");
-        let p16 = build_hll_lib_hip::<HllBucketListP16>(&params(16)).expect("P16 builds");
-        assert_eq!(memory_hll_lib_hip(&p12), 1 << 12);
-        assert_eq!(memory_hll_lib_hip(&p16), 1 << 16);
+        let p12 = build_hll_lib_hip::<HllRegistersP12>(&params(12)).expect("P12 builds");
+        let p16 = build_hll_lib_hip::<HllRegistersP16>(&params(16)).expect("P16 builds");
+        assert_eq!(
+            memory_hll_lib_hip(&p16) - memory_hll_lib_hip(&p12),
+            (1 << 16) - (1 << 12)
+        );
     }
 
     /// An `lg_k` with no storage type is refused by name rather than built at
@@ -204,7 +205,7 @@ mod tests {
     #[test]
     fn lib_refuses_a_precision_it_does_not_ship() {
         for lg_k in [4u8, 10, 13, 18] {
-            let Err(err) = build_hll_lib::<HllBucketListP14>(&params(lg_k)) else {
+            let Err(err) = build_hll_lib::<HllRegistersP14>(&params(lg_k)) else {
                 panic!("lg_k={lg_k} has no storage type, so it must be refused");
             };
             assert!(
@@ -220,9 +221,9 @@ mod tests {
     #[test]
     fn the_dispatch_set_matches_what_the_rows_accept() {
         assert_eq!(LIB_PRECISIONS, [12, 14, 16]);
-        assert!(build_hll_lib::<HllBucketListP12>(&params(LIB_PRECISIONS[0])).is_ok());
-        assert!(build_hll_lib::<HllBucketListP14>(&params(LIB_PRECISIONS[1])).is_ok());
-        assert!(build_hll_lib::<HllBucketListP16>(&params(LIB_PRECISIONS[2])).is_ok());
+        assert!(build_hll_lib::<HllRegistersP12>(&params(LIB_PRECISIONS[0])).is_ok());
+        assert!(build_hll_lib::<HllRegistersP14>(&params(LIB_PRECISIONS[1])).is_ok());
+        assert!(build_hll_lib::<HllRegistersP16>(&params(LIB_PRECISIONS[2])).is_ok());
     }
 
     /// The datasketches row asserts inside its own constructor, so the bound is
@@ -255,7 +256,7 @@ mod tests {
                 "datasketches lg_k={lg_k}"
             );
             assert!(
-                build_hll_lib::<HllBucketListP14>(&params(lg_k)).is_err(),
+                build_hll_lib::<HllRegistersP14>(&params(lg_k)).is_err(),
                 "lib lg_k={lg_k}"
             );
         }

@@ -7,9 +7,7 @@ use crate::params::*;
 pub mod polars;
 pub mod sketchlib;
 
-pub(crate) use super::hydra_shared::{
-    check_grid, grid_overhead_bytes, label_columns, labels, new_hydra, query, update,
-};
+pub(crate) use super::hydra_shared::{check_grid, label_columns, labels, new_hydra, query, update};
 
 #[cfg(test)]
 mod tests {
@@ -186,17 +184,6 @@ mod tests {
         assert!(
             err.contains("cell_sketch_col"),
             "error should name the field: {err}"
-        );
-    }
-
-    #[test]
-    fn footprint_is_the_grid_area_times_one_univmon() {
-        let h = built();
-        let cell =
-            4 * ((5 * 256 + 5) * 8 + 32 * std::mem::size_of::<asap_sketchlib::input::HHItem>());
-        assert_eq!(
-            memory_hydra_univmon(&h),
-            2 * 16 * cell + grid_overhead_bytes(2, 16)
         );
     }
 }

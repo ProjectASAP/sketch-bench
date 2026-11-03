@@ -7,15 +7,7 @@ use crate::params::*;
 pub mod polars;
 pub mod sketchlib;
 
-pub(crate) use super::hydra_shared::{
-    check_grid, grid_overhead_bytes, label_columns, labels, new_hydra, query, update,
-};
-
-pub(crate) use crate::wrappers::kll::kll_lib_bytes as kll_cell_bytes;
-#[cfg(test)]
-use crate::wrappers::kll::{
-    kll_lib_slots as kll_cell_slots, KLL_LIB_MAX_CACHEABLE_K, KLL_LIB_MAX_LEVELS, KLL_LIB_MIN_LEVEL,
-};
+pub(crate) use super::hydra_shared::{check_grid, label_columns, labels, new_hydra, query, update};
 
 #[cfg(test)]
 mod tests {
@@ -84,37 +76,6 @@ mod tests {
         }
         assert_eq!(h.estimate_subpop_quantile(&[Some("a")], 0.0), 1.0);
         assert_eq!(h.estimate_subpop_quantile(&[Some("a")], 1.0), 101.0);
-    }
-
-    /// The library allocates a cell's retained slots once, so the footprint is
-    /// analytic. This pins the reproduction, not the library — the value below is
-    /// hand-derived from the decay series, not read back from the function.
-    #[test]
-    fn kll_cell_capacity_matches_the_library_shape() {
-        // ceil(200 * (2/3)^i) for i in 0..8 is 200, 134, 89, 60, 40, 27, 18, 12
-        // summing to 580; every level from 8 up is floored at m = 8, and there
-        // are 53 of them, adding 424.
-        assert_eq!(kll_cell_slots(200), 580 + 424);
-        // Monotone in k, and never below the floor times the level count.
-        assert!(kll_cell_slots(400) > kll_cell_slots(200));
-        assert_eq!(kll_cell_slots(1), KLL_LIB_MIN_LEVEL * KLL_LIB_MAX_LEVELS);
-        // Past the library's clamp, a larger k buys no more slots.
-        assert_eq!(
-            kll_cell_slots(KLL_LIB_MAX_CACHEABLE_K as u32),
-            kll_cell_slots(KLL_LIB_MAX_CACHEABLE_K as u32 + 5_000)
-        );
-    }
-
-    /// A cell is a whole `KLL`, merge buffer included, as the `kll-*` lib rows
-    /// count it. Hand-derived: at `k = 200`, 1004 retained slots (above) plus
-    /// 200 buffer items, 8 bytes each, plus 62 level offsets.
-    #[test]
-    fn kll_footprint_counts_each_cells_merge_buffer() {
-        let per_cell = (1004 + 200) * 8 + 62 * std::mem::size_of::<usize>();
-        assert_eq!(
-            memory_hydra_kll(&built_kll()),
-            3 * 64 * per_cell + grid_overhead_bytes(3, 64)
-        );
     }
 
     /// Below `k` the cell keeps every value, so `Cdf(x)` is the exact share at

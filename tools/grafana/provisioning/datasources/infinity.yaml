@@ -1,0 +1,9 @@
+apiVersion: 1
+datasources:
+  - name: approx-rows
+    uid: approx-rows
+    type: yesoreyeram-infinity-datasource
+    editable: false
+    jsonData:
+      allowedHosts:
+        - http://localhost:8000

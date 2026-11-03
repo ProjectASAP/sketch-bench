@@ -6,8 +6,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct DdLib<T = i64> {
-    inner: asap_sketchlib::DDSketch,
-    alpha: f64,
+    inner: asap_sketchlib::DdSketch,
     _item: std::marker::PhantomData<T>,
 }
 
@@ -18,8 +17,7 @@ where
     let p: DdParams = config.parse()?;
     require_alpha("asap DDSketch", p.alpha)?;
     Ok(DdLib {
-        inner: asap_sketchlib::DDSketch::new(p.alpha),
-        alpha: p.alpha,
+        inner: asap_sketchlib::DdSketch::new(p.alpha),
         _item: std::marker::PhantomData,
     })
 }
@@ -28,12 +26,7 @@ pub fn memory_dd_lib<T>(sketch: &DdLib<T>) -> usize
 where
     T: asap_sketchlib::common::numerical::NumericalValue,
 {
-    dd_footprint(
-        sketch.alpha,
-        sketch.inner.min(),
-        sketch.inner.max(),
-        sketch.inner.get_count(),
-    )
+    sketch.inner.memory_bytes()
 }
 
 pub fn insert_dd_lib<T>(

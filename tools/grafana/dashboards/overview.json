@@ -1,0 +1,512 @@
+{
+  "uid": "overview",
+  "title": "Approximate query fidelity overview",
+  "tags": [
+    "approx-rows"
+  ],
+  "timezone": "utc",
+  "editable": false,
+  "schemaVersion": 41,
+  "time": {
+    "from": "2026-01-01T00:00:00.000Z",
+    "to": "2026-01-01T01:00:00.000Z"
+  },
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "Annotations & Alerts",
+        "builtIn": 1,
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "type": "dashboard"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "table",
+      "title": "Every run and query: plan, query error, and what the application saw",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/index.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[$exists(details.fidelity)].( $e := $; $append($keys($e.details.plans), $keys($e.details.unsupported)).( $q := $; $s := $lookup($e.details.signals, $q); $f := $lookup($e.details.fidelity, $s); {\"run_id\": $e.run_id, \"use_case\": $e.use_case, \"start\": $e.start, \"end\": $e.end, \"query\": $q, \"approx plan\": $lookup($e.details.plans, $q), \"why no approx plan\": $lookup($e.details.unsupported, $q), \"max relative error\": $lookup($e.details.max_relative_error, $q), \"signal\": $s, \"agreement\": $f.agreement, \"fidelity\": $f.fidelity, \"dashboard\": $e.details.dashboard} ) ); $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "use_case",
+              "text": "use_case",
+              "type": "string"
+            },
+            {
+              "selector": "run_id",
+              "text": "run_id",
+              "type": "string"
+            },
+            {
+              "selector": "query",
+              "text": "query",
+              "type": "string"
+            },
+            {
+              "selector": "approx plan",
+              "text": "approx plan",
+              "type": "string"
+            },
+            {
+              "selector": "why no approx plan",
+              "text": "why no approx plan",
+              "type": "string"
+            },
+            {
+              "selector": "signal",
+              "text": "signal",
+              "type": "string"
+            },
+            {
+              "selector": "fidelity",
+              "text": "fidelity",
+              "type": "string"
+            },
+            {
+              "selector": "dashboard",
+              "text": "dashboard",
+              "type": "string"
+            },
+            {
+              "selector": "start",
+              "text": "start",
+              "type": "number"
+            },
+            {
+              "selector": "end",
+              "text": "end",
+              "type": "number"
+            },
+            {
+              "selector": "max relative error",
+              "text": "max relative error",
+              "type": "number"
+            },
+            {
+              "selector": "agreement",
+              "text": "agreement",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "use_case": 0,
+              "run_id": 1,
+              "query": 2,
+              "approx plan": 3,
+              "why no approx plan": 4,
+              "max relative error": 5,
+              "signal": 6,
+              "agreement": 7,
+              "fidelity": 8
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "run_id"
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "minWidth": 60,
+            "cellOptions": {
+              "type": "auto",
+              "wrapText": true
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^(dashboard|start|end|use_case)$"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max relative error"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "agreement"
+            },
+            "properties": [
+              {
+                "id": "description",
+                "value": "Defined per application. Threshold alert: evaluations where exact and approx agree on firing. Autoscaler: matched scaling actions over matched, false and missed ones. Rollout controller: rollouts decided the same. Top clients: mean clients shared by the exact and approx top lists, as a fraction of the list size."
+              },
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 1
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "continuous-RdYlGr"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null+nan",
+                      "result": {
+                        "text": "no plan",
+                        "color": "transparent",
+                        "index": 0
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "approx plan"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 210
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "why no approx plan"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 150
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "query|signal"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 115
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "run_id"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 170
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open this run",
+                    "url": "/d/${__data.fields.dashboard}/run?var-run=${__data.fields.run_id}&var-signal=${__data.fields.signal}&from=${__data.fields.start}&to=${__data.fields.end}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true
+      },
+      "id": 1,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 30
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Every planned sketch: asap_sketchlib's error bound and memory next to the measured error and the planner's memory",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/index.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[$exists(details.sketch_bounds)].( $e := $; $e.details.sketch_bounds.( $merge([$, {\"run_id\": $e.run_id, \"max relative error\": $lookup($e.details.max_relative_error, query)}]) ) ); $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "run_id",
+              "text": "run_id",
+              "type": "string"
+            },
+            {
+              "selector": "query",
+              "text": "query",
+              "type": "string"
+            },
+            {
+              "selector": "sketch",
+              "text": "sketch",
+              "type": "string"
+            },
+            {
+              "selector": "statistic",
+              "text": "statistic",
+              "type": "string"
+            },
+            {
+              "selector": "bound metric",
+              "text": "bound metric",
+              "type": "string"
+            },
+            {
+              "selector": "merged error",
+              "text": "merged error",
+              "type": "string"
+            },
+            {
+              "selector": "epsilon",
+              "text": "epsilon",
+              "type": "number"
+            },
+            {
+              "selector": "delta",
+              "text": "delta",
+              "type": "number"
+            },
+            {
+              "selector": "max relative error",
+              "text": "max relative error",
+              "type": "number"
+            },
+            {
+              "selector": "sketchlib bytes per state",
+              "text": "sketchlib bytes per state",
+              "type": "number"
+            },
+            {
+              "selector": "planner peak bytes for the plan",
+              "text": "planner peak bytes for the plan",
+              "type": "number"
+            },
+            {
+              "selector": "update ops",
+              "text": "update ops",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "run_id": 0,
+              "query": 1,
+              "sketch": 2,
+              "statistic": 3,
+              "bound metric": 4,
+              "epsilon": 5,
+              "delta": 6,
+              "max relative error": 7,
+              "merged error": 8,
+              "sketchlib bytes per state": 9,
+              "planner peak bytes for the plan": 10,
+              "update ops": 11
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "run_id"
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "minWidth": 60,
+            "cellOptions": {
+              "type": "auto",
+              "wrapText": true
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max relative error"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sketch"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 230
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true
+      },
+      "id": 2,
+      "gridPos": {
+        "x": 0,
+        "y": 30,
+        "w": 24,
+        "h": 15
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    }
+  ]
+}
