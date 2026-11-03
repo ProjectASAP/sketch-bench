@@ -7,7 +7,7 @@ use super::*;
 use crate::params::ParamSet;
 use crate::wrappers::partition;
 use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
-use asap_sketchlib::{ErtlMLE, HyperLogLog};
+use asap_sketchlib::{Ertl, HyperLogLog};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Barrier;
@@ -16,7 +16,7 @@ use std::sync::Barrier;
 
 /// `HyperLogLog<Classic>`, the classic estimator (Flajolet et al., 2007):
 /// insert bumps registers, `estimate()` scans all `2^lg_k` of them.
-pub struct HllLib<R: asap_sketchlib::HllRegisterStorage = asap_sketchlib::HllBucketListP14> {
+pub struct HllLib<R: asap_sketchlib::HllRegisterStorage = asap_sketchlib::HllRegistersP14> {
     pub(super) inner: asap_sketchlib::hll::HyperLogLogImpl<asap_sketchlib::Classic, R>,
 }
 
@@ -36,20 +36,17 @@ pub fn build_hll_lib<R: asap_sketchlib::HllRegisterStorage>(
     })
 }
 
-pub fn memory_hll_lib<R: asap_sketchlib::HllRegisterStorage>(_sketch: &HllLib<R>) -> usize {
-    // Off the storage type, so it tracks whichever precision was built.
-    // A written-in `1 << 14` was what let three different `lg_k` values
-    // report three footprints for one sketch.
-    R::NUM_REGISTERS
+pub fn memory_hll_lib<R: asap_sketchlib::HllRegisterStorage>(sketch: &HllLib<R>) -> usize {
+    sketch.inner.memory_bytes()
 }
 
-/// `HyperLogLogHIP` maintains the estimate incrementally on the insert path —
+/// `HyperLogLogHip` maintains the estimate incrementally on the insert path —
 /// every register upgrade pays a few fp ops — so query is O(1) rather than
 /// Classic's O(m) scan. That trade is what this algorithm exists to measure,
 /// and it is a different estimator, so it is its own algorithm and not an impl
 /// of `hll`.
-pub struct HllLibHip<R: asap_sketchlib::HllRegisterStorage = asap_sketchlib::HllBucketListP14> {
-    pub(super) inner: asap_sketchlib::hll::HyperLogLogHIPImpl<R>,
+pub struct HllLibHip<R: asap_sketchlib::HllRegisterStorage = asap_sketchlib::HllRegistersP14> {
+    pub(super) inner: asap_sketchlib::hll::HyperLogLogHipImpl<R>,
 }
 
 pub fn build_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage>(
@@ -60,23 +57,23 @@ pub fn build_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage>(
         return Err(unsupported_precision(p.lg_k));
     }
     Ok(HllLibHip {
-        inner: asap_sketchlib::hll::HyperLogLogHIPImpl::<R>::new(),
+        inner: asap_sketchlib::hll::HyperLogLogHipImpl::<R>::new(),
     })
 }
 
-pub fn memory_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage>(_sketch: &HllLibHip<R>) -> usize {
-    R::NUM_REGISTERS
+pub fn memory_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage>(sketch: &HllLibHip<R>) -> usize {
+    sketch.inner.memory_bytes()
 }
 
 /// The HIP estimate is maintained on the insert path, so the ask is a field
 /// read rather than Classic's scan over `2^lg_k` registers — the trade this
 /// row exists to price.
 /// The `lg_k` this row is fixed at. Its per-worker sketch is a compile-time
-/// type — `HyperLogLog<ErtlMLE>` is the P14 alias — so any other value is
+/// type — `HyperLogLog<Ertl>` is the P14 alias — so any other value is
 /// unbuildable and is refused rather than run at 14 under its name.
 const PARALLEL_HLL_LG_K: u8 = 14;
 
-/// HLL, parallel-insert ErtlMLE FastPath.
+/// HLL, parallel-insert Ertl FastPath.
 pub struct ParallelHllFastPath {
     workers: usize,
 }
@@ -86,7 +83,7 @@ pub fn build_parallel_hll_fast_path(
     workers: usize,
 ) -> Result<ParallelHllFastPath, BuildError> {
     let p: HllParams = config.parse()?;
-    // `HyperLogLog<ErtlMLE>` is the P14 alias, so this row exists at one
+    // `HyperLogLog<Ertl>` is the P14 alias, so this row exists at one
     // precision. Refuse the others instead of running at 14 under their name.
     if p.lg_k != PARALLEL_HLL_LG_K {
         return Err(BuildError(format!(
@@ -100,10 +97,7 @@ pub fn build_parallel_hll_fast_path(
 }
 
 pub fn memory_parallel_hll_fast_path(sketch: &ParallelHllFastPath) -> usize {
-    // Each worker holds an HLL with ErtlMLE registers, one byte each.
-    // `build` has already refused any lg_k other than the one baked in, so
-    // this is the precision that ran and not a coarse upper bound.
-    sketch.workers * (1usize << PARALLEL_HLL_LG_K)
+    sketch.workers * HyperLogLog::<Ertl>::theoretical_memory_bytes(PARALLEL_HLL_LG_K as usize)
 }
 
 fn run_parallel_hll<T: CardinalityValue>(items: &[T], workers: usize) {
@@ -113,10 +107,10 @@ fn run_parallel_hll<T: CardinalityValue>(items: &[T], workers: usize) {
         for part in &parts {
             let barrier = &barrier;
             s.spawn(move || {
-                let mut sketch = HyperLogLog::<ErtlMLE>::default();
+                let mut sketch = HyperLogLog::<Ertl>::default();
                 barrier.wait();
                 for v in *part {
-                    sketch.insert_emit_delta(&v.data_input(), &mut |d| {
+                    sketch.update_emit_delta(&v.data_input(), &mut |d| {
                         std::hint::black_box(&d);
                     });
                 }
@@ -138,7 +132,7 @@ pub fn insert_hll_lib<R: asap_sketchlib::HllRegisterStorage + 'static, T: Cardin
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.insert(&v.data_input());
+                sketch.inner.update(&v.data_input());
             }
             memory_hll_lib(&sketch)
         }) as Pass);
@@ -161,7 +155,7 @@ pub fn insert_step_hll_lib<R: asap_sketchlib::HllRegisterStorage + 'static, T: C
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.insert(&v.data_input());
+                sketch.inner.update(&v.data_input());
             }),
             footprint: Box::new(move || memory_hll_lib(&read.borrow())),
         });
@@ -262,7 +256,7 @@ fn hll_lib_shards<R: asap_sketchlib::HllRegisterStorage + 'static, T: Cardinalit
     for shard in partition(items, shards) {
         let mut sketch = build_hll_lib::<R>(params)?;
         for v in shard {
-            sketch.inner.insert(&v.data_input());
+            sketch.inner.update(&v.data_input());
         }
         parts.push(sketch);
     }
@@ -285,7 +279,7 @@ pub fn insert_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage + 'static, T: Ca
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.insert(&v.data_input());
+                sketch.inner.update(&v.data_input());
             }
             memory_hll_lib_hip(&sketch)
         }) as Pass);
@@ -311,7 +305,7 @@ pub fn insert_step_hll_lib_hip<
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.insert(&v.data_input());
+                sketch.inner.update(&v.data_input());
             }),
             footprint: Box::new(move || memory_hll_lib_hip(&read.borrow())),
         });
@@ -330,7 +324,7 @@ pub fn query_hll_lib_hip<R: asap_sketchlib::HllRegisterStorage + 'static, T: Car
         // Built and fed here: the closure below asks, and only asks.
         let mut sketch = build_hll_lib_hip::<R>(params)?;
         for v in items.iter() {
-            sketch.inner.insert(&v.data_input());
+            sketch.inner.update(&v.data_input());
         }
         let probes = probes.clone();
         out.push(Box::new(move || {

@@ -9,5 +9,6 @@ pub mod params;
 pub mod registry;
 /// What a frontend asks for, as one value.
 pub mod request;
+pub mod rows;
 /// One directory per algorithm, one file per library.
 pub mod wrappers;

@@ -9,14 +9,13 @@ use crate::wrappers::hll::CardinalityValue;
 use crate::wrappers::hydra_shared::update_counted;
 use crate::wrappers::partition;
 use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
-use asap_sketchlib::input::{HHItem, HydraCounter, HydraQuery};
+use asap_sketchlib::input::{HydraCounter, HydraQuery};
 use asap_sketchlib::{Hydra, UnivMon};
 use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct HydraUnivmon {
     pub(super) inner: Hydra,
-    params: HydraUnivmonParams,
 }
 
 /// `label_columns`: the key columns every record carries.
@@ -36,7 +35,7 @@ pub fn build_hydra_univmon(
             return Err(BuildError(format!("hydra-univmon: {name} must be > 0")));
         }
     }
-    let cell = HydraCounter::UNIVERSAL(UnivMon::init_univmon(
+    let cell = HydraCounter::UnivMon(UnivMon::new(
         p.cell_heap_size,
         p.cell_sketch_row,
         p.cell_sketch_col,
@@ -44,7 +43,6 @@ pub fn build_hydra_univmon(
     ));
     Ok(HydraUnivmon {
         inner: new_hydra(p.rows, p.cols, label_columns, cell, "hydra-univmon")?,
-        params: p,
     })
 }
 
@@ -76,11 +74,7 @@ impl HydraUnivmon {
 }
 
 pub fn memory_hydra_univmon(sketch: &HydraUnivmon) -> usize {
-    let p = &sketch.params;
-    let counters =
-        (p.cell_sketch_row * p.cell_sketch_col + p.cell_sketch_row) * std::mem::size_of::<i64>();
-    let heap = p.cell_heap_size * std::mem::size_of::<HHItem>();
-    p.rows * p.cols * p.cell_layer_size * (counters + heap) + grid_overhead_bytes(p.rows, p.cols)
+    sketch.inner.memory_bytes()
 }
 
 /// A value the `-sum` row inserts as its own count, the library's integer

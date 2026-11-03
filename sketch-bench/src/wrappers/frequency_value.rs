@@ -32,7 +32,7 @@ pub trait FrequencyValue: Clone + Sync + 'static {
     /// The same value in `asap_sketchlib`'s vocabulary.
     fn data_input(&self) -> DataInput<'_>;
 
-    /// Read a key back out of a sketch that stores them — the `CMSHeap` top-k
+    /// Read a key back out of a sketch that stores them — the `CountMinSketchWithHeap` top-k
     /// dump is the one place that happens. A variant this type did not put in
     /// is a library bug, not a caller error, so implementations panic rather
     /// than widen the return type: every row feeds one width and reads the

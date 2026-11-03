@@ -11,7 +11,6 @@ mod flatten_cmd;
 mod flatten_record;
 mod repeat;
 mod report_sink;
-mod rows;
 
 // Global allocator selection across the `heap-jemalloc` / `heap-track` feature
 // pair: bare jemalloc, `TrackingAllocator` wrapping jemalloc or System, or the
@@ -433,7 +432,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
 
     // The closures, built at the row's own item type over the data just made.
     // Construction failures land here, before anything is timed.
-    let prepared = rows::measurements(&req, &dataset, table, &want)
+    let prepared = sketch_bench::rows::measurements(&req, &dataset, table, &want)
         .map_err(|e| anyhow::anyhow!("{variant}/{library} cannot run: {e}"))?;
 
     // One instruction at a time. Core is handed a closure and a run count and

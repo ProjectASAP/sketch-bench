@@ -14,11 +14,11 @@ macro_rules! fixed_matrix_row {
             table: GeneratedTable,
             want: &[(Operation, Metric)],
         ) -> Result<Measurements, RunError> {
-            use sketch_bench::wrappers::fixed_matrix::{
+            use crate::wrappers::fixed_matrix::{
                 unsupported_shape, with_fixed_matrix, FixedMatrixVisitor,
             };
-            use sketch_bench::wrappers::$module::sketchlib as w;
-            use sketch_bench::wrappers::{DefaultXxHasher, FastPathHasher, MatrixStorage};
+            use crate::wrappers::$module::sketchlib as w;
+            use asap_sketchlib::{DefaultXxHasher, FastPathHasher, MatrixStorage};
 
             let p: $params = req
                 .params
@@ -92,7 +92,7 @@ macro_rules! fixed_matrix_row {
 
 fixed_matrix_row!(
     row_cms_fastpath_fixedmatrix_lib,
-    sketch_bench::params::CmsParams,
+    crate::params::CmsParams,
     "cms-fastpath-fixedmatrix",
     cms,
     insert_cms_lib_fixedmatrix,
@@ -105,7 +105,7 @@ fixed_matrix_row!(
 
 fixed_matrix_row!(
     row_countsketch_fastpath_fixedmatrix_lib,
-    sketch_bench::params::CountSketchParams,
+    crate::params::CountSketchParams,
     "countsketch-fastpath-fixedmatrix",
     cs,
     insert_cs_lib_fixedmatrix,

@@ -146,7 +146,7 @@ pub const REGISTRY: &[SketchId] = &[
     // A separate algorithm from `cms`: `CmsHeapParams` adds the heap's
     // capacity (`heap`) and the answered k (`topk_k`, default
     // wrappers::cms_heap::sketchlib::TOPK_K),
-    // so it's a different knob set, and `CMSHeap` answers two different
+    // so it's a different knob set, and `CountMinSketchWithHeap` answers two different
     // questions (per-key frequency, and top-k), so it gets two rows per
     // backend instead of one. Only `Vector2D` x {FastPath, RegularPath}: no
     // `FixedMatrix` or parallel-insert variant yet (see the follow-up issue
@@ -155,7 +155,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "cms-heap",
         variant: "cms-heap-fastpath-vector2d",
         library: "lib",
-        description: "asap CMSHeap, Vector2D, FastPath — per-key estimate() query",
+        description: "asap CountMinSketchWithHeap, Vector2D, FastPath — per-key estimate() query",
         capability: Capability::Frequency,
         comparator: Some("frequency"),
         operations: OperationMask::INSERT
@@ -171,7 +171,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "cms-heap",
         variant: "cms-heap-topk-fastpath-vector2d",
         library: "lib",
-        description: "asap CMSHeap, Vector2D, FastPath — heap dump, top-k query. \
+        description: "asap CountMinSketchWithHeap, Vector2D, FastPath — heap dump, top-k query. \
             Merge is heavier than plain CMS: it re-estimates every heap \
             candidate from both sides against the merged matrix.",
         capability: Capability::TopK,
@@ -189,7 +189,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "cms-heap",
         variant: "cms-heap-regularpath-vector2d",
         library: "lib",
-        description: "asap CMSHeap, Vector2D, RegularPath — per-key estimate() query",
+        description: "asap CountMinSketchWithHeap, Vector2D, RegularPath — per-key estimate() query",
         capability: Capability::Frequency,
         comparator: Some("frequency"),
         operations: OperationMask::INSERT
@@ -205,7 +205,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "cms-heap",
         variant: "cms-heap-topk-regularpath-vector2d",
         library: "lib",
-        description: "asap CMSHeap, Vector2D, RegularPath — heap dump, top-k query. \
+        description: "asap CountMinSketchWithHeap, Vector2D, RegularPath — heap dump, top-k query. \
             Merge is heavier than plain CMS: it re-estimates every heap \
             candidate from both sides against the merged matrix.",
         capability: Capability::TopK,
@@ -257,7 +257,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "countsketch",
         variant: "countsketch-fastpath-fixedmatrix",
         library: "lib",
-        description: "asap Count, FixedMatrix (shape baked at compile time), FastPath",
+        description: "asap CountSketch, FixedMatrix (shape baked at compile time), FastPath",
         capability: Capability::Frequency,
         comparator: Some("frequency"),
         operations: OperationMask::INSERT
@@ -273,7 +273,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "countsketch",
         variant: "countsketch-fastpath-vector2d",
         library: "lib",
-        description: "asap Count, Vector2D, FastPath",
+        description: "asap CountSketch, Vector2D, FastPath",
         capability: Capability::Frequency,
         comparator: Some("frequency"),
         operations: OperationMask::INSERT
@@ -289,7 +289,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "countsketch",
         variant: "countsketch-regularpath-vector2d",
         library: "lib",
-        description: "asap Count, Vector2D, RegularPath",
+        description: "asap CountSketch, Vector2D, RegularPath",
         capability: Capability::Frequency,
         comparator: Some("frequency"),
         operations: OperationMask::INSERT
@@ -305,7 +305,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "countsketch",
         variant: "countsketch-fastpath-fixedmatrix-32k-parallel",
         library: "lib",
-        description: "asap Count, FastPath, parallel insert on M5x32K",
+        description: "asap CountSketch, FastPath, parallel insert on M5x32K",
         capability: Capability::None,
         comparator: None,
         operations: OperationMask::INSERT,
@@ -318,7 +318,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "countsketch-heap",
         variant: "countsketch-heap-topk-fastpath-vector2d",
         library: "lib",
-        description: "asap CSHeap, Vector2D, FastPath — heap dump, top-k query",
+        description: "asap CountSketchWithHeap, Vector2D, FastPath — heap dump, top-k query",
         capability: Capability::TopK,
         comparator: Some("topk"),
         operations: OperationMask::INSERT
@@ -404,7 +404,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "hll",
         variant: "hll-hip",
         library: "lib",
-        description: "asap_sketchlib::HyperLogLogHIP: O(1) estimate, lg_k in {12,14,16}",
+        description: "asap_sketchlib::HyperLogLogHip: O(1) estimate, lg_k in {12,14,16}",
         capability: Capability::Cardinality,
         comparator: Some("cardinality"),
         operations: OperationMask::INSERT.union(OperationMask::QUERY),
@@ -418,7 +418,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "hll",
         variant: "hll-fastpath-parallel",
         library: "lib",
-        description: "asap HLL ErtlMLE, FastPath, parallel insert",
+        description: "asap HLL Ertl, FastPath, parallel insert",
         capability: Capability::None,
         comparator: None,
         operations: OperationMask::INSERT,
@@ -450,7 +450,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "kll",
         variant: "kll-percall",
         library: "lib",
-        description: "asap_sketchlib::KLL: quantile() per call, k in [8, 26602]",
+        description: "asap_sketchlib::Kll: quantile() per call, k in [8, 26602]",
         capability: Capability::Quantile,
         comparator: Some("rank-error"),
         operations: OperationMask::INSERT
@@ -483,7 +483,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "kll",
         variant: "kll-cdf",
         library: "lib",
-        description: "asap_sketchlib::KLL: cdf() built in prepare, k in [8, 26602]",
+        description: "asap_sketchlib::Kll: cdf() built in prepare, k in [8, 26602]",
         capability: Capability::Quantile,
         comparator: Some("rank-error"),
         operations: OperationMask::INSERT
@@ -518,7 +518,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "dd",
         variant: "dd",
         library: "lib",
-        description: "asap_sketchlib::DDSketch: relative-error buckets, alpha in (0, 1)",
+        description: "asap_sketchlib::DdSketch: relative-error buckets, alpha in (0, 1)",
         capability: Capability::Quantile,
         comparator: Some("relative-value-error"),
         operations: OperationMask::INSERT
@@ -714,7 +714,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "hydra-univmon",
         variant: "hydra-univmon-cardinality",
         library: "lib",
-        description: "asap_sketchlib::Hydra over UnivMon cells: calc_card per subpopulation",
+        description: "asap_sketchlib::Hydra over UnivMon cells: estimate_cardinality per subpopulation",
         capability: Capability::SubpopCardinality,
         comparator: Some("subpop-cardinality"),
         operations: OperationMask::INSERT
@@ -746,7 +746,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "hydra-univmon",
         variant: "hydra-univmon-l1-norm",
         library: "lib",
-        description: "asap_sketchlib::Hydra over UnivMon cells: calc_l1 per subpopulation",
+        description: "asap_sketchlib::Hydra over UnivMon cells: estimate_l1 per subpopulation",
         capability: Capability::SubpopL1Norm,
         comparator: Some("subpop-l1-norm"),
         operations: OperationMask::INSERT
@@ -778,7 +778,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "hydra-univmon",
         variant: "hydra-univmon-l2-norm",
         library: "lib",
-        description: "asap_sketchlib::Hydra over UnivMon cells: calc_l2 per subpopulation",
+        description: "asap_sketchlib::Hydra over UnivMon cells: estimate_l2 per subpopulation",
         capability: Capability::SubpopL2Norm,
         comparator: Some("subpop-l2-norm"),
         operations: OperationMask::INSERT
@@ -810,7 +810,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "hydra-univmon",
         variant: "hydra-univmon-entropy",
         library: "lib",
-        description: "asap_sketchlib::Hydra over UnivMon cells: calc_entropy per subpopulation",
+        description: "asap_sketchlib::Hydra over UnivMon cells: estimate_entropy per subpopulation",
         capability: Capability::SubpopEntropy,
         comparator: Some("subpop-entropy"),
         operations: OperationMask::INSERT
@@ -842,7 +842,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "hydra-univmon",
         variant: "hydra-univmon-sum",
         library: "lib",
-        description: "asap_sketchlib::Hydra over UnivMon cells, each value inserted with itself as count: calc_l1 per subpopulation",
+        description: "asap_sketchlib::Hydra over UnivMon cells, each value inserted with itself as count: estimate_l1 per subpopulation",
         capability: Capability::SubpopSum,
         comparator: Some("subpop-sum"),
         operations: OperationMask::INSERT
@@ -874,7 +874,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "univmon",
         variant: "univmon-cardinality",
         library: "lib",
-        description: "asap_sketchlib::UnivMon: calc_card, the keys carrying a non-zero total",
+        description: "asap_sketchlib::UnivMon: estimate_cardinality, the keys carrying a non-zero total",
         capability: Capability::KeyedCardinality,
         comparator: Some("keyed-cardinality"),
         operations: OperationMask::INSERT
@@ -890,7 +890,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "univmon",
         variant: "univmon-l1-norm",
         library: "lib",
-        description: "asap_sketchlib::UnivMon: calc_l1, the sum of the per-key totals",
+        description: "asap_sketchlib::UnivMon: estimate_l1, the sum of the per-key totals",
         capability: Capability::KeyedL1Norm,
         comparator: Some("keyed-l1-norm"),
         operations: OperationMask::INSERT
@@ -922,7 +922,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "univmon",
         variant: "univmon-l2-norm",
         library: "lib",
-        description: "asap_sketchlib::UnivMon: calc_l2, the root of the summed squared totals",
+        description: "asap_sketchlib::UnivMon: estimate_l2, the root of the summed squared totals",
         capability: Capability::KeyedL2Norm,
         comparator: Some("keyed-l2-norm"),
         operations: OperationMask::INSERT
@@ -954,7 +954,7 @@ pub const REGISTRY: &[SketchId] = &[
         algorithm: "univmon",
         variant: "univmon-entropy",
         library: "lib",
-        description: "asap_sketchlib::UnivMon: calc_entropy, Shannon entropy of the key shares",
+        description: "asap_sketchlib::UnivMon: estimate_entropy, Shannon entropy of the key shares",
         capability: Capability::KeyedEntropy,
         comparator: Some("keyed-entropy"),
         operations: OperationMask::INSERT

@@ -1,5 +1,5 @@
 use super::*;
-use sketch_bench::wrappers::cms::{datasketches as cd, oxide as co, polars as cp, sketchlib as cl};
+use crate::wrappers::cms::{datasketches as cd, oxide as co, polars as cp, sketchlib as cl};
 
 // -------- CMS (frequency) --------
 

@@ -7,14 +7,7 @@ use crate::params::*;
 pub mod polars;
 pub mod sketchlib;
 
-pub(crate) use super::hydra_shared::{
-    check_grid, grid_overhead_bytes, label_columns, labels, new_hydra, query, update,
-};
-
-/// Registers in one `HyperLogLog<ErtlMLE>` cell. The library fixes the cell at
-/// `HyperLogLogP14`, so this is `2^14` and not a parameter. Named here because
-/// the footprint depends on it and nothing in the params struct states it.
-const HLL_CELL_REGISTERS: usize = 1 << 14;
+pub(crate) use super::hydra_shared::{check_grid, label_columns, labels, new_hydra, query, update};
 
 #[cfg(test)]
 mod tests {
@@ -88,17 +81,6 @@ mod tests {
         assert!(
             (est - 3.0).abs() < 0.5,
             "three distinct values across both shards, estimated {est}"
-        );
-    }
-
-    /// The cell is fixed-shape, so the footprint is the grid area times a
-    /// constant, and no construction parameter can move it.
-    #[test]
-    fn hll_footprint_is_grid_area_times_a_fixed_cell() {
-        let h = built_hll();
-        assert_eq!(
-            memory_hydra_hll(&h),
-            3 * 64 * HLL_CELL_REGISTERS + grid_overhead_bytes(3, 64)
         );
     }
 

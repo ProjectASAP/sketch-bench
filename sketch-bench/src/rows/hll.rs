@@ -1,7 +1,5 @@
 use super::*;
-use sketch_bench::wrappers::hll::{
-    datasketches as hd, oxide as ho, polars as hpo, sketchlib as hl,
-};
+use crate::wrappers::hll::{datasketches as hd, oxide as ho, polars as hpo, sketchlib as hl};
 
 // -------- HLL (cardinality) --------
 
@@ -139,8 +137,8 @@ pub(crate) fn row_hll_lib(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    use sketch_bench::wrappers::hll::sketchlib as hl;
-    use sketch_bench::wrappers::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
+    use crate::wrappers::hll::sketchlib as hl;
+    use asap_sketchlib::{HllRegistersP12, HllRegistersP14, HllRegistersP16};
     macro_rules! at {
         ($r:ty, $t:ty) => {
             cardinality_row::<$t>(
@@ -163,9 +161,9 @@ pub(crate) fn row_hll_lib(
     macro_rules! at_precision {
         ($t:ty) => {
             match lg_k(req)? {
-                12 => at!(HllBucketListP12, $t),
-                14 => at!(HllBucketListP14, $t),
-                16 => at!(HllBucketListP16, $t),
+                12 => at!(HllRegistersP12, $t),
+                14 => at!(HllRegistersP14, $t),
+                16 => at!(HllRegistersP16, $t),
                 other => Err(unsupported_precision(other)),
             }
         };
@@ -186,8 +184,8 @@ pub(crate) fn row_hll_hip_lib(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    use sketch_bench::wrappers::hll::sketchlib as hl;
-    use sketch_bench::wrappers::{HllBucketListP12, HllBucketListP14, HllBucketListP16};
+    use crate::wrappers::hll::sketchlib as hl;
+    use asap_sketchlib::{HllRegistersP12, HllRegistersP14, HllRegistersP16};
     macro_rules! at {
         ($r:ty, $t:ty) => {
             cardinality_row::<$t>(
@@ -206,9 +204,9 @@ pub(crate) fn row_hll_hip_lib(
     macro_rules! at_precision {
         ($t:ty) => {
             match lg_k(req)? {
-                12 => at!(HllBucketListP12, $t),
-                14 => at!(HllBucketListP14, $t),
-                16 => at!(HllBucketListP16, $t),
+                12 => at!(HllRegistersP12, $t),
+                14 => at!(HllRegistersP14, $t),
+                16 => at!(HllRegistersP16, $t),
                 other => Err(unsupported_precision(other)),
             }
         };
@@ -222,7 +220,7 @@ pub(crate) fn row_hll_hip_lib(
 }
 
 fn lg_k(req: &Requirement) -> Result<u8, RunError> {
-    let p: sketch_bench::params::HllParams = req
+    let p: crate::params::HllParams = req
         .params
         .parse()
         .map_err(|e: aqpbm_core::DataGenError| RunError::Sketch(e.to_string()))?;

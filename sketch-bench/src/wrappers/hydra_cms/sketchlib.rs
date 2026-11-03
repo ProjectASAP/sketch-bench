@@ -9,13 +9,12 @@ use crate::wrappers::frequency_value::FrequencyValue;
 use crate::wrappers::partition;
 use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
 use asap_sketchlib::input::{HydraCounter, HydraQuery};
-use asap_sketchlib::{CountMin, FastPath, Hydra, Vector2D};
+use asap_sketchlib::{CountMinSketch, FastPath, Hydra, Vector2D};
 use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct HydraCms {
     pub(super) inner: Hydra,
-    params: HydraCmsParams,
 }
 
 /// `label_columns`: the key columns every record carries.
@@ -27,13 +26,11 @@ pub fn build_hydra_cms(config: &ParamSet, label_columns: usize) -> Result<HydraC
             return Err(BuildError(format!("hydra-cms: {name} must be > 0")));
         }
     }
-    let cell = HydraCounter::CM(CountMin::<Vector2D<i32>, FastPath>::with_dimensions(
-        p.cell_rows,
-        p.cell_cols,
-    ));
+    let cell = HydraCounter::CountMinSketch(
+        CountMinSketch::<Vector2D<i32>, FastPath>::with_dimensions(p.cell_rows, p.cell_cols),
+    );
     Ok(HydraCms {
         inner: new_hydra(p.rows, p.cols, label_columns, cell, "hydra-cms")?,
-        params: p,
     })
 }
 
@@ -53,12 +50,8 @@ impl HydraCms {
     }
 }
 
-/// The grid holds `rows * cols` cells and every cell is a full Count-Min of
-/// `i32` counters, so the counter term is the product of both shapes.
 pub fn memory_hydra_cms(sketch: &HydraCms) -> usize {
-    let p = &sketch.params;
-    p.rows * p.cols * p.cell_rows * p.cell_cols * std::mem::size_of::<i32>()
-        + grid_overhead_bytes(p.rows, p.cols)
+    sketch.inner.memory_bytes()
 }
 
 pub fn insert_hydra_cms<V: FrequencyValue>(

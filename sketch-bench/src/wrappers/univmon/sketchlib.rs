@@ -8,50 +8,45 @@ use std::rc::Rc;
 
 pub struct UnivMonLib {
     pub(super) inner: UnivMon,
-    params: UnivMonParams,
 }
 
 pub fn build_univmon_lib(config: &ParamSet) -> Result<UnivMonLib, BuildError> {
     let p: UnivMonParams = config.parse()?;
     check_shape(&p, "univmon")?;
     Ok(UnivMonLib {
-        inner: UnivMon::init_univmon(p.heap_size, p.sketch_row, p.sketch_col, p.layer_size),
-        params: p,
+        inner: UnivMon::new(p.heap_size, p.sketch_row, p.sketch_col, p.layer_size),
     })
 }
 
 impl UnivMonLib {
     #[inline]
     pub(super) fn feed<K: UnivMonKey>(&mut self, record: &Record<K>) {
-        self.inner.insert(&record.0.data_input(), record.1);
+        self.inner.update_weighted(&record.0.data_input(), record.1);
     }
 
     #[inline]
     pub fn estimate_cardinality(&self) -> f64 {
-        self.inner.calc_card()
+        self.inner.estimate_cardinality()
     }
 
     #[inline]
     pub fn estimate_l1_norm(&self) -> f64 {
-        self.inner.calc_l1()
+        self.inner.estimate_l1()
     }
 
     #[inline]
     pub fn estimate_l2_norm(&self) -> f64 {
-        self.inner.calc_l2()
+        self.inner.estimate_l2()
     }
 
     #[inline]
     pub fn estimate_entropy(&self) -> f64 {
-        self.inner.calc_entropy()
+        self.inner.estimate_entropy()
     }
 }
 
 pub fn memory_univmon_lib(sketch: &UnivMonLib) -> usize {
-    let p = &sketch.params;
-    let counters = (p.sketch_row * p.sketch_col + p.sketch_row) * std::mem::size_of::<i64>();
-    let heap = crate::wrappers::hh_heap_footprint(p.heap_size);
-    p.layer_size * (counters + heap)
+    sketch.inner.memory_bytes()
 }
 
 pub fn insert_univmon_lib<K: UnivMonKey>(
@@ -328,7 +323,6 @@ fn univmon_lib_shards<K: UnivMonKey>(
 // reaches -- cut to the `TOPK_K` heaviest.
 
 use crate::wrappers::cms_heap::sketchlib::{top_k, TopkAnswer, TOPK_K};
-use asap_sketchlib::heap_item_to_sketch_input;
 
 fn univmon_lib_item_shards<T: FrequencyValue>(
     params: &ParamSet,
@@ -339,7 +333,7 @@ fn univmon_lib_item_shards<T: FrequencyValue>(
     for shard in partition(items, shards) {
         let mut sketch = build_univmon_lib(params)?;
         for v in shard {
-            sketch.inner.insert(&v.data_input(), 1);
+            sketch.inner.update_weighted(&v.data_input(), 1);
         }
         parts.push(sketch);
     }
@@ -361,7 +355,7 @@ pub fn insert_univmon_lib_items<T: FrequencyValue>(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.insert(&v.data_input(), 1);
+                sketch.inner.update_weighted(&v.data_input(), 1);
             }
             memory_univmon_lib(&sketch)
         }) as Pass);
@@ -381,7 +375,12 @@ pub fn insert_step_univmon_lib_items<T: FrequencyValue>(
         let stream = items.clone();
         out.push(StepPass {
             steps: items.len(),
-            step: Box::new(move |i| driven.borrow_mut().inner.insert(&stream[i].data_input(), 1)),
+            step: Box::new(move |i| {
+                driven
+                    .borrow_mut()
+                    .inner
+                    .update_weighted(&stream[i].data_input(), 1)
+            }),
             footprint: Box::new(move || memory_univmon_lib(&read.borrow())),
         });
     }
@@ -414,15 +413,16 @@ pub fn merge_query_univmon_lib_topk<T: FrequencyValue>(
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for _p in probes.iter() {
-                let ranked: TopkAnswer<T> = top_k(sketch.inner.hh_layers[0].heap().iter(), TOPK_K)
-                    .into_iter()
-                    .map(|item| {
-                        (
-                            T::from_data_input(&heap_item_to_sketch_input(&item.key)),
-                            item.count.max(0) as u64,
-                        )
-                    })
-                    .collect();
+                let ranked: TopkAnswer<T> =
+                    top_k(sketch.inner.layer_heaps[0].heap().iter(), TOPK_K)
+                        .into_iter()
+                        .map(|item| {
+                            (
+                                T::from_data_input(&item.key.as_data_input()),
+                                item.count.max(0) as u64,
+                            )
+                        })
+                        .collect();
                 answers.push(ranked);
             }
             let footprint = memory_univmon_lib(&sketch);
