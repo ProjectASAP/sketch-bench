@@ -1,5 +1,5 @@
 use super::*;
-use sketch_bench::wrappers::dd::{oxide as ddo, sketchlib as ddl};
+use crate::wrappers::dd::{oxide as ddo, sketchlib as ddl};
 
 // -------- DDSketch (quantile) --------
 

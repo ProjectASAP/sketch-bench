@@ -1,5 +1,5 @@
 use super::*;
-use sketch_bench::wrappers::univmon::{oxide as uo, sketchlib as ul};
+use crate::wrappers::univmon::{oxide as uo, sketchlib as ul};
 
 pub(crate) fn row_univmon_cardinality_lib(
     req: &Requirement,

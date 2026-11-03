@@ -7,9 +7,7 @@ use crate::params::*;
 pub mod polars;
 pub mod sketchlib;
 
-pub(crate) use super::hydra_shared::{
-    check_grid, grid_overhead_bytes, label_columns, labels, new_hydra, query, update,
-};
+pub(crate) use super::hydra_shared::{check_grid, label_columns, labels, new_hydra, query, update};
 
 #[cfg(test)]
 mod tests {
@@ -146,18 +144,6 @@ mod tests {
         };
         let err = err.to_string();
         assert!(err.contains("cols"), "error should name the field: {err}");
-    }
-
-    /// Footprint is the product of both shapes plus the grid's own cells, which
-    /// is the property that makes the two dimension pairs non-interchangeable.
-    #[test]
-    fn footprint_is_the_product_of_both_shapes() {
-        let h = built();
-        let counters = 3 * 64 * 3 * 256 * 4;
-        assert_eq!(memory_hydra_cms(&h), counters + grid_overhead_bytes(3, 64));
-        // The counters still dominate, so the overhead term must not be what
-        // the number is mostly made of.
-        assert!(memory_hydra_cms(&h) < counters * 2);
     }
 
     #[test]

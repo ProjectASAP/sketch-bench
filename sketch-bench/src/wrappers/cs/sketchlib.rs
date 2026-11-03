@@ -10,7 +10,7 @@ use crate::wrappers::{
 };
 use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
 use asap_sketchlib::{
-    Count, DefaultXxHasher, FastPath, FastPathHasher, MatrixStorage, RegularPath, Vector2D,
+    CountSketch, DefaultXxHasher, FastPath, FastPathHasher, MatrixStorage, RegularPath, Vector2D,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -18,14 +18,14 @@ use std::rc::Rc;
 use crate::wrappers::frequency_value::FrequencyValue;
 use std::sync::Barrier;
 
-pub struct CsLibFixedmatrix<M: MatrixStorage>(pub Count<M, FastPath>);
+pub struct CsLibFixedmatrix<M: MatrixStorage>(pub CountSketch<M, FastPath>);
 
 pub fn build_cs_lib_fixedmatrix<M>(config: &ParamSet) -> Result<CsLibFixedmatrix<M>, BuildError>
 where
     M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
 {
     let p: CountSketchParams = config.parse()?;
-    let inner = Count::<M, FastPath>::from_storage(M::default());
+    let inner = CountSketch::<M, FastPath>::from_storage(M::default());
     require_shape(p.rows, p.cols, inner.rows(), inner.cols())?;
     Ok(CsLibFixedmatrix(inner))
 }
@@ -34,7 +34,7 @@ pub fn memory_cs_lib_fixedmatrix<M>(sketch: &CsLibFixedmatrix<M>) -> usize
 where
     M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
 {
-    sketch.0.rows() * sketch.0.cols() * std::mem::size_of::<i32>()
+    sketch.0.memory_bytes()
 }
 
 /// The CountSketch counterpart of `CmsFixedMatrixRow`.
@@ -42,9 +42,7 @@ pub struct CsFixedMatrixRow;
 
 // ---------- asap_sketchlib: Vector2D + FastPath ----------
 pub struct CsLibVector2dFast {
-    inner: Count<Vector2D<i32>, FastPath>,
-    rows: usize,
-    cols: usize,
+    inner: CountSketch<Vector2D<i32>, FastPath>,
 }
 
 pub fn build_cs_lib_vector2d_fast(config: &ParamSet) -> Result<CsLibVector2dFast, BuildError> {
@@ -56,21 +54,17 @@ pub fn build_cs_lib_vector2d_fast(config: &ParamSet) -> Result<CsLibVector2dFast
     require_positive("asap Count Vector2D FastPath", "rows", p.rows)?;
     require_positive("asap Count Vector2D FastPath", "cols", p.cols)?;
     Ok(CsLibVector2dFast {
-        inner: Count::<Vector2D<i32>, FastPath>::with_dimensions(p.rows, p.cols),
-        rows: p.rows,
-        cols: p.cols,
+        inner: CountSketch::<Vector2D<i32>, FastPath>::with_dimensions(p.rows, p.cols),
     })
 }
 
 pub fn memory_cs_lib_vector2d_fast(sketch: &CsLibVector2dFast) -> usize {
-    sketch.rows * sketch.cols * std::mem::size_of::<i32>()
+    sketch.inner.memory_bytes()
 }
 
 // ---------- asap_sketchlib: Vector2D + RegularPath ----------
 pub struct CsLibVector2dRegular {
-    inner: Count<Vector2D<i32>, RegularPath>,
-    rows: usize,
-    cols: usize,
+    inner: CountSketch<Vector2D<i32>, RegularPath>,
 }
 
 pub fn build_cs_lib_vector2d_regular(
@@ -84,14 +78,12 @@ pub fn build_cs_lib_vector2d_regular(
     require_positive("asap Count Vector2D RegularPath", "rows", p.rows)?;
     require_positive("asap Count Vector2D RegularPath", "cols", p.cols)?;
     Ok(CsLibVector2dRegular {
-        inner: Count::<Vector2D<i32>, RegularPath>::with_dimensions(p.rows, p.cols),
-        rows: p.rows,
-        cols: p.cols,
+        inner: CountSketch::<Vector2D<i32>, RegularPath>::with_dimensions(p.rows, p.cols),
     })
 }
 
 pub fn memory_cs_lib_vector2d_regular(sketch: &CsLibVector2dRegular) -> usize {
-    sketch.rows * sketch.cols * std::mem::size_of::<i32>()
+    sketch.inner.memory_bytes()
 }
 
 fn run_parallel_cs<T: FrequencyValue>(items: &[T], workers: usize) {
@@ -101,10 +93,10 @@ fn run_parallel_cs<T: FrequencyValue>(items: &[T], workers: usize) {
         for part in &parts {
             let barrier = &barrier;
             s.spawn(move || {
-                let mut sketch = Count::<M5x32K, FastPath>::from_storage(M5x32K::default());
+                let mut sketch = CountSketch::<M5x32K, FastPath>::from_storage(M5x32K::default());
                 barrier.wait();
                 for v in *part {
-                    sketch.insert_emit_delta(&v.data_input(), &mut |d| {
+                    sketch.update_emit_delta(&v.data_input(), &mut |d| {
                         std::hint::black_box(&d);
                     });
                 }
@@ -131,7 +123,8 @@ pub fn build_parallel_cs_fast_path(
 }
 
 pub fn memory_parallel_cs_fast_path(sketch: &ParallelCsFastPath) -> usize {
-    sketch.workers * (PARALLEL_ROWS * PARALLEL_COLS * std::mem::size_of::<i32>())
+    sketch.workers
+        * CountSketch::<M5x32K, FastPath>::theoretical_memory_bytes(PARALLEL_ROWS, PARALLEL_COLS)
 }
 
 pub fn insert_cs_lib_fixedmatrix<M, T>(
@@ -150,7 +143,7 @@ where
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.0.insert(&v.data_input());
+                sketch.0.update(&v.data_input());
             }
             memory_cs_lib_fixedmatrix::<M>(&sketch)
         }) as Pass);
@@ -177,7 +170,7 @@ where
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.0.insert(&v.data_input());
+                sketch.0.update(&v.data_input());
             }),
             footprint: Box::new(move || memory_cs_lib_fixedmatrix::<M>(&read.borrow())),
         });
@@ -298,7 +291,7 @@ where
     for shard in partition(items, shards) {
         let mut sketch = build_cs_lib_fixedmatrix::<M>(params)?;
         for v in shard {
-            sketch.0.insert(&v.data_input());
+            sketch.0.update(&v.data_input());
         }
         parts.push(sketch);
     }
@@ -321,7 +314,7 @@ pub fn insert_cs_lib_vector2d_fast<T: FrequencyValue>(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.insert(&v.data_input());
+                sketch.inner.update(&v.data_input());
             }
             memory_cs_lib_vector2d_fast(&sketch)
         }) as Pass);
@@ -344,7 +337,7 @@ pub fn insert_step_cs_lib_vector2d_fast<T: FrequencyValue>(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.insert(&v.data_input());
+                sketch.inner.update(&v.data_input());
             }),
             footprint: Box::new(move || memory_cs_lib_vector2d_fast(&read.borrow())),
         });
@@ -445,7 +438,7 @@ fn cs_lib_vector2d_fast_shards<T: FrequencyValue>(
     for shard in partition(items, shards) {
         let mut sketch = build_cs_lib_vector2d_fast(params)?;
         for v in shard {
-            sketch.inner.insert(&v.data_input());
+            sketch.inner.update(&v.data_input());
         }
         parts.push(sketch);
     }
@@ -468,7 +461,7 @@ pub fn insert_cs_lib_vector2d_regular<T: FrequencyValue>(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.insert(&v.data_input());
+                sketch.inner.update(&v.data_input());
             }
             memory_cs_lib_vector2d_regular(&sketch)
         }) as Pass);
@@ -491,7 +484,7 @@ pub fn insert_step_cs_lib_vector2d_regular<T: FrequencyValue>(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.insert(&v.data_input());
+                sketch.inner.update(&v.data_input());
             }),
             footprint: Box::new(move || memory_cs_lib_vector2d_regular(&read.borrow())),
         });
@@ -592,7 +585,7 @@ fn cs_lib_vector2d_regular_shards<T: FrequencyValue>(
     for shard in partition(items, shards) {
         let mut sketch = build_cs_lib_vector2d_regular(params)?;
         for v in shard {
-            sketch.inner.insert(&v.data_input());
+            sketch.inner.update(&v.data_input());
         }
         parts.push(sketch);
     }

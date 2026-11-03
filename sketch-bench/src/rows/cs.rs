@@ -1,5 +1,5 @@
 use super::*;
-use sketch_bench::wrappers::cs::{oxide as so, polars as sp, sketchlib as sl};
+use crate::wrappers::cs::{oxide as so, polars as sp, sketchlib as sl};
 
 // -------- CountSketch (frequency) --------
 

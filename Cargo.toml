@@ -55,7 +55,7 @@ bitflags = "2"
 polars = { version = "0.46", features = ["lazy", "ipc", "ipc_streaming"] }
 sketch_oxide = "0.1.6"
 datasketches = "0.2.0"
-asap_sketchlib = { version = "0.3.0", features = ["experimental"] }
+asap_sketchlib = { git = "https://github.com/ProjectASAP/asap_sketchlib", rev = "a05b35ce14e4079eaa6acb29dd8c416bd1a2a3d1", features = ["experimental"] }
 
 # Internal workspace crates.
 aqpbm-datagen = { path = "aqpbm-datagen" }

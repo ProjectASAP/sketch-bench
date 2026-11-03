@@ -9,13 +9,12 @@ use crate::wrappers::frequency_value::FrequencyValue;
 use crate::wrappers::partition;
 use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
 use asap_sketchlib::input::{HydraCounter, HydraQuery};
-use asap_sketchlib::{Count, FastPath, Hydra, Vector2D};
+use asap_sketchlib::{CountSketch, FastPath, Hydra, Vector2D};
 use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct HydraCs {
     pub(super) inner: Hydra,
-    params: HydraCsParams,
 }
 
 /// `label_columns`: the key columns every record carries.
@@ -27,13 +26,12 @@ pub fn build_hydra_cs(config: &ParamSet, label_columns: usize) -> Result<HydraCs
             return Err(BuildError(format!("hydra-cs: {name} must be > 0")));
         }
     }
-    let cell = HydraCounter::CS(Count::<Vector2D<i32>, FastPath>::with_dimensions(
+    let cell = HydraCounter::CountSketch(CountSketch::<Vector2D<i32>, FastPath>::with_dimensions(
         p.cell_rows,
         p.cell_cols,
     ));
     Ok(HydraCs {
         inner: new_hydra(p.rows, p.cols, label_columns, cell, "hydra-cs")?,
-        params: p,
     })
 }
 
@@ -53,12 +51,8 @@ impl HydraCs {
     }
 }
 
-/// The grid holds `rows * cols` cells and every cell is a full Count Sketch of
-/// `i32` counters, so the counter term is the product of both shapes.
 pub fn memory_hydra_cs(sketch: &HydraCs) -> usize {
-    let p = &sketch.params;
-    p.rows * p.cols * p.cell_rows * p.cell_cols * std::mem::size_of::<i32>()
-        + grid_overhead_bytes(p.rows, p.cols)
+    sketch.inner.memory_bytes()
 }
 
 pub fn insert_hydra_cs<V: FrequencyValue>(

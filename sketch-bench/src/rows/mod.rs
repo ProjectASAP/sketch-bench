@@ -1,12 +1,12 @@
 //! Which sketch a pair of strings names: the only place in the program where a
-//! name is bound to code. [`registry`](sketch_bench::registry) declares what rows
+//! name is bound to code. [`registry`](crate::registry) declares what rows
 //! exist; this binds each one to its wrapper.
 
 use std::marker::PhantomData;
 use std::rc::Rc;
 
-use sketch_bench::request::{Dtype, Requirement};
-use sketch_bench::wrappers::{
+use crate::request::{Dtype, Requirement};
+use crate::wrappers::{
     interleave, BuildError, Folds, InsertBody, InsertStepBody, MergeSplit, ParallelInsertBody,
     PrepareBody, QueryBody, QueryPass, StepPass,
 };
@@ -16,6 +16,7 @@ use sketch_bench::wrappers::{
 fn cannot_build(e: BuildError) -> RunError {
     RunError::Sketch(e.0)
 }
+use crate::wrappers::frequency_value::FrequencyValue;
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::accuracy::frequency::FrequencyGT;
 use aqpbm_core::accuracy::keyed::{
@@ -35,7 +36,6 @@ use aqpbm_core::measure::{
 };
 use aqpbm_core::metrics::{Metric, Operation};
 use aqpbm_core::{ColumnItem, GeneratedTable, TableDescription};
-use sketch_bench::wrappers::frequency_value::FrequencyValue;
 
 const KEYED_KEY_COLUMN: usize = 0;
 
@@ -67,7 +67,7 @@ pub fn measurements(
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    sketch_bench::registry::find(&req.variant, &req.library).ok_or_else(|| {
+    crate::registry::find(&req.variant, &req.library).ok_or_else(|| {
         RunError::Sketch(format!(
             "{}/{} is not a registered row",
             req.variant, req.library
@@ -192,7 +192,7 @@ use univmon::*;
 #[cfg(test)]
 mod tests {
     use super::binding;
-    use sketch_bench::registry::REGISTRY;
+    use crate::registry::REGISTRY;
 
     #[test]
     fn every_registered_pair_is_bound() {

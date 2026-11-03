@@ -117,14 +117,6 @@ pub type Folds<I, P, A> = (MergeBody<I>, MergeStepBody<I>, MergeQueryBody<I, P, 
 /// Prime `passes` runs of the step that makes a fed sketch ready to answer.
 pub type PrepareBody<I> = fn(&ParamSet, Rc<Vec<I>>, usize) -> Result<Vec<Pass>, BuildError>;
 
-// The library types a caller has to *name* to select one of the monomorphisations
-// below. Re-exported so picking a shape or a precision does not mean depending on
-// `asap_sketchlib` directly — this crate is where the wrapped libraries live.
-pub use asap_sketchlib::{
-    DefaultXxHasher, FastPathHasher, HllBucketListP12, HllBucketListP14, HllBucketListP16,
-    MatrixStorage,
-};
-
 // What the three parallel-insert rows share: a per-worker sketch whose shape is
 // a compile-time type, so any other request is refused. Its own type, not the
 // `M5x32768` in `fixed_matrix`, so pruning that table cannot move this shape.
@@ -244,16 +236,6 @@ pub(crate) fn require_resolved_shape(
         )));
     }
     Ok(())
-}
-
-/// Bytes a top-k heap of `capacity` residents holds in asap_sketchlib 0.3:
-/// the `HHItem` array, the digest column and the position index
-/// ([`aqpbm_core::hh_heap_bytes`]). Integer keys own no further bytes.
-pub fn hh_heap_footprint(capacity: usize) -> usize {
-    aqpbm_core::hh_heap_bytes(
-        capacity,
-        std::mem::size_of::<asap_sketchlib::input::HHItem>(),
-    )
 }
 
 #[cfg(test)]

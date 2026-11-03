@@ -1,5 +1,5 @@
 use super::*;
-use sketch_bench::wrappers::kll::{oxide as ko, polars as kp, sketchlib as kl};
+use crate::wrappers::kll::{oxide as ko, polars as kp, sketchlib as kl};
 
 // -------- KLL (quantile) --------
 //

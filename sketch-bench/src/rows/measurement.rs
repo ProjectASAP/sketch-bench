@@ -7,7 +7,7 @@ use super::*;
 
 /// A pass that only does work: its unit count is the work it covers, which the
 /// row knows because it handed the stream over.
-pub(super) fn timed(passes: Vec<sketch_bench::wrappers::Pass>, work: u64) -> Measurement {
+pub(super) fn timed(passes: Vec<crate::wrappers::Pass>, work: u64) -> Measurement {
     passes
         .into_iter()
         .map(|pass| {

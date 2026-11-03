@@ -1,8 +1,8 @@
 use super::*;
-use sketch_bench::wrappers::hydra_cms::{polars as hp, sketchlib as hs};
-use sketch_bench::wrappers::hydra_cs::{polars as hcp, sketchlib as hcs};
-use sketch_bench::wrappers::hydra_hll::{polars as hhp, sketchlib as hhs};
-use sketch_bench::wrappers::hydra_kll::{polars as hkp, sketchlib as hks};
+use crate::wrappers::hydra_cms::{polars as hp, sketchlib as hs};
+use crate::wrappers::hydra_cs::{polars as hcp, sketchlib as hcs};
+use crate::wrappers::hydra_hll::{polars as hhp, sketchlib as hhs};
+use crate::wrappers::hydra_kll::{polars as hkp, sketchlib as hks};
 
 // -------- Hydra (per-subpopulation statistics over labelled records) --------
 

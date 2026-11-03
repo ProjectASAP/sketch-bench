@@ -1,5 +1,5 @@
 use super::*;
-use sketch_bench::wrappers::cms_heap::sketchlib as chl;
+use crate::wrappers::cms_heap::sketchlib as chl;
 
 // ---------- the statistic a row answers ----------
 

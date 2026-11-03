@@ -9,21 +9,20 @@ use crate::wrappers::partition;
 use crate::wrappers::quantile_value::QuantileValue;
 use crate::wrappers::{BuildError, Pass, QueryPass, Shared, StepPass};
 use asap_sketchlib::input::{HydraCounter, HydraQuery};
-use asap_sketchlib::{Hydra, KLL};
+use asap_sketchlib::{Hydra, Kll};
 use std::cell::RefCell;
 use std::rc::Rc;
 
 /// Hydra over KLL cells.
 pub struct HydraKll {
     pub(super) inner: Hydra,
-    params: HydraKllParams,
 }
 
 /// `label_columns`: the key columns every record carries.
 pub fn build_hydra_kll(config: &ParamSet, label_columns: usize) -> Result<HydraKll, BuildError> {
     let p: HydraKllParams = config.parse()?;
     check_grid(p.rows, p.cols, "hydra-kll")?;
-    // The cell is the same `asap_sketchlib::KLL` the `kll-*` rows hold, and it
+    // The cell is the same `asap_sketchlib::Kll` the `kll-*` rows hold, and it
     // clamps `k` to its own range without saying so. Refuse for the same reason
     // those rows do: the grid would be built at a `cell_k` the record misnames.
     if !(crate::wrappers::kll::LIB_K_MIN..=crate::wrappers::kll::LIB_K_MAX).contains(&p.cell_k) {
@@ -34,10 +33,9 @@ pub fn build_hydra_kll(config: &ParamSet, label_columns: usize) -> Result<HydraK
             crate::wrappers::kll::LIB_K_MAX
         )));
     }
-    let cell = HydraCounter::KLL(KLL::init_kll(p.cell_k as i32));
+    let cell = HydraCounter::Kll(Kll::with_k(p.cell_k as i32));
     Ok(HydraKll {
         inner: new_hydra(p.rows, p.cols, label_columns, cell, "hydra-kll")?,
-        params: p,
     })
 }
 
@@ -58,15 +56,8 @@ impl HydraKll {
     }
 }
 
-/// One `asap_sketchlib::KLL` per cell times the grid area: its retained
-/// slots and level index, allocated with the grid, plus its merge buffer at
-/// its `cell_k`-item bound (`kll_lib_bytes`). The grid clones its cells from
-/// one template and a cloned `Vec` keeps no capacity, so a cell's buffer is
-/// empty at build and grows to about `cell_k` items once its level 0 first
-/// compacts: this is the steady-state footprint, not the one at build.
 pub fn memory_hydra_kll(sketch: &HydraKll) -> usize {
-    let p = &sketch.params;
-    p.rows * p.cols * kll_cell_bytes::<f64>(p.cell_k) + grid_overhead_bytes(p.rows, p.cols)
+    sketch.inner.memory_bytes()
 }
 
 pub fn insert_hydra_kll<V: QuantileValue + 'static>(

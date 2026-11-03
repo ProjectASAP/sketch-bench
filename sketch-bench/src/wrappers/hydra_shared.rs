@@ -95,13 +95,6 @@ pub(crate) fn check_grid(rows: usize, cols: usize, algorithm: &str) -> Result<()
     Ok(())
 }
 
-/// Bytes the grid itself costs, on top of the counters inside the cells: every
-/// cell is an enum around a sketch struct, plus the prototype `Hydra` clones
-/// from. Separate from the counter bytes, so every row states both components.
-pub(crate) fn grid_overhead_bytes(rows: usize, cols: usize) -> usize {
-    (rows * cols + 1) * std::mem::size_of::<HydraCounter>()
-}
-
 #[cfg(test)]
 mod tests {
     use crate::params::{HydraCmsParams, HydraCsParams, HydraHllParams, ParamSet};

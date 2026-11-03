@@ -1,4 +1,4 @@
-//! `asap_sketchlib::CSHeap` — a Count Sketch paired with a top-k heap. The
+//! `asap_sketchlib::CountSketchWithHeap` — a Count Sketch paired with a top-k heap. The
 //! CountSketch counterpart of `cms_heap`'s top-k row, and graded the same way:
 //! the heap holds `heap` items (default `topk_k`) and the answer is its
 //! heaviest `topk_k` (default `TOPK_K`), the `k` `TopkGT` grades against.
@@ -9,15 +9,12 @@ use crate::params::{CsHeapParams, ParamSet};
 use crate::wrappers::cms_heap::sketchlib::{heap_capacity, top_k, TopkAnswer};
 use crate::wrappers::frequency_value::FrequencyValue;
 use crate::wrappers::{require_positive, BuildError, Pass, QueryPass, Shared, StepPass};
-use asap_sketchlib::{heap_item_to_sketch_input, CSHeap, FastPath, Vector2D};
+use asap_sketchlib::{CountSketchWithHeap, FastPath, Vector2D};
 use std::cell::RefCell;
 use std::rc::Rc;
 
 pub struct CsHeapLibVector2dFast {
-    inner: CSHeap<Vector2D<i32>, FastPath>,
-    rows: usize,
-    cols: usize,
-    heap: usize,
+    inner: CountSketchWithHeap<Vector2D<i32>, FastPath>,
     k: usize,
 }
 
@@ -25,22 +22,21 @@ pub fn build_cs_heap_lib_vector2d_fast(
     config: &ParamSet,
 ) -> Result<CsHeapLibVector2dFast, BuildError> {
     let p: CsHeapParams = config.parse()?;
-    require_positive("asap CSHeap Vector2D FastPath", "rows", p.rows)?;
-    require_positive("asap CSHeap Vector2D FastPath", "cols", p.cols)?;
-    let (heap, k) = heap_capacity("asap CSHeap Vector2D FastPath", p.heap, p.topk_k)?;
+    require_positive("asap CountSketchWithHeap Vector2D FastPath", "rows", p.rows)?;
+    require_positive("asap CountSketchWithHeap Vector2D FastPath", "cols", p.cols)?;
+    let (heap, k) = heap_capacity(
+        "asap CountSketchWithHeap Vector2D FastPath",
+        p.heap,
+        p.topk_k,
+    )?;
     Ok(CsHeapLibVector2dFast {
-        inner: CSHeap::<Vector2D<i32>, FastPath>::new(p.rows, p.cols, heap),
-        rows: p.rows,
-        cols: p.cols,
-        heap,
+        inner: CountSketchWithHeap::<Vector2D<i32>, FastPath>::new(p.rows, p.cols, heap),
         k,
     })
 }
 
-/// Counter matrix plus a full heap, as `cms_heap` counts it.
 pub fn memory_cs_heap_lib_vector2d_fast(sketch: &CsHeapLibVector2dFast) -> usize {
-    sketch.rows * sketch.cols * std::mem::size_of::<i32>()
-        + crate::wrappers::hh_heap_footprint(sketch.heap)
+    sketch.inner.memory_bytes()
 }
 
 pub fn insert_cs_heap_lib_vector2d_fast<T: FrequencyValue>(
@@ -54,7 +50,7 @@ pub fn insert_cs_heap_lib_vector2d_fast<T: FrequencyValue>(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.insert(&v.data_input());
+                sketch.inner.update(&v.data_input());
             }
             memory_cs_heap_lib_vector2d_fast(&sketch)
         }) as Pass);
@@ -74,7 +70,7 @@ pub fn insert_step_cs_heap_lib_vector2d_fast<T: FrequencyValue>(
         let stream = items.clone();
         out.push(StepPass {
             steps: items.len(),
-            step: Box::new(move |i| driven.borrow_mut().inner.insert(&stream[i].data_input())),
+            step: Box::new(move |i| driven.borrow_mut().inner.update(&stream[i].data_input())),
             footprint: Box::new(move || memory_cs_heap_lib_vector2d_fast(&read.borrow())),
         });
     }
@@ -111,7 +107,7 @@ pub fn merge_query_cs_heap_lib_vector2d_fast_topk<T: FrequencyValue>(
                     .into_iter()
                     .map(|item| {
                         (
-                            T::from_data_input(&heap_item_to_sketch_input(&item.key)),
+                            T::from_data_input(&item.key.as_data_input()),
                             item.count.max(0) as u64,
                         )
                     })
@@ -174,7 +170,7 @@ fn cs_heap_lib_vector2d_fast_shards<T: FrequencyValue>(
     for shard in crate::wrappers::partition(items, shards) {
         let mut sketch = build_cs_heap_lib_vector2d_fast(params)?;
         for v in shard {
-            sketch.inner.insert(&v.data_input());
+            sketch.inner.update(&v.data_input());
         }
         parts.push(sketch);
     }

@@ -1,4 +1,4 @@
-//! The `asap_sketchlib::CMSHeap` implementation. `Vector2D` storage only,
+//! The `asap_sketchlib::CountMinSketchWithHeap` implementation. `Vector2D` storage only,
 //! `FastPath`/`RegularPath` hashing — no `FixedMatrix` or parallel-insert
 //! variant, see the follow-up issue linked from #95.
 
@@ -8,8 +8,8 @@ use crate::wrappers::{require_positive, BuildError, Pass, QueryPass, Shared, Ste
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use asap_sketchlib::input::HHItem;
-use asap_sketchlib::{heap_item_to_sketch_input, CMSHeap, FastPath, RegularPath, Vector2D};
+use asap_sketchlib::input::HeapEntry;
+use asap_sketchlib::{CountMinSketchWithHeap, FastPath, RegularPath, Vector2D};
 
 /// The `k` a top-k row answers and is graded at when `--config` sets no
 /// `topk_k`, and the heap's capacity when it sets no `heap`. A larger heap
@@ -50,9 +50,9 @@ pub fn answered_k(params: &ParamSet) -> usize {
 }
 
 /// A heap's contents, heaviest first, cut to the `k` a top-k query answers.
-pub fn top_k<'a>(items: impl Iterator<Item = &'a HHItem>, k: usize) -> Vec<&'a HHItem> {
-    let mut items: Vec<&HHItem> = items.collect();
-    let heaviest = |item: &&HHItem| std::cmp::Reverse(item.count);
+pub fn top_k<'a>(items: impl Iterator<Item = &'a HeapEntry>, k: usize) -> Vec<&'a HeapEntry> {
+    let mut items: Vec<&HeapEntry> = items.collect();
+    let heaviest = |item: &&HeapEntry| std::cmp::Reverse(item.count);
     // Select the heaviest k without sorting the rest: the query's cost is
     // what's benchmarked.
     if items.len() > k {
@@ -73,10 +73,7 @@ pub type TopkAnswer<T> = Vec<(T, u64)>;
 
 // ---------- asap_sketchlib: Vector2D + FastPath ----------
 pub struct CmsHeapLibVector2dFast {
-    inner: CMSHeap<Vector2D<i32>, FastPath>,
-    rows: usize,
-    cols: usize,
-    heap: usize,
+    inner: CountMinSketchWithHeap<Vector2D<i32>, FastPath>,
     k: usize,
 }
 
@@ -84,31 +81,34 @@ pub fn build_cms_heap_lib_vector2d_fast(
     config: &ParamSet,
 ) -> Result<CmsHeapLibVector2dFast, BuildError> {
     let p: CmsHeapParams = config.parse()?;
-    require_positive("asap CMSHeap Vector2D FastPath", "rows", p.rows)?;
-    require_positive("asap CMSHeap Vector2D FastPath", "cols", p.cols)?;
-    let (heap, k) = heap_capacity("asap CMSHeap Vector2D FastPath", p.heap, p.topk_k)?;
+    require_positive(
+        "asap CountMinSketchWithHeap Vector2D FastPath",
+        "rows",
+        p.rows,
+    )?;
+    require_positive(
+        "asap CountMinSketchWithHeap Vector2D FastPath",
+        "cols",
+        p.cols,
+    )?;
+    let (heap, k) = heap_capacity(
+        "asap CountMinSketchWithHeap Vector2D FastPath",
+        p.heap,
+        p.topk_k,
+    )?;
     Ok(CmsHeapLibVector2dFast {
-        inner: CMSHeap::<Vector2D<i32>, FastPath>::new(p.rows, p.cols, heap),
-        rows: p.rows,
-        cols: p.cols,
-        heap,
+        inner: CountMinSketchWithHeap::<Vector2D<i32>, FastPath>::new(p.rows, p.cols, heap),
         k,
     })
 }
 
-/// The counter matrix plus a full heap of `heap` `HHItem`s, counted the way
-/// UnivMon counts its heaps so the TopK rows compare like for like.
 pub fn memory_cms_heap_lib_vector2d_fast(sketch: &CmsHeapLibVector2dFast) -> usize {
-    sketch.rows * sketch.cols * std::mem::size_of::<i32>()
-        + crate::wrappers::hh_heap_footprint(sketch.heap)
+    sketch.inner.memory_bytes()
 }
 
 // ---------- asap_sketchlib: Vector2D + RegularPath ----------
 pub struct CmsHeapLibVector2dRegular {
-    inner: CMSHeap<Vector2D<i32>, RegularPath>,
-    rows: usize,
-    cols: usize,
-    heap: usize,
+    inner: CountMinSketchWithHeap<Vector2D<i32>, RegularPath>,
     k: usize,
 }
 
@@ -116,22 +116,30 @@ pub fn build_cms_heap_lib_vector2d_regular(
     config: &ParamSet,
 ) -> Result<CmsHeapLibVector2dRegular, BuildError> {
     let p: CmsHeapParams = config.parse()?;
-    require_positive("asap CMSHeap Vector2D RegularPath", "rows", p.rows)?;
-    require_positive("asap CMSHeap Vector2D RegularPath", "cols", p.cols)?;
-    let (heap, k) = heap_capacity("asap CMSHeap Vector2D RegularPath", p.heap, p.topk_k)?;
+    require_positive(
+        "asap CountMinSketchWithHeap Vector2D RegularPath",
+        "rows",
+        p.rows,
+    )?;
+    require_positive(
+        "asap CountMinSketchWithHeap Vector2D RegularPath",
+        "cols",
+        p.cols,
+    )?;
+    let (heap, k) = heap_capacity(
+        "asap CountMinSketchWithHeap Vector2D RegularPath",
+        p.heap,
+        p.topk_k,
+    )?;
     Ok(CmsHeapLibVector2dRegular {
-        inner: CMSHeap::<Vector2D<i32>, RegularPath>::new(p.rows, p.cols, heap),
-        rows: p.rows,
-        cols: p.cols,
-        heap,
+        inner: CountMinSketchWithHeap::<Vector2D<i32>, RegularPath>::new(p.rows, p.cols, heap),
         k,
     })
 }
 
 /// As [`memory_cms_heap_lib_vector2d_fast`].
 pub fn memory_cms_heap_lib_vector2d_regular(sketch: &CmsHeapLibVector2dRegular) -> usize {
-    sketch.rows * sketch.cols * std::mem::size_of::<i32>()
-        + crate::wrappers::hh_heap_footprint(sketch.heap)
+    sketch.inner.memory_bytes()
 }
 
 // ---------- insert / insert_step (FastPath) ----------
@@ -147,7 +155,7 @@ pub fn insert_cms_heap_lib_vector2d_fast<T: FrequencyValue>(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.insert(&v.data_input());
+                sketch.inner.update(&v.data_input());
             }
             memory_cms_heap_lib_vector2d_fast(&sketch)
         }) as Pass);
@@ -170,7 +178,7 @@ pub fn insert_step_cms_heap_lib_vector2d_fast<T: FrequencyValue>(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.insert(&v.data_input());
+                sketch.inner.update(&v.data_input());
             }),
             footprint: Box::new(move || memory_cms_heap_lib_vector2d_fast(&read.borrow())),
         });
@@ -191,7 +199,7 @@ pub fn insert_cms_heap_lib_vector2d_regular<T: FrequencyValue>(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.insert(&v.data_input());
+                sketch.inner.update(&v.data_input());
             }
             memory_cms_heap_lib_vector2d_regular(&sketch)
         }) as Pass);
@@ -214,7 +222,7 @@ pub fn insert_step_cms_heap_lib_vector2d_regular<T: FrequencyValue>(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.insert(&v.data_input());
+                sketch.inner.update(&v.data_input());
             }),
             footprint: Box::new(move || memory_cms_heap_lib_vector2d_regular(&read.borrow())),
         });
@@ -339,7 +347,7 @@ pub fn merge_query_cms_heap_lib_vector2d_fast_topk<T: FrequencyValue>(
                     .into_iter()
                     .map(|item| {
                         (
-                            T::from_data_input(&heap_item_to_sketch_input(&item.key)),
+                            T::from_data_input(&item.key.as_data_input()),
                             item.count as u64,
                         )
                     })
@@ -386,7 +394,7 @@ pub fn merge_query_cms_heap_lib_vector2d_regular_topk<T: FrequencyValue>(
                     .into_iter()
                     .map(|item| {
                         (
-                            T::from_data_input(&heap_item_to_sketch_input(&item.key)),
+                            T::from_data_input(&item.key.as_data_input()),
                             item.count as u64,
                         )
                     })
@@ -403,7 +411,7 @@ pub fn merge_query_cms_heap_lib_vector2d_regular_topk<T: FrequencyValue>(
 // ---------- merge (shared by both capability rows per backend) ----------
 //
 // Heavier than plain CMS's merge: after folding the counter matrices,
-// `CMSHeap::merge` re-estimates every heap candidate from both sides (up to
+// `CountMinSketchWithHeap::merge` re-estimates every heap candidate from both sides (up to
 // 2 * heap `estimate()` calls) to rebuild the merged heap. Not a
 // pure cell-fold the way plain CMS merge is — see the registry description.
 
@@ -460,7 +468,7 @@ fn cms_heap_lib_vector2d_fast_shards<T: FrequencyValue>(
     for shard in crate::wrappers::partition(items, shards) {
         let mut sketch = build_cms_heap_lib_vector2d_fast(params)?;
         for v in shard {
-            sketch.inner.insert(&v.data_input());
+            sketch.inner.update(&v.data_input());
         }
         parts.push(sketch);
     }
@@ -524,7 +532,7 @@ fn cms_heap_lib_vector2d_regular_shards<T: FrequencyValue>(
     for shard in crate::wrappers::partition(items, shards) {
         let mut sketch = build_cms_heap_lib_vector2d_regular(params)?;
         for v in shard {
-            sketch.inner.insert(&v.data_input());
+            sketch.inner.update(&v.data_input());
         }
         parts.push(sketch);
     }

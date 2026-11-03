@@ -15,18 +15,18 @@ use std::rc::Rc;
 use crate::wrappers::frequency_value::FrequencyValue;
 
 use asap_sketchlib::{
-    CountMin, DefaultXxHasher, FastPath, FastPathHasher, MatrixStorage, RegularPath, Vector2D,
+    CountMinSketch, DefaultXxHasher, FastPath, FastPathHasher, MatrixStorage, RegularPath, Vector2D,
 };
 use std::sync::Barrier;
 
-pub struct CmsLibFixedmatrix<M: MatrixStorage>(pub CountMin<M, FastPath>);
+pub struct CmsLibFixedmatrix<M: MatrixStorage>(pub CountMinSketch<M, FastPath>);
 
 pub fn build_cms_lib_fixedmatrix<M>(config: &ParamSet) -> Result<CmsLibFixedmatrix<M>, BuildError>
 where
     M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
 {
     let p: CmsParams = config.parse()?;
-    let inner = CountMin::<M, FastPath>::from_storage(M::default());
+    let inner = CountMinSketch::<M, FastPath>::from_storage(M::default());
     // The registry selected `M` from this same pair, so this only fires for a
     // direct caller. It fires rather than silently running at `M`'s shape.
     require_shape(p.rows, p.cols, inner.rows(), inner.cols())?;
@@ -37,8 +37,7 @@ pub fn memory_cms_lib_fixedmatrix<M>(sketch: &CmsLibFixedmatrix<M>) -> usize
 where
     M: MatrixStorage<Counter = i32> + FastPathHasher<DefaultXxHasher> + Default + Clone + 'static,
 {
-    // Off the built matrix, so it tracks whichever shape was selected.
-    sketch.0.rows() * sketch.0.cols() * std::mem::size_of::<i32>()
+    sketch.0.memory_bytes()
 }
 
 /// The shape-independent half of the fixed-matrix Count-Min row: its name, and
@@ -47,9 +46,7 @@ where
 pub struct CmsFixedMatrixRow;
 // ---------- asap_sketchlib: Vector2D + FastPath ----------
 pub struct CmsLibVector2dFast {
-    inner: CountMin<Vector2D<i32>, FastPath>,
-    rows: usize,
-    cols: usize,
+    inner: CountMinSketch<Vector2D<i32>, FastPath>,
 }
 
 pub fn build_cms_lib_vector2d_fast(config: &ParamSet) -> Result<CmsLibVector2dFast, BuildError> {
@@ -61,21 +58,17 @@ pub fn build_cms_lib_vector2d_fast(config: &ParamSet) -> Result<CmsLibVector2dFa
     require_positive("asap CMS Vector2D FastPath", "rows", p.rows)?;
     require_positive("asap CMS Vector2D FastPath", "cols", p.cols)?;
     Ok(CmsLibVector2dFast {
-        inner: CountMin::<Vector2D<i32>, FastPath>::with_dimensions(p.rows, p.cols),
-        rows: p.rows,
-        cols: p.cols,
+        inner: CountMinSketch::<Vector2D<i32>, FastPath>::with_dimensions(p.rows, p.cols),
     })
 }
 
 pub fn memory_cms_lib_vector2d_fast(sketch: &CmsLibVector2dFast) -> usize {
-    sketch.rows * sketch.cols * std::mem::size_of::<i32>()
+    sketch.inner.memory_bytes()
 }
 
 // ---------- asap_sketchlib: Vector2D + RegularPath ----------
 pub struct CmsLibVector2dRegular {
-    inner: CountMin<Vector2D<i32>, RegularPath>,
-    rows: usize,
-    cols: usize,
+    inner: CountMinSketch<Vector2D<i32>, RegularPath>,
 }
 
 pub fn build_cms_lib_vector2d_regular(
@@ -89,14 +82,12 @@ pub fn build_cms_lib_vector2d_regular(
     require_positive("asap CMS Vector2D RegularPath", "rows", p.rows)?;
     require_positive("asap CMS Vector2D RegularPath", "cols", p.cols)?;
     Ok(CmsLibVector2dRegular {
-        inner: CountMin::<Vector2D<i32>, RegularPath>::with_dimensions(p.rows, p.cols),
-        rows: p.rows,
-        cols: p.cols,
+        inner: CountMinSketch::<Vector2D<i32>, RegularPath>::with_dimensions(p.rows, p.cols),
     })
 }
 
 pub fn memory_cms_lib_vector2d_regular(sketch: &CmsLibVector2dRegular) -> usize {
-    sketch.rows * sketch.cols * std::mem::size_of::<i32>()
+    sketch.inner.memory_bytes()
 }
 
 /// CMS, parallel-insert FastPath.
@@ -120,7 +111,8 @@ pub fn build_parallel_cms_fast_path(
 }
 
 pub fn memory_parallel_cms_fast_path(sketch: &ParallelCmsFastPath) -> usize {
-    sketch.workers * (PARALLEL_ROWS * PARALLEL_COLS * std::mem::size_of::<i32>())
+    sketch.workers
+        * CountMinSketch::<M5x32K, FastPath>::theoretical_memory_bytes(PARALLEL_ROWS, PARALLEL_COLS)
 }
 
 /// The barrier is load-bearing: a worker inserting while its peers are still
@@ -133,10 +125,11 @@ fn run_parallel_cms<T: FrequencyValue>(items: &[T], workers: usize) {
         for part in &parts {
             let barrier = &barrier;
             s.spawn(move || {
-                let mut sketch = CountMin::<M5x32K, FastPath>::from_storage(M5x32K::default());
+                let mut sketch =
+                    CountMinSketch::<M5x32K, FastPath>::from_storage(M5x32K::default());
                 barrier.wait();
                 for v in *part {
-                    sketch.insert_emit_delta(&v.data_input(), &mut |d| {
+                    sketch.update_emit_delta(&v.data_input(), &mut |d| {
                         std::hint::black_box(&d);
                     });
                 }
@@ -162,7 +155,7 @@ where
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.0.insert(&v.data_input());
+                sketch.0.update(&v.data_input());
             }
             memory_cms_lib_fixedmatrix::<M>(&sketch)
         }) as Pass);
@@ -189,7 +182,7 @@ where
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.0.insert(&v.data_input());
+                sketch.0.update(&v.data_input());
             }),
             footprint: Box::new(move || memory_cms_lib_fixedmatrix::<M>(&read.borrow())),
         });
@@ -310,7 +303,7 @@ where
     for shard in partition(items, shards) {
         let mut sketch = build_cms_lib_fixedmatrix::<M>(params)?;
         for v in shard {
-            sketch.0.insert(&v.data_input());
+            sketch.0.update(&v.data_input());
         }
         parts.push(sketch);
     }
@@ -333,7 +326,7 @@ pub fn insert_cms_lib_vector2d_fast<T: FrequencyValue>(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.insert(&v.data_input());
+                sketch.inner.update(&v.data_input());
             }
             memory_cms_lib_vector2d_fast(&sketch)
         }) as Pass);
@@ -356,7 +349,7 @@ pub fn insert_step_cms_lib_vector2d_fast<T: FrequencyValue>(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.insert(&v.data_input());
+                sketch.inner.update(&v.data_input());
             }),
             footprint: Box::new(move || memory_cms_lib_vector2d_fast(&read.borrow())),
         });
@@ -457,7 +450,7 @@ fn cms_lib_vector2d_fast_shards<T: FrequencyValue>(
     for shard in partition(items, shards) {
         let mut sketch = build_cms_lib_vector2d_fast(params)?;
         for v in shard {
-            sketch.inner.insert(&v.data_input());
+            sketch.inner.update(&v.data_input());
         }
         parts.push(sketch);
     }
@@ -480,7 +473,7 @@ pub fn insert_cms_lib_vector2d_regular<T: FrequencyValue>(
         let items = items.clone();
         out.push(Box::new(move || {
             for v in items.iter() {
-                sketch.inner.insert(&v.data_input());
+                sketch.inner.update(&v.data_input());
             }
             memory_cms_lib_vector2d_regular(&sketch)
         }) as Pass);
@@ -503,7 +496,7 @@ pub fn insert_step_cms_lib_vector2d_regular<T: FrequencyValue>(
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
                 let v = &stream[i];
-                sketch.inner.insert(&v.data_input());
+                sketch.inner.update(&v.data_input());
             }),
             footprint: Box::new(move || memory_cms_lib_vector2d_regular(&read.borrow())),
         });
@@ -604,7 +597,7 @@ fn cms_lib_vector2d_regular_shards<T: FrequencyValue>(
     for shard in partition(items, shards) {
         let mut sketch = build_cms_lib_vector2d_regular(params)?;
         for v in shard {
-            sketch.inner.insert(&v.data_input());
+            sketch.inner.update(&v.data_input());
         }
         parts.push(sketch);
     }

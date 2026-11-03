@@ -1,6 +1,6 @@
 use super::*;
-use sketch_bench::wrappers::cms::sketchlib as cl;
-use sketch_bench::wrappers::cms_heap::sketchlib as chl;
+use crate::wrappers::cms::sketchlib as cl;
+use crate::wrappers::cms_heap::sketchlib as chl;
 
 // -------- CMS + heap --------
 
