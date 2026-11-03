@@ -10,7 +10,7 @@ use std::marker::PhantomData;
 
 use aqpbm_datagen::{ColumnItem, DataGenError, GeneratedTable};
 
-use super::GroundTruth;
+use super::{GroundTruth, StreamStats};
 
 /// Comparator for a sketch that reports the heavy items and their weights.
 pub struct HeavyHitterGT<K> {
@@ -31,22 +31,28 @@ impl<K> HeavyHitterGT<K> {
     }
 }
 
+pub struct HeavyHitterTruth<K> {
+    heavy: Vec<(K, u64)>,
+    stream: StreamStats,
+}
+
 impl<K> GroundTruth for HeavyHitterGT<K>
 where
     K: ColumnItem + Eq + Hash + Ord,
 {
     /// The true heavy keys with their exact counts, heaviest first.
-    type Truth = Vec<(K, u64)>;
+    type Truth = HeavyHitterTruth<K>;
     /// One question: the whole set. A probe carries nothing.
     type Probe = ();
     type Answer = Vec<(K, u64)>;
 
-    fn truth(&self, table: &GeneratedTable) -> Result<Vec<(K, u64)>, DataGenError> {
+    fn truth(&self, table: &GeneratedTable) -> Result<HeavyHitterTruth<K>, DataGenError> {
         let items = K::column_slice(table.column(self.column)?)?;
         let mut exact: HashMap<&K, u64> = HashMap::new();
         for it in items {
             *exact.entry(it).or_insert(0) += 1;
         }
+        let stream = StreamStats::of_counts(exact.values().copied());
         let bound = self.phi * items.len() as f64;
         let mut heavy: Vec<(K, u64)> = exact
             .into_iter()
@@ -56,19 +62,21 @@ where
         // Count descending, ties on the key — a total order, so the set is
         // reported in one order regardless of `HashMap` seed.
         heavy.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        Ok(heavy)
+        Ok(HeavyHitterTruth { heavy, stream })
     }
 
-    fn probes(&self, _truth: &Vec<(K, u64)>) -> Vec<()> {
+    fn probes(&self, _truth: &HeavyHitterTruth<K>) -> Vec<()> {
         vec![()]
     }
 
     fn score(
         &self,
-        truth: &Vec<(K, u64)>,
+        truth: &HeavyHitterTruth<K>,
         _probes: &[()],
         answers: &[Vec<(K, u64)>],
     ) -> BTreeMap<String, f64> {
+        let stream = &truth.stream;
+        let truth = &truth.heavy;
         let empty = Vec::new();
         let est = answers.first().unwrap_or(&empty);
 
@@ -105,7 +113,7 @@ where
             }
         }
 
-        BTreeMap::from([
+        let mut metrics = BTreeMap::from([
             ("phi".to_string(), self.phi),
             ("precision".to_string(), precision),
             ("recall".to_string(), recall),
@@ -119,7 +127,9 @@ where
             ),
             ("true_heavy_count".to_string(), truth_set.len() as f64),
             ("est_heavy_count".to_string(), est_set.len() as f64),
-        ])
+        ]);
+        stream.write(&mut metrics);
+        metrics
     }
 }
 
@@ -224,11 +234,11 @@ mod tests {
         let table = one_column(&items);
         let gt = HeavyHitterGT::<i64>::over_column(0.3, 0);
         let truth = gt.truth(&table).unwrap();
-        assert_eq!(truth.len(), 3, "30 > 0.3*90 = 27");
+        assert_eq!(truth.heavy.len(), 3, "30 > 0.3*90 = 27");
 
         let gt = HeavyHitterGT::<i64>::over_column(1.0 / 3.0, 0);
         let truth = gt.truth(&table).unwrap();
-        assert!(truth.is_empty(), "30 is not strictly greater than 30");
+        assert!(truth.heavy.is_empty(), "30 is not strictly greater than 30");
     }
 
     /// Weight error is reported over the keys both sides agree on, so an

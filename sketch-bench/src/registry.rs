@@ -999,6 +999,438 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::MEMORY)
             .union(MetricsMask::ACCURACY),
     },
+    SketchId {
+        algorithm: "hll",
+        variant: "hll-ertl",
+        library: "lib",
+        description: "asap HyperLogLog<Ertl>, single-threaded, lg_k 12/14/16",
+        capability: Capability::Cardinality,
+        comparator: Some("cardinality"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "kmv",
+        variant: "kmv",
+        library: "lib",
+        description: "asap Kmv (k minimum values)",
+        capability: Capability::Cardinality,
+        comparator: Some("cardinality"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "kll",
+        variant: "kll-dynamic",
+        library: "lib",
+        description: "asap KllDynamic, seeded from `seed`",
+        capability: Capability::Quantile,
+        comparator: Some("rank-error"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "uniform-sampling",
+        variant: "uniform-sampling",
+        library: "lib",
+        description: "asap UniformSampling, quantile read off the sorted sample",
+        capability: Capability::Quantile,
+        comparator: Some("rank-error"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "space-saving",
+        variant: "space-saving",
+        library: "lib",
+        description: "asap SpaceSaving, per-key estimate",
+        capability: Capability::Frequency,
+        comparator: Some("frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "space-saving",
+        variant: "space-saving-topk",
+        library: "lib",
+        description: "asap SpaceSaving, top-k",
+        capability: Capability::TopK,
+        comparator: Some("topk"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "elastic",
+        variant: "elastic",
+        library: "lib",
+        description: "asap ElasticSketch, per-key estimate (string keys)",
+        capability: Capability::Frequency,
+        comparator: Some("frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "elastic",
+        variant: "elastic-topk",
+        library: "lib",
+        description: "asap ElasticSketch, top-k (string keys)",
+        capability: Capability::TopK,
+        comparator: Some("topk"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "coco",
+        variant: "coco",
+        library: "lib",
+        description: "asap CocoSketch, full-key estimate (string keys)",
+        capability: Capability::Frequency,
+        comparator: Some("frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "count-min-space-saving",
+        variant: "count-min-space-saving",
+        library: "lib",
+        description: "asap CountMinSketchWithSpaceSaving, Vector2D, RegularPath, per-key estimate",
+        capability: Capability::Frequency,
+        comparator: Some("frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "count-min-space-saving",
+        variant: "count-min-space-saving-topk",
+        library: "lib",
+        description: "asap CountMinSketchWithSpaceSaving, Vector2D, RegularPath, top-k",
+        capability: Capability::TopK,
+        comparator: Some("topk"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "count-sketch-space-saving",
+        variant: "count-sketch-space-saving",
+        library: "lib",
+        description: "asap CountSketchWithSpaceSaving, Vector2D, RegularPath, per-key estimate",
+        capability: Capability::Frequency,
+        comparator: Some("frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "count-sketch-space-saving",
+        variant: "count-sketch-space-saving-topk",
+        library: "lib",
+        description: "asap CountSketchWithSpaceSaving, Vector2D, RegularPath, top-k",
+        capability: Capability::TopK,
+        comparator: Some("topk"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "count-min-fold",
+        variant: "count-min-fold",
+        library: "lib",
+        description: "asap CountMinSketchFold, per-key estimate",
+        capability: Capability::Frequency,
+        comparator: Some("frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "count-min-fold",
+        variant: "count-min-fold-topk",
+        library: "lib",
+        description: "asap CountMinSketchFold, heap top-k",
+        capability: Capability::TopK,
+        comparator: Some("topk"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "count-sketch-fold",
+        variant: "count-sketch-fold",
+        library: "lib",
+        description: "asap CountSketchFold, per-key estimate",
+        capability: Capability::Frequency,
+        comparator: Some("frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "count-sketch-fold",
+        variant: "count-sketch-fold-topk",
+        library: "lib",
+        description: "asap CountSketchFold, heap top-k",
+        capability: Capability::TopK,
+        comparator: Some("topk"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "count-sketch-l2-norm",
+        variant: "count-sketch-l2-norm",
+        library: "lib",
+        description: "asap CountSketchWithL2Norm, L2 norm over (key, weight)",
+        capability: Capability::KeyedL2Norm,
+        comparator: Some("keyed-l2-norm"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "count-min-hll",
+        variant: "count-min-hll",
+        library: "lib",
+        description: "asap CountMinHll keyed by every label subset, distinct values per group",
+        capability: Capability::SubpopCardinality,
+        comparator: Some("subpop-cardinality"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "univmon-two-tier",
+        variant: "univmon-two-tier-cardinality",
+        library: "lib",
+        description: "asap UnivMonTwoTier, cardinality over (key, weight)",
+        capability: Capability::KeyedCardinality,
+        comparator: Some("keyed-cardinality"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "univmon-two-tier",
+        variant: "univmon-two-tier-l1-norm",
+        library: "lib",
+        description: "asap UnivMonTwoTier, L1 norm over (key, weight)",
+        capability: Capability::KeyedL1Norm,
+        comparator: Some("keyed-l1-norm"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "univmon-two-tier",
+        variant: "univmon-two-tier-l2-norm",
+        library: "lib",
+        description: "asap UnivMonTwoTier, L2 norm over (key, weight)",
+        capability: Capability::KeyedL2Norm,
+        comparator: Some("keyed-l2-norm"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "univmon-two-tier",
+        variant: "univmon-two-tier-entropy",
+        library: "lib",
+        description: "asap UnivMonTwoTier, entropy over (key, weight)",
+        capability: Capability::KeyedEntropy,
+        comparator: Some("keyed-entropy"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "univmon-q",
+        variant: "univmon-q-quantile",
+        library: "lib",
+        description: "asap UnivMonQ, quantile",
+        capability: Capability::Quantile,
+        comparator: Some("rank-error"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "univmon-q",
+        variant: "univmon-q-cardinality",
+        library: "lib",
+        description: "asap UnivMonQ, cardinality",
+        capability: Capability::Cardinality,
+        comparator: Some("cardinality"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "univmon-q",
+        variant: "univmon-q-frequency",
+        library: "lib",
+        description: "asap UnivMonQ, per-value frequency",
+        capability: Capability::Frequency,
+        comparator: Some("frequency"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
+        algorithm: "univmon-q",
+        variant: "univmon-q-topk",
+        library: "lib",
+        description: "asap UnivMonQ, heavy hitters as top-k",
+        capability: Capability::TopK,
+        comparator: Some("topk"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
     // -------- exact multi-subpopulation accumulators (as ASAPQuery's) --------
     // Grouped input: every column before the value is a label. `exact-sum`
     // also serves count (fed 1 per sample). Min and max are separate rows, as

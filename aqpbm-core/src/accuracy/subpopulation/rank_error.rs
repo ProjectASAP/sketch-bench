@@ -6,12 +6,8 @@ use std::collections::HashMap;
 use aqpbm_datagen::{DataGenError, GeneratedTable};
 
 use super::{group_errors, group_labels, owned, write_groups, GroupKey};
-use crate::accuracy::quantile::rank_err;
+use crate::accuracy::quantile::{probe_fractions, rank_err};
 use crate::accuracy::{curve, f64_values, GroundTruth, GroupError};
-
-/// Number of quantiles probed per group — the same grid the ungrouped
-/// comparator uses, named once in [`super::quantile`].
-use crate::accuracy::quantile::GRID_POINTS as GROUP_GRID_POINTS;
 
 /// Ground truth for a grouped quantile sketch: the ordered statistic inside one
 /// subpopulation, in rank-error units. The most expensive comparator here —
@@ -20,6 +16,7 @@ pub struct SubpopRankErrorGT {
     /// Which label columns the subpopulation is taken over.
     pub group_columns: Vec<usize>,
     pub value_column: usize,
+    pub fractions: Vec<f64>,
 }
 
 /// The ordered statistic inside each group, plus the groups worth probing.
@@ -75,14 +72,15 @@ impl GroundTruth for SubpopRankErrorGT {
     }
 
     fn probes(&self, truth: &SubpopRankTruth) -> Vec<(GroupKey, f64)> {
-        let mut out = Vec::with_capacity(truth.probed.len() * GROUP_GRID_POINTS);
+        let fractions = probe_fractions(&self.fractions);
+        let mut out = Vec::with_capacity(truth.probed.len() * fractions.len());
         for group in &truth.probed {
             match truth.per_group.get(group) {
                 Some(sorted) if !sorted.is_empty() => {}
                 _ => continue,
             }
-            for i in 0..GROUP_GRID_POINTS {
-                out.push((group.clone(), i as f64 / 100.0));
+            for q in &fractions {
+                out.push((group.clone(), *q));
             }
         }
         out
@@ -94,7 +92,8 @@ impl GroundTruth for SubpopRankErrorGT {
         probes: &[(GroupKey, f64)],
         answers: &[f64],
     ) -> BTreeMap<String, f64> {
-        let (groups, max_err) = rank_errors(truth, probes, answers);
+        let grid_points = probe_fractions(&self.fractions).len();
+        let (groups, max_err, per_probe) = rank_errors(truth, probes, answers, grid_points);
         let scored_groups = groups.len();
         let mut metrics: BTreeMap<String, f64> = BTreeMap::new();
         metrics.insert(
@@ -106,7 +105,18 @@ impl GroundTruth for SubpopRankErrorGT {
             },
         );
         metrics.insert("max_rank_err".into(), max_err);
-        metrics.insert("grid_points".into(), GROUP_GRID_POINTS as f64);
+        metrics.insert("grid_points".into(), grid_points as f64);
+        if !self.fractions.is_empty() {
+            for (q, (sum, max)) in self.fractions.iter().zip(per_probe) {
+                let mean = if scored_groups > 0 {
+                    sum / scored_groups as f64
+                } else {
+                    0.0
+                };
+                metrics.insert(format!("mean_rank_err_q{q}"), mean);
+                metrics.insert(format!("max_rank_err_q{q}"), max);
+            }
+        }
         metrics.insert("items".into(), truth.items as f64);
         metrics.insert("probes".into(), scored_groups as f64);
         metrics.insert("subpopulations".into(), truth.per_group.len() as f64);
@@ -128,7 +138,13 @@ impl GroundTruth for SubpopRankErrorGT {
         probes: &[(GroupKey, f64)],
         answers: &[f64],
     ) -> Vec<GroupError> {
-        rank_errors(truth, probes, answers).0
+        rank_errors(
+            truth,
+            probes,
+            answers,
+            probe_fractions(&self.fractions).len(),
+        )
+        .0
     }
 }
 
@@ -138,15 +154,14 @@ fn rank_errors(
     truth: &SubpopRankTruth,
     probes: &[(GroupKey, f64)],
     answers: &[f64],
-) -> (Vec<GroupError>, f64) {
+    grid_points: usize,
+) -> (Vec<GroupError>, f64, Vec<(f64, f64)>) {
     let mut max_err = 0.0f64;
     let mut groups = Vec::new();
+    let mut per_probe = vec![(0.0f64, 0.0f64); grid_points];
 
     // The probe set is one contiguous grid per group, in order.
-    for (chunk_p, chunk_a) in probes
-        .chunks(GROUP_GRID_POINTS)
-        .zip(answers.chunks(GROUP_GRID_POINTS))
-    {
+    for (chunk_p, chunk_a) in probes.chunks(grid_points).zip(answers.chunks(grid_points)) {
         let Some((group, _)) = chunk_p.first() else {
             continue;
         };
@@ -154,9 +169,13 @@ fn rank_errors(
             continue;
         };
         let mut group_sum = 0.0f64;
-        for ((_, q), est) in chunk_p.iter().zip(chunk_a) {
+        for (((_, q), est), (probe_sum, probe_max)) in
+            chunk_p.iter().zip(chunk_a).zip(per_probe.iter_mut())
+        {
             let err = rank_err(sorted, *est, *q);
             group_sum += err;
+            *probe_sum += err;
+            *probe_max = probe_max.max(err);
             if err > max_err {
                 max_err = err;
             }
@@ -164,10 +183,10 @@ fn rank_errors(
         groups.push((
             group.clone(),
             sorted.len() as u64,
-            Some(group_sum / GROUP_GRID_POINTS as f64),
+            Some(group_sum / grid_points as f64),
         ));
     }
-    (group_errors(groups.into_iter()), max_err)
+    (group_errors(groups.into_iter()), max_err, per_probe)
 }
 
 #[cfg(test)]
@@ -180,6 +199,7 @@ mod tests {
         let gt = SubpopRankErrorGT {
             group_columns: vec![0],
             value_column: 2,
+            fractions: Vec::new(),
         };
         let truth = gt
             .truth(&records())

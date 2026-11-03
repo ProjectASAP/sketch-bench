@@ -103,9 +103,20 @@ fn any_label_subset_is_asked_where_it_was_inserted() {
                 assert_eq!(acc["fanned_mass"], 15000.0, "{at}");
 
                 let mut lines = csv.lines();
-                assert_eq!(lines.next(), Some("group_key,n_q,error"), "{at}");
+                assert_eq!(lines.next(), Some("group_key,n_q,error,d_q,l2_q"), "{at}");
                 let rows: Vec<&str> = lines.collect();
-                let scored = rows.iter().filter(|r| !r.ends_with(',')).count();
+                let scored = rows
+                    .iter()
+                    .filter(|r| r.split(',').nth(2) != Some(""))
+                    .count();
+                assert!(
+                    rows.iter().all(|r| r
+                        .split(',')
+                        .nth(3)
+                        .and_then(|d| d.parse::<u64>().ok())
+                        .is_some_and(|d| d > 0)),
+                    "every group has a distinct count: {at}"
+                );
                 assert_eq!(scored as f64, acc["groups_scored"].as_f64().expect(&at));
                 let n_q: u64 = rows
                     .iter()

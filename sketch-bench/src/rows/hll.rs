@@ -219,7 +219,7 @@ pub(crate) fn row_hll_hip_lib(
     }
 }
 
-fn lg_k(req: &Requirement) -> Result<u8, RunError> {
+pub(super) fn lg_k(req: &Requirement) -> Result<u8, RunError> {
     let p: crate::params::HllParams = req
         .params
         .parse()
@@ -227,7 +227,7 @@ fn lg_k(req: &Requirement) -> Result<u8, RunError> {
     Ok(p.lg_k)
 }
 
-fn unsupported_precision(lg_k: u8) -> RunError {
+pub(super) fn unsupported_precision(lg_k: u8) -> RunError {
     RunError::Sketch(format!(
         "asap_sketchlib HLL is compiled at lg_k 12, 14 and 16; requested {lg_k}"
     ))

@@ -130,6 +130,7 @@ pub struct Requirement {
     pub merge_split: crate::wrappers::MergeSplit,
     /// A named comparator, or `None` for the row's default.
     pub comparator: Option<String>,
+    pub quantiles: Vec<f64>,
     /// Measured runs, and the warm-ups run and discarded before them
     pub runs: usize,
     pub warmup_runs: usize,

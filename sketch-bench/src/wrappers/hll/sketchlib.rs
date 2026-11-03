@@ -358,3 +358,43 @@ pub fn insert_parallel_hll_fast_path<T: CardinalityValue>(
     }
     Ok(out)
 }
+
+pub struct HllLibErtl<R: asap_sketchlib::HllRegisterStorage = asap_sketchlib::HllRegistersP14> {
+    inner: asap_sketchlib::hll::HyperLogLogImpl<Ertl, R>,
+}
+
+impl<R: asap_sketchlib::HllRegisterStorage + 'static, T: CardinalityValue>
+    crate::wrappers::row_bodies::RowSketch<T> for HllLibErtl<R>
+{
+    fn build(params: &ParamSet) -> Result<Self, BuildError> {
+        let p: HllParams = params.parse()?;
+        if p.lg_k as usize != R::PRECISION {
+            return Err(unsupported_precision(p.lg_k));
+        }
+        Ok(HllLibErtl {
+            inner: asap_sketchlib::hll::HyperLogLogImpl::<Ertl, R>::new(),
+        })
+    }
+
+    fn insert(&mut self, item: &T) {
+        self.inner.update(&item.data_input());
+    }
+
+    fn memory(&self) -> usize {
+        self.inner.memory_bytes()
+    }
+}
+
+impl<R: asap_sketchlib::HllRegisterStorage> crate::wrappers::row_bodies::Answers<(), f64>
+    for HllLibErtl<R>
+{
+    fn answer(&mut self, _probe: &()) -> f64 {
+        self.inner.estimate() as f64
+    }
+}
+
+impl<R: asap_sketchlib::HllRegisterStorage> crate::wrappers::row_bodies::Merges for HllLibErtl<R> {
+    fn merge(&mut self, other: &Self) {
+        self.inner.merge(&other.inner);
+    }
+}

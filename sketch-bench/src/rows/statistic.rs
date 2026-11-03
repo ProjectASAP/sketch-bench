@@ -249,6 +249,7 @@ pub(super) fn subpop_quantile_row<V: ColumnItem + 'static>(
         SubpopRankErrorGT {
             group_columns: group_columns(req, description)?,
             value_column: value_column(description),
+            fractions: req.quantiles.clone(),
         },
         peel_labeled::<V>,
         insert,
@@ -344,6 +345,7 @@ pub(super) fn quantile_row<T: ColumnItem>(
         want,
         RankErrorGT {
             column: value_column(description),
+            fractions: req.quantiles.clone(),
         },
         peel::<T>,
         insert,
@@ -375,6 +377,7 @@ pub(super) fn relative_value_quantile_row<T: ColumnItem>(
         want,
         RelativeValueErrorGT {
             column: value_column(description),
+            fractions: req.quantiles.clone(),
         },
         peel::<T>,
         insert,
@@ -408,7 +411,15 @@ where
 {
     let (probes, score, per_group) = questions(ground_truth, &table)?;
     let score = match &req.per_group_out {
-        Some(path) => per_group_written(score, per_group, path)?,
+        Some(path) => {
+            let shapes = aqpbm_core::accuracy::subpopulation::group_shapes(
+                &table,
+                &group_columns(req, description)?,
+                value_column(description),
+            )
+            .map_err(|e| RunError::Sketch(format!("--per-group-out: {e}")))?;
+            per_group_written(score, per_group, shapes, path)?
+        }
         None => score,
     };
     let items = materialise(description, table)?;
@@ -470,13 +481,14 @@ where
     Ok(bodies)
 }
 
-/// The scorer, also writing every group to `path` as `group_key,n_q,error`
+/// The scorer, also writing every group to `path` as `group_key,n_q,error,d_q,l2_q`
 /// whenever it scores; `error` is empty for a group that cannot be scored. Every pass answers the same, so
 /// each rewrites the same rows. The file is created here, so a path that
 /// cannot be written fails before anything is measured.
 fn per_group_written<A: 'static>(
     score: Score<A>,
     per_group: PerGroup<A>,
+    shapes: std::collections::HashMap<String, aqpbm_core::accuracy::subpopulation::GroupShape>,
     path: &std::path::Path,
 ) -> Result<Score<A>, RunError> {
     let fail =
@@ -484,8 +496,11 @@ fn per_group_written<A: 'static>(
     std::fs::File::create(path).map_err(fail)?;
     let path = path.to_path_buf();
     Ok(Rc::new(move |answers: &[A]| {
-        let mut csv = String::from("group_key,n_q,error\n");
+        let mut csv = String::from("group_key,n_q,error,d_q,l2_q\n");
         for g in per_group(answers) {
+            let shape = shapes.get(&g.group);
+            let d_q = shape.map_or(String::new(), |s| s.d_q.to_string());
+            let l2_q = shape.map_or(String::new(), |s| s.l2_q.to_string());
             // A label may hold a comma or a quote; CSV quotes the field then.
             let key = if g.group.contains([',', '"', '\n']) {
                 format!("\"{}\"", g.group.replace('"', "\"\""))
@@ -493,7 +508,7 @@ fn per_group_written<A: 'static>(
                 g.group
             };
             let error = g.error.map_or(String::new(), |e| e.to_string());
-            csv.push_str(&format!("{key},{},{error}\n", g.n_q));
+            csv.push_str(&format!("{key},{},{error},{d_q},{l2_q}\n", g.n_q));
         }
         std::fs::write(&path, csv)
             .unwrap_or_else(|e| panic!("--per-group-out {}: {e}", path.display()));

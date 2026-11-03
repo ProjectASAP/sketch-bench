@@ -219,6 +219,13 @@ pub struct SketchbenchArgs {
     /// them; omitted takes the target's default.
     #[arg(long, help_heading = "Measurement content")]
     pub comparator: Option<String>,
+    #[arg(
+        long,
+        value_delimiter = ',',
+        help = "Comma-separated fractions in [0, 1] a quantile row is asked at, one error per fraction; omitted asks the 101-point grid",
+        help_heading = "Measurement content"
+    )]
+    pub quantiles: Vec<f64>,
     /// Comma-separated: insert,query,merge,prepare. What each metric is
     /// measured over. Required, like `--metrics`: a pair nothing measures is
     /// refused by name, so a request states which measurements it wants rather than
@@ -264,7 +271,7 @@ pub struct SketchbenchArgs {
     #[arg(long, help_heading = "Output")]
     pub report: Option<String>,
     /// Write a `hydra-*` row's per-group errors to this CSV, one row per group:
-    /// `group_key,n_q,error` (`n_q` is the group's record count, `error` the
+    /// `group_key,n_q,error,d_q,l2_q` (`n_q` is the group's record count, `error` the
     /// row's own metric, empty for a group that cannot be scored, such as one
     /// with zero entropy). The `n_q` sum to the stream's records; the record's
     /// `err_*` fields summarise the scored rows. Takes exactly one accuracy

@@ -179,6 +179,33 @@ pub(crate) fn scalar_error(truth: f64, answers: &[f64]) -> BTreeMap<String, f64>
     ])
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct StreamStats {
+    pub(crate) items: u64,
+    pub(crate) distinct: u64,
+    pub(crate) l2: f64,
+}
+
+impl StreamStats {
+    pub(crate) fn of_counts(counts: impl IntoIterator<Item = u64>) -> Self {
+        let mut stats = StreamStats::default();
+        let mut squares = 0.0f64;
+        for c in counts {
+            stats.items += c;
+            stats.distinct += 1;
+            squares += (c as f64) * (c as f64);
+        }
+        stats.l2 = squares.sqrt();
+        stats
+    }
+
+    pub(crate) fn write(&self, metrics: &mut BTreeMap<String, f64>) {
+        metrics.insert("stream_items".into(), self.items as f64);
+        metrics.insert("stream_distinct".into(), self.distinct as f64);
+        metrics.insert("stream_l2".into(), self.l2);
+    }
+}
+
 pub(crate) fn f64_values(column: &ColumnData) -> Result<Vec<f64>, DataGenError> {
     match column {
         ColumnData::Int64(v) => Ok(v.iter().map(|&x| x as f64).collect()),

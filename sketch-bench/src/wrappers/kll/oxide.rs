@@ -19,6 +19,16 @@ fn oxide_kll(k: u32) -> Result<sketch_oxide::quantiles::KllSketch, BuildError> {
         .map_err(|e| BuildError(format!("oxide KLL rejected k={k16}: {e:?}")))
 }
 
+fn oxide_takes_no_seed(p: &KllParams) -> Result<(), BuildError> {
+    if p.seed != 0 {
+        return Err(BuildError(format!(
+            "oxide KLL: seed={} asked, but sketch_oxide's KLL takes no seed",
+            p.seed
+        )));
+    }
+    Ok(())
+}
+
 /// Generic over the item type: the inner sketch is `f64`-native, so `T = f64`
 /// monomorphises `to_f64` away while `T = i64` keeps the cast — the measurement.
 pub struct KllOxidePerCall<T = i64> {
@@ -31,6 +41,7 @@ pub fn build_kll_oxide_per_call<T: QuantileValue>(
     config: &ParamSet,
 ) -> Result<KllOxidePerCall<T>, BuildError> {
     let p: KllParams = config.parse()?;
+    oxide_takes_no_seed(&p)?;
     Ok(KllOxidePerCall {
         inner: oxide_kll(p.k)?,
         k: p.k,
@@ -55,6 +66,7 @@ pub fn build_kll_oxide_cdf<T: QuantileValue>(
     config: &ParamSet,
 ) -> Result<KllOxideCdf<T>, BuildError> {
     let p: KllParams = config.parse()?;
+    oxide_takes_no_seed(&p)?;
     Ok(KllOxideCdf {
         inner: oxide_kll(p.k)?,
         k: p.k,

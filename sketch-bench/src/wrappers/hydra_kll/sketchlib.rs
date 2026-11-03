@@ -33,7 +33,7 @@ pub fn build_hydra_kll(config: &ParamSet, label_columns: usize) -> Result<HydraK
             crate::wrappers::kll::LIB_K_MAX
         )));
     }
-    let cell = HydraCounter::Kll(Kll::with_k(p.cell_k as i32));
+    let cell = HydraCounter::Kll(Kll::with_k_and_seed(p.cell_k as i32, p.seed));
     Ok(HydraKll {
         inner: new_hydra(p.rows, p.cols, label_columns, cell, "hydra-kll")?,
     })

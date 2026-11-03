@@ -46,6 +46,13 @@ pub fn answered_k(params: &ParamSet) -> usize {
         .ok()
         .and_then(|p| p.topk_k)
         .or_else(|| params.parse::<CsHeapParams>().ok().and_then(|p| p.topk_k))
+        .or_else(|| {
+            params
+                .params
+                .get("topk_k")
+                .and_then(|k| k.as_u64())
+                .map(|k| k as usize)
+        })
         .unwrap_or(TOPK_K)
 }
 

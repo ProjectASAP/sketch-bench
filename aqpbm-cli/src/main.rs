@@ -48,7 +48,7 @@ use report_sink::ReportSink;
 // them — is sketch-domain knowledge and lives in `sketch-bench`. The CLI does
 // not know the set; it asks.
 use sketch_bench::registry;
-use sketch_bench::request::Requirement;
+use sketch_bench::request::{Capability, Requirement};
 
 /// What is measured. No default and no `all`: a request names the measurements
 /// it wants, and a shorthand that swept every operation against every metric
@@ -368,6 +368,18 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
             ),
         }
     }
+    if !args.quantiles.is_empty() {
+        let capability = registry::find(&variant, &library).map(|row| row.capability);
+        if !matches!(
+            capability,
+            Some(Capability::Quantile | Capability::SubpopQuantile)
+        ) {
+            bail!("--quantiles: only a quantile row is asked at fractions, and {variant}/{library} is not one");
+        }
+        if let Some(q) = args.quantiles.iter().find(|q| !(0.0..=1.0).contains(*q)) {
+            bail!("--quantiles: {q} is outside [0, 1]");
+        }
+    }
     let req = Requirement {
         variant: variant.clone(),
         library: library.clone(),
@@ -379,6 +391,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         per_group_out: args.per_group_out.as_ref().map(std::path::PathBuf::from),
         merge_split: args.merge_split,
         comparator: args.comparator.clone(),
+        quantiles: args.quantiles.clone(),
         runs: args.runs,
         warmup_runs: args.warmup_runs,
     };

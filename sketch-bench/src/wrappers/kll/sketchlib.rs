@@ -12,7 +12,7 @@ use std::rc::Rc;
 
 /// `k` this library cannot hold is an error naming both, not a run at some
 /// other `k` reported as the one asked for.
-fn lib_kll<T>(k: u32) -> Result<asap_sketchlib::Kll<T>, BuildError>
+fn lib_kll<T>(k: u32, seed: u64) -> Result<asap_sketchlib::Kll<T>, BuildError>
 where
     T: asap_sketchlib::common::numerical::NumericalValue,
 {
@@ -22,7 +22,7 @@ where
              to that range, so any other k would run at a value this record does not name"
         )));
     }
-    Ok(asap_sketchlib::Kll::<T>::with_k(k as i32))
+    Ok(asap_sketchlib::Kll::<T>::with_k_and_seed(k as i32, seed))
 }
 
 /// Generic *in the library*: `KLL<T>` stores `T` and orders it with
@@ -38,7 +38,7 @@ where
 {
     let p: KllParams = config.parse()?;
     Ok(KllLibPerCall {
-        inner: lib_kll::<T>(p.k)?,
+        inner: lib_kll::<T>(p.k, p.seed)?,
     })
 }
 
@@ -60,7 +60,7 @@ where
 {
     let p: KllParams = config.parse()?;
     Ok(KllLibCdf {
-        inner: lib_kll::<T>(p.k)?,
+        inner: lib_kll::<T>(p.k, p.seed)?,
         cdf: None,
     })
 }
@@ -436,4 +436,51 @@ where
         }) as Pass);
     }
     Ok(out)
+}
+
+pub struct KllDynamicLib<T: asap_sketchlib::common::numerical::NumericalValue = i64> {
+    inner: asap_sketchlib::KllDynamic<T>,
+}
+
+impl<T> crate::wrappers::row_bodies::RowSketch<T> for KllDynamicLib<T>
+where
+    T: asap_sketchlib::common::numerical::NumericalValue + QuantileValue + 'static,
+{
+    fn build(params: &ParamSet) -> Result<Self, BuildError> {
+        let p: KllParams = params.parse()?;
+        if !(LIB_K_MIN..=LIB_K_MAX).contains(&p.k) {
+            return Err(BuildError(format!(
+                "asap KllDynamic: k={} outside [{LIB_K_MIN}, {LIB_K_MAX}]; the library clamps \
+                 to that range, so any other k would run at a value this record does not name",
+                p.k
+            )));
+        }
+        Ok(KllDynamicLib {
+            inner: asap_sketchlib::KllDynamic::<T>::with_k_and_seed(p.k as i32, p.seed),
+        })
+    }
+
+    fn insert(&mut self, item: &T) {
+        self.inner.update(item);
+    }
+
+    fn memory(&self) -> usize {
+        self.inner.memory_bytes()
+    }
+}
+
+impl<T: asap_sketchlib::common::numerical::NumericalValue>
+    crate::wrappers::row_bodies::Answers<f64, f64> for KllDynamicLib<T>
+{
+    fn answer(&mut self, probe: &f64) -> f64 {
+        self.inner.quantile(*probe)
+    }
+}
+
+impl<T: asap_sketchlib::common::numerical::NumericalValue> crate::wrappers::row_bodies::Merges
+    for KllDynamicLib<T>
+{
+    fn merge(&mut self, other: &Self) {
+        self.inner.merge(&other.inner);
+    }
 }
