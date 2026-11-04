@@ -4,7 +4,8 @@
 
 use crate::params::{
     CmsHeapParams, CountMinFoldParams, CountMinSpaceSavingParams, CountSketchFoldParams,
-    CountSketchSpaceSavingParams, CsHeapParams, ParamSet, SpaceSavingParams,
+    CountSketchSpaceSavingParams, CsHeapParams, ElasticParams, ParamSet, SpaceSavingParams,
+    UnivMonQParams,
 };
 use crate::wrappers::frequency_value::FrequencyValue;
 use crate::wrappers::{require_positive, BuildError, Pass, QueryPass, Shared, StepPass};
@@ -79,6 +80,8 @@ pub fn answered_k(params: &ParamSet) -> usize {
                 .ok()
                 .and_then(|p| p.topk_k)
         })
+        .or_else(|| params.parse::<ElasticParams>().ok().and_then(|p| p.topk_k))
+        .or_else(|| params.parse::<UnivMonQParams>().ok().and_then(|p| p.topk_k))
         .unwrap_or(TOPK_K)
 }
 

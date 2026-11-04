@@ -154,6 +154,23 @@ fn binding(variant: &str, library: &str) -> Option<RowBinding> {
         ("hll-ertl", "lib") => row_hll_ertl_lib,
         ("kmv", "lib") => row_kmv_lib,
         ("bloom", "lib") => row_bloom_lib,
+        ("count-sketch-l2-norm", "lib") => row_count_sketch_l2_norm_lib,
+        ("count-min-hll", "lib") => row_count_min_hll_lib,
+        ("elastic", "lib") => row_elastic_lib,
+        ("elastic-topk", "lib") => row_elastic_topk_lib,
+        ("coco", "lib") => row_coco_lib,
+        ("kll-dynamic", "lib") => row_kll_dynamic_lib,
+        ("uniform-sampling", "lib") => row_uniform_sampling_lib,
+        ("univmon-two-tier-cardinality", "lib") => row_univmon_two_tier_cardinality_lib,
+        ("univmon-two-tier-l1-norm", "lib") => row_univmon_two_tier_l1_norm_lib,
+        ("univmon-two-tier-l2-norm", "lib") => row_univmon_two_tier_l2_norm_lib,
+        ("univmon-two-tier-entropy", "lib") => row_univmon_two_tier_entropy_lib,
+        ("univmon-q-quantile", "lib") => row_univmon_q_quantile_lib,
+        ("univmon-q-cardinality", "lib") => row_univmon_q_cardinality_lib,
+        ("univmon-q-frequency", "lib") => row_univmon_q_frequency_lib,
+        ("univmon-q-topk", "lib") => row_univmon_q_topk_lib,
+        ("nitro-count-min", "lib") => row_nitro_count_min_lib,
+        ("nitro-count-sketch", "lib") => row_nitro_count_sketch_lib,
         ("space-saving", "lib") => row_space_saving_lib,
         ("space-saving-topk", "lib") => row_space_saving_topk_lib,
         ("count-min-space-saving", "lib") => row_count_min_space_saving_lib,
@@ -188,6 +205,7 @@ mod kll;
 mod kmv;
 mod materialise;
 mod measurement;
+mod sketchlib_more;
 mod space_saving;
 mod statistic;
 mod univmon;
@@ -207,6 +225,7 @@ use kll::*;
 use kmv::*;
 use materialise::*;
 use measurement::*;
+use sketchlib_more::*;
 use space_saving::*;
 use statistic::*;
 use univmon::*;
