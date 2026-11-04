@@ -22,8 +22,9 @@ pub use rank_error::{SubpopRankErrorGT, SubpopRankTruth};
 pub use sum::SubpopSumGT;
 
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 
-use aqpbm_datagen::{ColumnItem, DataGenError, GeneratedTable};
+use aqpbm_datagen::{ColumnData, ColumnItem, DataGenError, GeneratedTable};
 
 use crate::accuracy::curve::percentile;
 use crate::accuracy::GroupError;
@@ -89,6 +90,53 @@ fn rendered(key: &GroupKey) -> String {
         }
     }
     out
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GroupShape {
+    pub d_q: u64,
+    pub l2_q: f64,
+}
+
+#[derive(PartialEq, Eq, Hash)]
+enum CountedCell<'a> {
+    Bits(u64),
+    Text(&'a str),
+}
+
+fn counted_cells(column: &ColumnData) -> Vec<CountedCell<'_>> {
+    match column {
+        ColumnData::Int64(v) => v.iter().map(|x| CountedCell::Bits(*x as u64)).collect(),
+        ColumnData::Unsigned64(v) => v.iter().map(|x| CountedCell::Bits(*x)).collect(),
+        ColumnData::Float64(v) => v.iter().map(|x| CountedCell::Bits(x.to_bits())).collect(),
+        ColumnData::String(v) => v.iter().map(|x| CountedCell::Text(x)).collect(),
+    }
+}
+
+pub fn group_shapes(
+    table: &GeneratedTable,
+    columns: &[usize],
+    value_column: usize,
+) -> Result<HashMap<String, GroupShape>, DataGenError> {
+    let labels = group_labels(table, columns)?;
+    let values = counted_cells(table.column(value_column)?);
+    let mut counts: HashMap<&[&str], HashMap<CountedCell<'_>, u64>> = HashMap::new();
+    for (group, value) in labels.chunks(columns.len()).zip(values) {
+        *counts.entry(group).or_default().entry(value).or_insert(0) += 1;
+    }
+    Ok(counts
+        .into_iter()
+        .map(|(group, per_value)| {
+            let stats = crate::accuracy::StreamStats::of_counts(per_value.into_values());
+            (
+                rendered(&owned(group, columns)),
+                GroupShape {
+                    d_q: stats.distinct,
+                    l2_q: stats.l2,
+                },
+            )
+        })
+        .collect())
 }
 
 /// One [`GroupError`] per group, heaviest first (ties on the key), so the
@@ -189,6 +237,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn group_shapes_count_each_groups_distinct_values_and_l2() {
+        let shapes = group_shapes(&records(), &[0], 2).expect("the table has the columns");
+        assert_eq!(shapes["label0:a"].d_q, 2);
+        assert!((shapes["label0:a"].l2_q - 5f64.sqrt()).abs() < 1e-12);
+        assert_eq!(shapes["label0:b"].d_q, 1);
+        assert_eq!(shapes["label0:b"].l2_q, 3.0);
+    }
 
     /// A label holding the separators is escaped as the grid's subkeys are,
     /// so it cannot be read as two columns.

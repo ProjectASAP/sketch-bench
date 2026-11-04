@@ -356,9 +356,10 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     let mut group_columns = args.group_columns.clone();
     group_columns.sort_unstable();
     group_columns.dedup();
+    let row = registry::find(&variant, &library);
     if args.per_group_out.is_some() {
-        if !variant.starts_with("hydra-") {
-            bail!("--per-group-out: only the hydra-* rows score groups, and {variant} is not one");
+        if !row.is_some_and(|row| row.capability.name().starts_with("subpop-")) {
+            bail!("--per-group-out: only the subpopulation rows score groups, and {variant}/{library} is not one");
         }
         match want.iter().filter(|(_, m)| *m == Metric::Accuracy).count() {
             0 => bail!("--per-group-out writes an accuracy measurement, and none was asked for"),
@@ -366,6 +367,18 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
             _ => bail!(
                 "--per-group-out writes one accuracy measurement; ask for query or merge, not both"
             ),
+        }
+    }
+    if !args.quantiles.is_empty() {
+        let comparator = args
+            .comparator
+            .as_deref()
+            .or(row.and_then(|row| row.comparator));
+        if comparator != Some("rank-error") {
+            bail!("--quantiles: only a row scored by rank error is asked at fractions, and {variant}/{library} is not one");
+        }
+        if let Some(q) = args.quantiles.iter().find(|q| !(0.0..=1.0).contains(*q)) {
+            bail!("--quantiles: {q} is outside [0, 1]");
         }
     }
     let req = Requirement {
@@ -379,6 +392,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         per_group_out: args.per_group_out.as_ref().map(std::path::PathBuf::from),
         merge_split: args.merge_split,
         comparator: args.comparator.clone(),
+        quantiles: args.quantiles.clone(),
         runs: args.runs,
         warmup_runs: args.warmup_runs,
     };

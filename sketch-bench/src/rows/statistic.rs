@@ -79,16 +79,44 @@ pub(super) fn cardinality_row<T: ColumnItem>(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(super) fn membership_row<T: CountedValue>(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+    insert: InsertBody<T>,
+    insert_step: InsertStepBody<T>,
+    query: QueryBody<T, T, bool>,
+    merge: Option<Folds<T, T, bool>>,
+) -> Result<Measurements, RunError> {
+    scored_row(
+        req,
+        description,
+        table,
+        want,
+        MembershipGT::<T>::over_column(value_column(description)),
+        peel::<T>,
+        insert,
+        insert_step,
+        query,
+        merge,
+        None,
+    )
+}
+
 /// A row answering **top-k**: the heaviest `k` keys, ranked. The probe is
 /// `()` — one question, the whole list, asked repeatedly for timing — and `k` is
-/// the row's `topk_k` (`chl::answered_k`, default `chl::TOPK_K`), whatever its
-/// heap's capacity (`heap=`): a larger heap answers its heaviest `k`.
+/// the `k` the row's own wrapper answers (for the heap rows `chl::answered_k`,
+/// default `chl::TOPK_K`), whatever its heap's capacity: a larger heap answers
+/// its heaviest `k`.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn topk_row<T: CountedValue>(
     req: &Requirement,
     description: &TableDescription,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
+    k: usize,
     insert: InsertBody<T>,
     insert_step: InsertStepBody<T>,
     query: QueryBody<T, (), chl::TopkAnswer<T>>,
@@ -99,7 +127,7 @@ pub(super) fn topk_row<T: CountedValue>(
         description,
         table,
         want,
-        TopkGT::<T>::over_column(chl::answered_k(&req.params), value_column(description)),
+        TopkGT::<T>::over_column(k, value_column(description)),
         peel::<T>,
         insert,
         insert_step,
@@ -344,6 +372,7 @@ pub(super) fn quantile_row<T: ColumnItem>(
         want,
         RankErrorGT {
             column: value_column(description),
+            fractions: req.quantiles.clone(),
         },
         peel::<T>,
         insert,
@@ -408,7 +437,15 @@ where
 {
     let (probes, score, per_group) = questions(ground_truth, &table)?;
     let score = match &req.per_group_out {
-        Some(path) => per_group_written(score, per_group, path)?,
+        Some(path) => {
+            let shapes = aqpbm_core::accuracy::subpopulation::group_shapes(
+                &table,
+                &group_columns(req, description)?,
+                value_column(description),
+            )
+            .map_err(|e| RunError::Sketch(format!("--per-group-out: {e}")))?;
+            per_group_written(score, per_group, shapes, path)?
+        }
         None => score,
     };
     let items = materialise(description, table)?;
@@ -470,13 +507,14 @@ where
     Ok(bodies)
 }
 
-/// The scorer, also writing every group to `path` as `group_key,n_q,error`
+/// The scorer, also writing every group to `path` as `group_key,n_q,error,d_q,l2_q`
 /// whenever it scores; `error` is empty for a group that cannot be scored. Every pass answers the same, so
 /// each rewrites the same rows. The file is created here, so a path that
 /// cannot be written fails before anything is measured.
 fn per_group_written<A: 'static>(
     score: Score<A>,
     per_group: PerGroup<A>,
+    shapes: std::collections::HashMap<String, aqpbm_core::accuracy::subpopulation::GroupShape>,
     path: &std::path::Path,
 ) -> Result<Score<A>, RunError> {
     let fail =
@@ -484,8 +522,11 @@ fn per_group_written<A: 'static>(
     std::fs::File::create(path).map_err(fail)?;
     let path = path.to_path_buf();
     Ok(Rc::new(move |answers: &[A]| {
-        let mut csv = String::from("group_key,n_q,error\n");
+        let mut csv = String::from("group_key,n_q,error,d_q,l2_q\n");
         for g in per_group(answers) {
+            let shape = shapes.get(&g.group);
+            let d_q = shape.map_or(String::new(), |s| s.d_q.to_string());
+            let l2_q = shape.map_or(String::new(), |s| s.l2_q.to_string());
             // A label may hold a comma or a quote; CSV quotes the field then.
             let key = if g.group.contains([',', '"', '\n']) {
                 format!("\"{}\"", g.group.replace('"', "\"\""))
@@ -493,7 +534,7 @@ fn per_group_written<A: 'static>(
                 g.group
             };
             let error = g.error.map_or(String::new(), |e| e.to_string());
-            csv.push_str(&format!("{key},{},{error}\n", g.n_q));
+            csv.push_str(&format!("{key},{},{error},{d_q},{l2_q}\n", g.n_q));
         }
         std::fs::write(&path, csv)
             .unwrap_or_else(|e| panic!("--per-group-out {}: {e}", path.display()));

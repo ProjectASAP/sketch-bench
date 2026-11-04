@@ -9,6 +9,7 @@ use crate::params::ParamSet;
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Capability {
     Cardinality,
+    Membership,
     Frequency,
     Quantile,
     TopK,
@@ -39,6 +40,7 @@ impl Capability {
     pub fn name(self) -> &'static str {
         match self {
             Capability::Cardinality => "cardinality",
+            Capability::Membership => "membership",
             Capability::Frequency => "frequency",
             Capability::Quantile => "quantile",
             Capability::TopK => "topk",
@@ -130,6 +132,7 @@ pub struct Requirement {
     pub merge_split: crate::wrappers::MergeSplit,
     /// A named comparator, or `None` for the row's default.
     pub comparator: Option<String>,
+    pub quantiles: Vec<f64>,
     /// Measured runs, and the warm-ups run and discarded before them
     pub runs: usize,
     pub warmup_runs: usize,

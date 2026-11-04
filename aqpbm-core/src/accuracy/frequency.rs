@@ -11,7 +11,7 @@ use std::marker::PhantomData;
 use aqpbm_datagen::{DataGenError, GeneratedTable};
 
 use super::curve;
-use super::{CountedValue, GroundTruth};
+use super::{CountedValue, GroundTruth, StreamStats};
 
 #[derive(Debug, Clone, Copy)]
 pub struct FrequencyGT<K> {
@@ -37,6 +37,7 @@ pub struct FrequencyTruth<K: CountedValue> {
     ranked: Vec<K>,
     /// The `*_all` population: distinct keys shuffled then capped.
     all: Vec<K>,
+    stream: StreamStats,
 }
 
 impl<K> GroundTruth for FrequencyGT<K>
@@ -72,7 +73,13 @@ where
         });
         let all = curve::shuffled(&by_count);
         let ranked = by_count.into_iter().map(|(k, _)| k).collect();
-        Ok(FrequencyTruth { exact, ranked, all })
+        let stream = StreamStats::of_counts(exact.values().copied());
+        Ok(FrequencyTruth {
+            exact,
+            ranked,
+            all,
+            stream,
+        })
     }
 
     /// Every key any population needs, asked once. The prefixes re-use the
@@ -106,6 +113,7 @@ where
             },
             &mut metrics,
         );
+        truth.stream.write(&mut metrics);
         metrics
     }
 }

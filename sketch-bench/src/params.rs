@@ -368,8 +368,10 @@ sketch_params!(HllParams, "hll", HllParams { lg_k: 14 });
 #[serde(deny_unknown_fields)]
 pub struct KllParams {
     pub k: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
 }
-sketch_params!(KllParams, "kll", KllParams { k: 100 });
+sketch_params!(KllParams, "kll", KllParams { k: 100, seed: None });
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -562,6 +564,8 @@ pub struct HydraKllParams {
     pub rows: usize,
     pub cols: usize,
     pub cell_k: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
 }
 sketch_params!(
     HydraKllParams,
@@ -569,7 +573,8 @@ sketch_params!(
     HydraKllParams {
         rows: 3,
         cols: 128,
-        cell_k: 200
+        cell_k: 200,
+        seed: None
     }
 );
 
@@ -581,14 +586,303 @@ pub struct UnivMonParams {
     pub sketch_col: usize,
     pub layer_size: usize,
 }
+impl SketchParams for UnivMonParams {
+    const ALGORITHM: &'static str = "univmon";
+    fn owns(variant: &str) -> bool {
+        in_algorithm(variant, Self::ALGORITHM)
+            && !in_algorithm(variant, "univmon-two-tier")
+            && !in_algorithm(variant, "univmon-q")
+    }
+    fn canonical() -> Self {
+        UnivMonParams {
+            heap_size: 1000,
+            sketch_row: 5,
+            sketch_col: 2048,
+            layer_size: 8,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KmvParams {
+    pub k: usize,
+}
+sketch_params!(KmvParams, "kmv", KmvParams { k: 1024 });
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BloomParams {
+    pub rows: usize,
+    pub cols: usize,
+}
 sketch_params!(
-    UnivMonParams,
-    "univmon",
-    UnivMonParams {
+    BloomParams,
+    "bloom",
+    BloomParams {
+        rows: 7,
+        cols: 65536
+    }
+);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpaceSavingParams {
+    pub capacity: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topk_k: Option<usize>,
+}
+sketch_params!(
+    SpaceSavingParams,
+    "space-saving",
+    SpaceSavingParams {
+        capacity: 1024,
+        topk_k: None
+    }
+);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CountMinSpaceSavingParams {
+    pub rows: usize,
+    pub cols: usize,
+    pub capacity: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topk_k: Option<usize>,
+}
+sketch_params!(
+    CountMinSpaceSavingParams,
+    "count-min-space-saving",
+    CountMinSpaceSavingParams {
+        rows: 3,
+        cols: 1024,
+        capacity: 1024,
+        topk_k: None
+    }
+);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CountSketchSpaceSavingParams {
+    pub rows: usize,
+    pub cols: usize,
+    pub capacity: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topk_k: Option<usize>,
+}
+sketch_params!(
+    CountSketchSpaceSavingParams,
+    "count-sketch-space-saving",
+    CountSketchSpaceSavingParams {
+        rows: 3,
+        cols: 1024,
+        capacity: 1024,
+        topk_k: None
+    }
+);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CountMinFoldParams {
+    pub rows: usize,
+    pub full_cols: usize,
+    pub fold_level: u32,
+    pub heap_size: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topk_k: Option<usize>,
+}
+sketch_params!(
+    CountMinFoldParams,
+    "count-min-fold",
+    CountMinFoldParams {
+        rows: 3,
+        full_cols: 4096,
+        fold_level: 2,
+        heap_size: 32,
+        topk_k: None
+    }
+);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CountSketchFoldParams {
+    pub rows: usize,
+    pub full_cols: usize,
+    pub fold_level: u32,
+    pub heap_size: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topk_k: Option<usize>,
+}
+sketch_params!(
+    CountSketchFoldParams,
+    "count-sketch-fold",
+    CountSketchFoldParams {
+        rows: 3,
+        full_cols: 4096,
+        fold_level: 2,
+        heap_size: 32,
+        topk_k: None
+    }
+);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ElasticParams {
+    pub heavy_buckets: usize,
+    pub light_rows: usize,
+    pub light_cols: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topk_k: Option<usize>,
+}
+sketch_params!(
+    ElasticParams,
+    "elastic",
+    ElasticParams {
+        heavy_buckets: 1024,
+        light_rows: 3,
+        light_cols: 1024,
+        topk_k: None
+    }
+);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CocoParams {
+    pub rows: usize,
+    pub cols: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
+}
+sketch_params!(
+    CocoParams,
+    "coco",
+    CocoParams {
+        rows: 2,
+        cols: 1024,
+        seed: None
+    }
+);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CountSketchL2NormParams {
+    pub rows: usize,
+    pub cols: usize,
+}
+sketch_params!(
+    CountSketchL2NormParams,
+    "count-sketch-l2-norm",
+    CountSketchL2NormParams {
+        rows: 3,
+        cols: 1024
+    }
+);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CountMinHllParams {
+    pub rows: usize,
+    pub cols: usize,
+    pub precision: u32,
+}
+sketch_params!(
+    CountMinHllParams,
+    "count-min-hll",
+    CountMinHllParams {
+        rows: 3,
+        cols: 128,
+        precision: 8
+    }
+);
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UniformSamplingParams {
+    pub sample_rate: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
+}
+sketch_params!(
+    UniformSamplingParams,
+    "uniform-sampling",
+    UniformSamplingParams {
+        sample_rate: 0.01,
+        seed: None
+    }
+);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnivMonTwoTierParams {
+    pub heap_size: usize,
+    pub elephant_layers: usize,
+    pub elephant_rows: usize,
+    pub elephant_cols: usize,
+    pub mouse_rows: usize,
+    pub mouse_cols: usize,
+    pub layers: usize,
+}
+sketch_params!(
+    UnivMonTwoTierParams,
+    "univmon-two-tier",
+    UnivMonTwoTierParams {
         heap_size: 1000,
-        sketch_row: 5,
-        sketch_col: 2048,
-        layer_size: 8
+        elephant_layers: 8,
+        elephant_rows: 3,
+        elephant_cols: 2048,
+        mouse_rows: 3,
+        mouse_cols: 512,
+        layers: 16
+    }
+);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnivMonQParams {
+    pub layers: usize,
+    pub top_layer_cols: usize,
+    pub cols_halving_period: u8,
+    pub rows: usize,
+    pub counter_bits: u8,
+    pub heap_size: usize,
+    pub ordered_samples: usize,
+    pub seed_index: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topk_k: Option<usize>,
+}
+sketch_params!(
+    UnivMonQParams,
+    "univmon-q",
+    UnivMonQParams {
+        layers: 10,
+        top_layer_cols: 4096,
+        cols_halving_period: 0,
+        rows: 5,
+        counter_bits: 32,
+        heap_size: 1024,
+        ordered_samples: 1024,
+        seed_index: 5,
+        topk_k: None
+    }
+);
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NitroParams {
+    pub sample_rate: f64,
+    pub rows: usize,
+    pub cols: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
+}
+sketch_params!(
+    NitroParams,
+    "nitro",
+    NitroParams {
+        sample_rate: 0.1,
+        rows: 3,
+        cols: 1024,
+        seed: None
     }
 );
 
@@ -674,6 +968,21 @@ mod tests {
         check::<HydraKllParams>();
         check::<HydraUnivmonParams>();
         check::<UnivMonParams>();
+        check::<KmvParams>();
+        check::<BloomParams>();
+        check::<ElasticParams>();
+        check::<CocoParams>();
+        check::<CountSketchL2NormParams>();
+        check::<CountMinHllParams>();
+        check::<UniformSamplingParams>();
+        check::<UnivMonTwoTierParams>();
+        check::<UnivMonQParams>();
+        check::<NitroParams>();
+        check::<SpaceSavingParams>();
+        check::<CountMinSpaceSavingParams>();
+        check::<CountSketchSpaceSavingParams>();
+        check::<CountMinFoldParams>();
+        check::<CountSketchFoldParams>();
     }
 
     /// Which variant names each vocabulary answers to. Pinned per algorithm
@@ -691,6 +1000,9 @@ mod tests {
 
         assert!(CountSketchParams::owns("countsketch-fastpath-vector2d"));
         assert!(!CountSketchParams::owns("cms"));
+        assert!(UnivMonParams::owns("univmon-l2-norm"));
+        assert!(!UnivMonParams::owns("univmon-two-tier-l2-norm"));
+        assert!(!UnivMonParams::owns("univmon-q-quantile"));
         assert!(!CountSketchParams::owns(
             "countsketch-heap-topk-fastpath-vector2d"
         ));

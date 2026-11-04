@@ -7,7 +7,7 @@ use std::marker::PhantomData;
 
 use aqpbm_datagen::{DataGenError, GeneratedTable};
 
-use super::{CountedValue, GroundTruth};
+use super::{CountedValue, GroundTruth, StreamStats};
 
 /// How many times to put the one question. A heap dump of `k` items takes
 /// about a microsecond, so with one call per pass the CPU time read from
@@ -31,17 +31,23 @@ impl<K> TopkGT<K> {
     }
 }
 
+pub struct TopkTruth<K: CountedValue> {
+    top: Vec<(K, u64)>,
+    exact: HashMap<K::CountKey, (K, u64)>,
+    stream: StreamStats,
+}
+
 impl<K> GroundTruth for TopkGT<K>
 where
     K: CountedValue,
 {
     /// The true k heaviest keys, in the total order every top-k impl ranks by.
-    type Truth = Vec<(K, u64)>;
+    type Truth = TopkTruth<K>;
     /// One question, the whole list, asked repeatedly. A probe carries nothing.
     type Probe = ();
     type Answer = Vec<(K, u64)>;
 
-    fn truth(&self, table: &GeneratedTable) -> Result<Vec<(K, u64)>, DataGenError> {
+    fn truth(&self, table: &GeneratedTable) -> Result<TopkTruth<K>, DataGenError> {
         let items = K::column_slice(table.column(self.column)?)?;
         // Tallied by counting key so the float width can be counted at all;
         // the value itself is carried alongside, because the answer this is
@@ -53,7 +59,8 @@ where
                 .or_insert_with(|| (it.clone(), 0))
                 .1 += 1;
         }
-        let mut exact_vec: Vec<(K, u64)> = exact.into_values().collect();
+        let stream = StreamStats::of_counts(exact.values().map(|(_, c)| *c));
+        let mut exact_vec: Vec<&(K, u64)> = exact.values().collect();
         // Count descending, ties on the key — a total order, the same one every
         // top-k impl ranks by. On count alone the k-th place falls to HashMap
         // order, and an exact source scores below 1.0 against itself.
@@ -62,19 +69,25 @@ where
                 .then_with(|| a.0.count_key().cmp(&b.0.count_key()))
         });
         exact_vec.truncate(self.k);
-        Ok(exact_vec)
+        let top = exact_vec.into_iter().cloned().collect();
+        Ok(TopkTruth { top, exact, stream })
     }
 
-    fn probes(&self, _truth: &Vec<(K, u64)>) -> Vec<()> {
+    fn probes(&self, _truth: &TopkTruth<K>) -> Vec<()> {
         vec![(); QUERY_TIMING_REPEATS]
     }
 
     fn score(
         &self,
-        truth: &Vec<(K, u64)>,
+        truth: &TopkTruth<K>,
         _probes: &[()],
         answers: &[Vec<(K, u64)>],
     ) -> BTreeMap<String, f64> {
+        let TopkTruth {
+            top: truth,
+            exact,
+            stream,
+        } = truth;
         // Every answer is to the same question, so the first is the estimate
         // and the rest existed to make the timing readable.
         let empty = Vec::new();
@@ -96,15 +109,33 @@ where
             tp / truth_set.len() as f64
         };
 
-        [
+        let count_errs: Vec<f64> = est
+            .iter()
+            .map(|(k, c)| {
+                let true_count = exact.get(&k.count_key()).map_or(0, |(_, c)| *c);
+                (*c as f64 - true_count as f64).abs()
+            })
+            .collect();
+        let max_count_err = count_errs.iter().copied().fold(0.0f64, f64::max);
+        let mean_count_err = if count_errs.is_empty() {
+            0.0
+        } else {
+            count_errs.iter().sum::<f64>() / count_errs.len() as f64
+        };
+
+        let mut metrics: BTreeMap<String, f64> = [
             ("k".to_string(), self.k as f64),
             ("precision_at_k".to_string(), precision),
             ("recall_at_k".to_string(), recall),
             ("true_top_k_count".to_string(), truth_set.len() as f64),
             ("est_top_k_count".to_string(), est.len() as f64),
+            ("max_count_err".to_string(), max_count_err),
+            ("mean_count_err".to_string(), mean_count_err),
         ]
         .into_iter()
-        .collect()
+        .collect();
+        stream.write(&mut metrics);
+        metrics
     }
 }
 
@@ -114,6 +145,20 @@ mod tests {
     use crate::accuracy::table_of;
     use aqpbm_datagen::ColumnData;
     use std::collections::BinaryHeap;
+
+    #[test]
+    fn reported_counts_are_scored_against_the_exact_counts() {
+        let items = tied_at_the_boundary();
+        let table = table_of(&["key"], vec![ColumnData::Int64(items.clone())]);
+        let gt = TopkGT::<i64>::over_column(3, 0);
+        let off_by_two = |_: &mut ExactTopK, _: &()| vec![(1, 12), (2, 5), (99, 1)];
+        let cmp = crate::accuracy::score_with(&gt, &off_by_two, &mut exact_source(&items), &table);
+        assert_eq!(cmp["max_count_err"], 2.0);
+        assert_eq!(cmp["mean_count_err"], 1.0);
+        assert_eq!(cmp["stream_items"], 35.0);
+        assert_eq!(cmp["stream_distinct"], 6.0);
+        assert!((cmp["stream_l2"] - (100.0f64 + 5.0 * 25.0).sqrt()).abs() < 1e-12);
+    }
 
     /// An exact top-k by hand: a `HashMap` counter plus a heap. Exact by
     /// construction, so it must score 1.0 against [`TopkGT`]; anything less is

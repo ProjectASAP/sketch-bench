@@ -1,5 +1,6 @@
 use super::*;
 use crate::wrappers::kll::{oxide as ko, polars as kp, sketchlib as kl};
+use crate::wrappers::kll_dynamic as kd;
 
 // -------- KLL (quantile) --------
 //
@@ -161,6 +162,39 @@ pub(crate) fn row_kll_cdf_polars(
                 kp::query_polars_quantile_kll::<$t>,
                 None,
                 Some(kp::prepare_polars_quantile_kll::<$t>),
+            )
+        };
+    }
+    match req.width {
+        Dtype::I64 => at!(i64),
+        Dtype::U64 => at!(u64),
+        Dtype::F64 => at!(f64),
+        other => Err(no_build_at(req, other)),
+    }
+}
+
+pub(crate) fn row_kll_dynamic_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    macro_rules! at {
+        ($t:ty) => {
+            quantile_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                kd::insert_kll_dynamic_lib::<$t>,
+                kd::insert_step_kll_dynamic_lib::<$t>,
+                kd::query_kll_dynamic_lib::<$t>,
+                Some((
+                    kd::merge_kll_dynamic_lib::<$t>,
+                    kd::merge_step_kll_dynamic_lib::<$t>,
+                    kd::merge_query_kll_dynamic_lib::<$t>,
+                )),
+                None,
             )
         };
     }

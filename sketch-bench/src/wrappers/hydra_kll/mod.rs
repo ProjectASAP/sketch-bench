@@ -23,6 +23,7 @@ mod tests {
                 rows: 3,
                 cols: 64,
                 cell_k: 200,
+                seed: None,
             }),
             2,
         )
@@ -102,6 +103,7 @@ mod tests {
                 rows: 3,
                 cols: 4096,
                 cell_k: 200,
+                seed: None,
             }),
             2,
         )
@@ -119,6 +121,7 @@ mod tests {
             rows: 3,
             cols: 64,
             cell_k: 0,
+            seed: None,
         });
         let Err(err) = build_hydra_kll(&bad, 2) else {
             panic!("a zero cell_k must be refused, not built");

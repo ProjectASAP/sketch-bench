@@ -176,6 +176,51 @@ pub(crate) fn row_hll_lib(
     }
 }
 
+pub(crate) fn row_hll_ertl_lib(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+) -> Result<Measurements, RunError> {
+    use crate::wrappers::hll::sketchlib as hl;
+    use asap_sketchlib::{HllRegistersP12, HllRegistersP14, HllRegistersP16};
+    macro_rules! at {
+        ($r:ty, $t:ty) => {
+            cardinality_row::<$t>(
+                req,
+                description,
+                table,
+                want,
+                hl::insert_hll_lib_ertl::<$r, $t>,
+                hl::insert_step_hll_lib_ertl::<$r, $t>,
+                hl::query_hll_lib_ertl::<$r, $t>,
+                Some((
+                    hl::merge_hll_lib_ertl::<$r, $t>,
+                    hl::merge_step_hll_lib_ertl::<$r, $t>,
+                    hl::merge_query_hll_lib_ertl::<$r, $t>,
+                )),
+                None,
+            )
+        };
+    }
+    macro_rules! at_precision {
+        ($t:ty) => {
+            match lg_k(req)? {
+                12 => at!(HllRegistersP12, $t),
+                14 => at!(HllRegistersP14, $t),
+                16 => at!(HllRegistersP16, $t),
+                other => Err(unsupported_precision(other)),
+            }
+        };
+    }
+    match req.width {
+        Dtype::I64 => at_precision!(i64),
+        Dtype::U64 => at_precision!(u64),
+        Dtype::F64 => at_precision!(f64),
+        Dtype::Str => at_precision!(String),
+    }
+}
+
 /// The HIP variant: same precision dispatch, but no merge — it maintains its
 /// estimate on the insert path and the library supplies no fold.
 pub(crate) fn row_hll_hip_lib(

@@ -17,6 +17,7 @@ pub(crate) mod curve;
 pub mod frequency;
 pub mod heavy_hitter;
 pub mod keyed;
+pub mod membership;
 pub mod quantile;
 pub mod subpopulation;
 pub mod topk;
@@ -38,6 +39,8 @@ pub trait CountedValue: ColumnItem {
     type CountKey: Eq + std::hash::Hash + Ord + Clone;
 
     fn count_key(&self) -> Self::CountKey;
+
+    fn absent_candidate(i: u64) -> Self;
 }
 
 impl CountedValue for i64 {
@@ -45,6 +48,10 @@ impl CountedValue for i64 {
     #[inline(always)]
     fn count_key(&self) -> i64 {
         *self
+    }
+
+    fn absent_candidate(i: u64) -> i64 {
+        -(i as i64) - 1
     }
 }
 
@@ -54,6 +61,10 @@ impl CountedValue for u64 {
     fn count_key(&self) -> u64 {
         *self
     }
+
+    fn absent_candidate(i: u64) -> u64 {
+        u64::MAX - i
+    }
 }
 
 impl CountedValue for f64 {
@@ -62,6 +73,10 @@ impl CountedValue for f64 {
     fn count_key(&self) -> u64 {
         self.to_bits()
     }
+
+    fn absent_candidate(i: u64) -> f64 {
+        -(i as f64) - 0.5
+    }
 }
 
 impl CountedValue for String {
@@ -69,6 +84,10 @@ impl CountedValue for String {
     #[inline(always)]
     fn count_key(&self) -> String {
         self.clone()
+    }
+
+    fn absent_candidate(i: u64) -> String {
+        format!("absent-{i}")
     }
 }
 
@@ -177,6 +196,33 @@ pub(crate) fn scalar_error(truth: f64, answers: &[f64]) -> BTreeMap<String, f64>
         ("absolute_error".to_string(), abs_err),
         ("relative_error".to_string(), rel_err),
     ])
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct StreamStats {
+    pub(crate) items: u64,
+    pub(crate) distinct: u64,
+    pub(crate) l2: f64,
+}
+
+impl StreamStats {
+    pub(crate) fn of_counts(counts: impl IntoIterator<Item = u64>) -> Self {
+        let mut stats = StreamStats::default();
+        let mut squares = 0.0f64;
+        for c in counts {
+            stats.items += c;
+            stats.distinct += 1;
+            squares += (c as f64) * (c as f64);
+        }
+        stats.l2 = squares.sqrt();
+        stats
+    }
+
+    pub(crate) fn write(&self, metrics: &mut BTreeMap<String, f64>) {
+        metrics.insert("stream_items".into(), self.items as f64);
+        metrics.insert("stream_distinct".into(), self.distinct as f64);
+        metrics.insert("stream_l2".into(), self.l2);
+    }
 }
 
 pub(crate) fn f64_values(column: &ColumnData) -> Result<Vec<f64>, DataGenError> {
