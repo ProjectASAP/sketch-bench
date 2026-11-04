@@ -153,6 +153,28 @@ impl std::str::FromStr for MergeSplit {
     }
 }
 
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrialMode {
+    #[default]
+    Fresh,
+    Relabel,
+    Reseed,
+}
+
+impl std::str::FromStr for TrialMode {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "fresh" => Ok(Self::Fresh),
+            "relabel" => Ok(Self::Relabel),
+            "reseed" => Ok(Self::Reseed),
+            other => Err(format!("unknown trial mode '{other}'")),
+        }
+    }
+}
+
 /// MACRO (benchmark) section of a record. Every sub-field is
 /// `Option`al so N/A metrics don't pollute the JSON with zero
 /// placeholders.
@@ -214,6 +236,10 @@ pub struct BenchSection {
     /// record carrying a `false`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merge_supported: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trial: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trial_mode: Option<TrialMode>,
 }
 
 /// Aggregate across N samples: mean / stddev / optional 95% CI, plus the raw
@@ -279,6 +305,10 @@ pub struct MergedRecord {
     /// pools by, so renaming the field would be a schema break for a word.
     #[serde(rename = "workload")]
     pub input_dataset: WorkloadDescription,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trial: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trial_mode: Option<TrialMode>,
 
     pub memory_bytes: Option<u64>,
     /// Net bytes the tracking allocator attributes to this sketch's lifetime —
@@ -468,6 +498,8 @@ pub fn merged_record_schema_json() -> String {
             },
             burst: None,
         },
+        trial: None,
+        trial_mode: None,
         memory_bytes: None,
         heap_bytes_net: None,
         heap_bytes_peak: None,
@@ -527,6 +559,7 @@ mod tests {
                 fan_out: None,
                 scale_by: None,
                 scale_range: None,
+                key_offset: None,
             },
             1_000_000,
         )

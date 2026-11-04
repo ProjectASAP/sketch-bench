@@ -185,6 +185,7 @@ mod tests {
                     fan_out: None,
                     scale_by: None,
                     scale_range: None,
+                    key_offset: None,
                 },
                 100_000,
             ),

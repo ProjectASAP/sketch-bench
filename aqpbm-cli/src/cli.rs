@@ -2,7 +2,7 @@
 //! `main.rs`. Option help and grouping track `docs/aqpbm-cli-reference.md`, which
 //! `scripts/dump_cli_reference.sh` diffs the built binary against.
 
-use aqpbm_core::MergeSplit;
+use aqpbm_core::{MergeSplit, TrialMode};
 use clap::builder::TypedValueParser;
 use clap::{Parser, Subcommand};
 
@@ -203,6 +203,39 @@ pub struct SketchbenchArgs {
     /// appear. At 1 no interval is claimed. Costs R times the wall clock.
     #[arg(long, default_value_t = 1, help_heading = "Repetition")]
     pub repeat_experiment: usize,
+    #[arg(
+        long,
+        default_value_t = 1,
+        help = "Independent accuracy trials, each over a fresh sketch and written as its own \
+                record carrying `bench.trial`. Accuracy is the only metric it takes, and it is \
+                not combined with --repeat-experiment. 1 with no other trial option is a plain \
+                run. See --trial-mode for what a trial draws again.",
+        help_heading = "Repetition"
+    )]
+    pub trials: u64,
+    #[arg(
+        long,
+        help = "The first trial's index: the run covers trials S..S+T, and trial t writes the \
+                same record whatever S and T are, so a grid splits across processes. Omitted \
+                is 0.",
+        help_heading = "Repetition"
+    )]
+    pub trial_start: Option<u64>,
+    #[arg(
+        long,
+        value_parser = clap::builder::PossibleValuesParser::new(["fresh", "relabel", "reseed"])
+            .try_map(|s| s.parse::<TrialMode>()),
+        help = "What a trial t draws again. `fresh`: every dataset seed (--seed, each \
+                column's distribution seed, the burst seed) becomes mix(seed, t), and the key \
+                columns are offset. `relabel`: the data is drawn once and only the key columns \
+                are offset, for rows scored on keys. `reseed`: the data is drawn once and the \
+                row's `seed` config field becomes mix(seed, t), from the --config seed or 0. \
+                Trial 0 keeps the dataset seeds and keys. The offset adds t*2^40 to an integer \
+                or f64 key and prefixes a string key with \"t:\". mix(a, b) is splitmix64 of \
+                a ^ b*0x9E3779B97F4A7C15. Omitted is `fresh`.",
+        help_heading = "Repetition"
+    )]
+    pub trial_mode: Option<TrialMode>,
 
     /// Comma-separated: throughput,latency,accuracy,cpu,memory. What is
     /// measured. Crossed with `--operations` to give the measurements this run

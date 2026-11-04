@@ -436,6 +436,7 @@ mod tests {
                 fan_out: None,
                 scale_by: None,
                 scale_range: None,
+                key_offset: None,
             },
             1_000_000,
         )
@@ -457,6 +458,8 @@ mod tests {
                 serde_json::json!({"algorithm": "cms", "params": {"rows": 3, "cols": 1024}}),
             ),
             input_dataset: dataset().into(),
+            trial: None,
+            trial_mode: None,
             memory_bytes: Some(12_288),
             heap_bytes_net: None,
             heap_bytes_peak: None,

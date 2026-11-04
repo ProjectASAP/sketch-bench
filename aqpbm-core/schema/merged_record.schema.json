@@ -311,6 +311,24 @@
     "source": {
       "$ref": "#/$defs/Source"
     },
+    "trial": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint64",
+      "minimum": 0
+    },
+    "trial_mode": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TrialMode"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "workload": {
       "description": "The data this run was measured over. The wire name stays `workload` while\nthe Rust name does not: it is the group key `scripts/merge_passes.py`\npools by, so renaming the field would be a schema break for a word.",
       "$ref": "#/$defs/WorkloadDescription"
@@ -430,6 +448,16 @@
           ],
           "format": "uint64",
           "minimum": 0
+        },
+        "key_offset": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/KeyOffset"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "scale_by": {
           "description": "Index of an earlier `string` column whose values scale this one. Each\ndistinct label value gets a fixed factor in `scale_range`, and every\nrow's value is multiplied by its label's factor. `f64` columns only.",
@@ -695,6 +723,18 @@
         "timestamp_unit"
       ]
     },
+    "KeyOffset": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
     "Language": {
       "description": "Implementation language of the run that produced this record.\nUsed by readers to split apples-to-apples comparisons.",
       "type": "string",
@@ -907,6 +947,14 @@
         "column_label",
         "column_spec",
         "row_num"
+      ]
+    },
+    "TrialMode": {
+      "type": "string",
+      "enum": [
+        "fresh",
+        "relabel",
+        "reseed"
       ]
     },
     "WorkloadDescription": {

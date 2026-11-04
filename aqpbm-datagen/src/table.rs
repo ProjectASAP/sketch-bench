@@ -18,7 +18,7 @@ use crate::{inject_interval_bursts, BurstSpec};
 /// SplitMix64 finalizer spreads nearby ranks across the word while keeping the
 /// mapping deterministic. Also hashes a `scale_by` label to its factor.
 #[inline]
-pub(crate) fn mix_connected_bits(mut x: u64) -> u64 {
+pub fn splitmix64(mut x: u64) -> u64 {
     x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
     x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
@@ -252,7 +252,7 @@ impl TableDescription {
             let bits = self.column_spec[head]
                 .draw(row_num)?
                 .into_iter()
-                .map(|draw| mix_connected_bits((draw - domain.lower) as u64))
+                .map(|draw| splitmix64((draw - domain.lower) as u64))
                 .collect();
             group_bits.insert(g, bits);
         }
@@ -299,6 +299,14 @@ impl TableDescription {
             data.push(rendered.map_err(|e| {
                 DataGenError::BadParam(format!("column '{}': {e}", self.column_label[i]))
             })?);
+        }
+
+        for (i, spec) in self.column_spec.iter().enumerate() {
+            if let Some(offset) = &spec.key_offset {
+                offset.apply(&mut data[i]).map_err(|e| {
+                    DataGenError::BadParam(format!("column '{}': {e}", self.column_label[i]))
+                })?;
+            }
         }
 
         let table = GeneratedTable {

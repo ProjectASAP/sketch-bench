@@ -45,6 +45,7 @@ fn identity_of(record: &Record) -> Result<String> {
         "impl": record.library,
         "sketch_config": record.sketch_config,
         "workload": record.input_dataset,
+        "trial": record.bench.as_ref().and_then(|bench| bench.trial),
     });
     serde_json::to_string(&key).context("serialising identity key")
 }

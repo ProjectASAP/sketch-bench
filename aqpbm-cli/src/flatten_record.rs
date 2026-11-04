@@ -52,6 +52,8 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
         source: base.source,
         sketch_config: base.sketch_config.clone(),
         input_dataset: base.input_dataset.clone(),
+        trial: None,
+        trial_mode: None,
         memory_bytes: None,
         heap_bytes_net: None,
         heap_bytes_peak: None,
@@ -87,6 +89,8 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
             merge_shards,
             merge_split,
             merge_supported,
+            trial,
+            trial_mode,
         } = bench;
 
         // A sketch has one size however many measurements took it, so the
@@ -149,6 +153,8 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
                 }
             };
         }
+        keep_same!(out.trial, *trial, "trial");
+        keep_same!(out.trial_mode, *trial_mode, "trial_mode");
         match operation {
             "insert" => {
                 out.insert.timestamp = Some(record.timestamp);
@@ -261,6 +267,7 @@ mod tests {
                 fan_out: None,
                 scale_by: None,
                 scale_range: None,
+                key_offset: None,
             },
             1000,
         );

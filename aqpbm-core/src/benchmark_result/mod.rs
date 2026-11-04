@@ -12,6 +12,6 @@ pub use fold::MemoryMaxima;
 pub use schema::{
     BenchSection, CpuTime, ExternalWorkload, InsertMetrics, Language, LatencySummary, MergeMetrics,
     MergeSplit, MergedRecord, Mode, PrepareMetrics, QueryMetrics, Record, RunStats, Source,
-    WorkloadDescription, SCHEMA_VERSION,
+    TrialMode, WorkloadDescription, SCHEMA_VERSION,
 };
 pub use welford::Welford;

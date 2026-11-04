@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::marker::PhantomData;
 
-use aqpbm_datagen::{DataGenError, GeneratedTable};
+use aqpbm_datagen::{DataGenError, GeneratedTable, KeyOffset};
 
 use super::{curve, CountedValue, GroundTruth};
 
@@ -11,13 +11,15 @@ const NON_MEMBER_PROBES: usize = 100_000;
 
 pub struct MembershipGT<K> {
     pub column: usize,
+    pub key_offset: Option<KeyOffset>,
     key: PhantomData<K>,
 }
 
 impl<K> MembershipGT<K> {
-    pub fn over_column(column: usize) -> Self {
+    pub fn over_column(column: usize, key_offset: Option<KeyOffset>) -> Self {
         Self {
             column,
+            key_offset,
             key: PhantomData,
         }
     }
@@ -45,8 +47,16 @@ impl<K: CountedValue> GroundTruth for MembershipGT<K> {
         }
         let mut members = curve::shuffled(&distinct);
         members.truncate(MEMBER_PROBES);
-        let non_members = (0..)
+        let mut candidates: Vec<K> = (0..(NON_MEMBER_PROBES + seen.len()) as u64)
             .map(K::absent_candidate)
+            .collect();
+        if let Some(offset) = &self.key_offset {
+            let mut column = K::into_column(candidates);
+            offset.apply(&mut column)?;
+            candidates = K::from_column(column)?;
+        }
+        let non_members = candidates
+            .into_iter()
             .filter(|k| !seen.contains(&k.count_key()))
             .take(NON_MEMBER_PROBES)
             .collect();
@@ -102,7 +112,7 @@ mod tests {
     fn an_exact_set_has_no_false_answers_and_a_yes_to_everything_has_fpr_one() {
         let items: Vec<i64> = vec![1, 2, 2, 3, -1];
         let table = table_of(&["key"], vec![ColumnData::Int64(items.clone())]);
-        let gt = MembershipGT::<i64>::over_column(0);
+        let gt = MembershipGT::<i64>::over_column(0, None);
         let set: HashSet<i64> = items.into_iter().collect();
         let mut exact = set.clone();
         let cmp = crate::accuracy::score_with(

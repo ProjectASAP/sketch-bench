@@ -101,6 +101,21 @@ impl ParamSet {
         }
     }
 
+    pub fn seed(&self) -> Option<u64> {
+        self.params.get("seed").and_then(serde_json::Value::as_u64)
+    }
+
+    pub fn with_seed(&self, seed: u64) -> ParamSet {
+        let mut params = self.params.clone();
+        if let serde_json::Value::Object(map) = &mut params {
+            map.insert("seed".to_string(), serde_json::Value::from(seed));
+        }
+        ParamSet {
+            variant: self.variant.clone(),
+            params,
+        }
+    }
+
     /// Parse one `--config` point: `'k1=v1 k2=v2'`, one value per key — a comma
     /// list is an error, since one invocation measures one point. Syntax only:
     /// no variant is named here, so membership is the caller's check.
@@ -122,6 +137,22 @@ impl ParamSet {
             params: serde_json::Value::Object(params),
         })
     }
+}
+
+pub fn takes_seed(variant: &str) -> bool {
+    KllParams::owns(variant)
+        || HydraKllParams::owns(variant)
+        || CocoParams::owns(variant)
+        || UniformSamplingParams::owns(variant)
+        || NitroParams::owns(variant)
+}
+
+pub fn seeded_rows() -> Vec<String> {
+    crate::registry::REGISTRY
+        .iter()
+        .filter(|row| takes_seed(row.variant))
+        .map(|row| format!("{}/{}", row.variant, row.library))
+        .collect()
 }
 
 /// `"5"` → number, `"1.1"` → float, `"true"` → bool, else string.

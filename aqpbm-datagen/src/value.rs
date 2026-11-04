@@ -123,6 +123,8 @@ pub trait ColumnItem: Clone + std::fmt::Debug + PartialEq + 'static {
     fn from_column(column: ColumnData) -> Result<Vec<Self>, DataGenError>;
 
     fn column_slice(column: &ColumnData) -> Result<&[Self], DataGenError>;
+
+    fn into_column(values: Vec<Self>) -> ColumnData;
 }
 
 impl ColumnItem for i64 {
@@ -132,6 +134,9 @@ impl ColumnItem for i64 {
     }
     fn column_slice(column: &ColumnData) -> Result<&[Self], DataGenError> {
         column.as_i64()
+    }
+    fn into_column(values: Vec<Self>) -> ColumnData {
+        ColumnData::Int64(values)
     }
 }
 
@@ -143,6 +148,9 @@ impl ColumnItem for u64 {
     fn column_slice(column: &ColumnData) -> Result<&[Self], DataGenError> {
         column.as_u64()
     }
+    fn into_column(values: Vec<Self>) -> ColumnData {
+        ColumnData::Unsigned64(values)
+    }
 }
 
 impl ColumnItem for f64 {
@@ -153,6 +161,9 @@ impl ColumnItem for f64 {
     fn column_slice(column: &ColumnData) -> Result<&[Self], DataGenError> {
         column.as_f64()
     }
+    fn into_column(values: Vec<Self>) -> ColumnData {
+        ColumnData::Float64(values)
+    }
 }
 
 impl ColumnItem for String {
@@ -162,6 +173,9 @@ impl ColumnItem for String {
     }
     fn column_slice(column: &ColumnData) -> Result<&[Self], DataGenError> {
         column.as_string()
+    }
+    fn into_column(values: Vec<Self>) -> ColumnData {
+        ColumnData::String(values)
     }
 }
 
