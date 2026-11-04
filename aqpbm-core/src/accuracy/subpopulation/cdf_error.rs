@@ -36,7 +36,6 @@ impl GroundTruth for SubpopCdfErrorGT {
         SubpopRankErrorGT {
             group_columns: self.group_columns.clone(),
             value_column: self.value_column,
-            fractions: Vec::new(),
         }
         .truth(table)
     }

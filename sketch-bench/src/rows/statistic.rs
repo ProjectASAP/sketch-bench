@@ -249,7 +249,6 @@ pub(super) fn subpop_quantile_row<V: ColumnItem + 'static>(
         SubpopRankErrorGT {
             group_columns: group_columns(req, description)?,
             value_column: value_column(description),
-            fractions: req.quantiles.clone(),
         },
         peel_labeled::<V>,
         insert,
@@ -377,7 +376,6 @@ pub(super) fn relative_value_quantile_row<T: ColumnItem>(
         want,
         RelativeValueErrorGT {
             column: value_column(description),
-            fractions: req.quantiles.clone(),
         },
         peel::<T>,
         insert,

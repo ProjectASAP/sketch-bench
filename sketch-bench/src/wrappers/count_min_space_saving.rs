@@ -1,62 +1,224 @@
 use crate::params::{CountMinSpaceSavingParams, ParamSet};
-use crate::wrappers::cms_heap::sketchlib::TopkAnswer;
+use crate::wrappers::cms_heap::sketchlib::{heap_capacity, TopkAnswer};
 use crate::wrappers::frequency_value::FrequencyValue;
-use crate::wrappers::row_bodies::{ranked, topk_k, Answers, Merges, RowSketch};
-use crate::wrappers::{require_positive, BuildError};
+use crate::wrappers::{partition, require_positive, BuildError, Pass, QueryPass, Shared, StepPass};
 use asap_sketchlib::CountMinSketchWithSpaceSaving;
+use std::cell::RefCell;
+use std::rc::Rc;
+
+const NAME: &str = "asap CountMinSketchWithSpaceSaving";
 
 pub struct CountMinSpaceSavingLib {
     inner: CountMinSketchWithSpaceSaving,
-    k: usize,
 }
 
-impl<T: FrequencyValue> RowSketch<T> for CountMinSpaceSavingLib {
-    fn build(params: &ParamSet) -> Result<Self, BuildError> {
-        let p: CountMinSpaceSavingParams = params.parse()?;
-        let name = "asap CountMinSketchWithSpaceSaving";
-        require_positive(name, "capacity", p.capacity)?;
-        CountMinSketchWithSpaceSaving::check_shape(p.rows, p.cols)
-            .map_err(|e| BuildError(format!("{name}: {e}")))?;
-        Ok(CountMinSpaceSavingLib {
-            inner: CountMinSketchWithSpaceSaving::new(p.rows, p.cols, p.capacity),
-            k: topk_k(name, p.topk_k, p.capacity)?,
-        })
-    }
-
-    fn insert(&mut self, item: &T) {
-        self.inner.update(&item.data_input());
-    }
-
-    fn memory(&self) -> usize {
-        self.inner.memory_bytes()
-    }
+pub fn build_count_min_space_saving_lib(
+    config: &ParamSet,
+) -> Result<CountMinSpaceSavingLib, BuildError> {
+    let p: CountMinSpaceSavingParams = config.parse()?;
+    require_positive(NAME, "capacity", p.capacity)?;
+    CountMinSketchWithSpaceSaving::check_shape(p.rows, p.cols)
+        .map_err(|e| BuildError(format!("{NAME}: {e}")))?;
+    Ok(CountMinSpaceSavingLib {
+        inner: CountMinSketchWithSpaceSaving::new(p.rows, p.cols, p.capacity),
+    })
 }
 
-impl<T: FrequencyValue> Answers<T, u64> for CountMinSpaceSavingLib {
-    fn answer(&mut self, probe: &T) -> u64 {
-        self.inner.estimate(&probe.data_input()).max(0) as u64
-    }
+pub fn memory_count_min_space_saving_lib(sketch: &CountMinSpaceSavingLib) -> usize {
+    sketch.inner.memory_bytes()
 }
 
-impl<T: FrequencyValue> Answers<(), TopkAnswer<T>> for CountMinSpaceSavingLib {
-    fn answer(&mut self, _probe: &()) -> TopkAnswer<T> {
-        let entries = self
-            .inner
-            .top_k(self.k)
-            .into_iter()
-            .map(|(key, count)| {
-                (
-                    T::from_data_input(&key.as_data_input()),
-                    count.max(0) as u64,
-                )
-            })
-            .collect();
-        ranked(entries, self.k)
-    }
+pub fn answered_k_count_min_space_saving_lib(config: &ParamSet) -> Result<usize, BuildError> {
+    let p: CountMinSpaceSavingParams = config.parse()?;
+    Ok(heap_capacity(NAME, Some(p.capacity), p.topk_k)?.1)
 }
 
-impl Merges for CountMinSpaceSavingLib {
-    fn merge(&mut self, other: &Self) {
-        self.inner.merge(&other.inner);
+pub fn insert_count_min_space_saving_lib<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let mut sketch = build_count_min_space_saving_lib(params)?;
+        let items = items.clone();
+        out.push(Box::new(move || {
+            for v in items.iter() {
+                sketch.inner.update(&v.data_input());
+            }
+            memory_count_min_space_saving_lib(&sketch)
+        }) as Pass);
     }
+    Ok(out)
+}
+
+pub fn insert_step_count_min_space_saving_lib<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_count_min_space_saving_lib(params)?));
+        let (driven, read) = (sketch.clone(), sketch);
+        let stream = items.clone();
+        out.push(StepPass {
+            steps: items.len(),
+            step: Box::new(move |i| {
+                let sketch = &mut *driven.borrow_mut();
+                let v = &stream[i];
+                sketch.inner.update(&v.data_input());
+            }),
+            footprint: Box::new(move || memory_count_min_space_saving_lib(&read.borrow())),
+        });
+    }
+    Ok(out)
+}
+
+pub fn query_count_min_space_saving_lib_estimate<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<T>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<u64>>, BuildError> {
+    merge_query_count_min_space_saving_lib_estimate(params, items, probes, 1, passes)
+}
+
+pub fn merge_query_count_min_space_saving_lib_estimate<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<T>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<u64>>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (mut sketch, rest) = count_min_space_saving_lib_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch.inner.merge(&other.inner);
+        }
+        let probes = probes.clone();
+        out.push(Box::new(move || {
+            let mut answers = Vec::with_capacity(probes.len());
+            for p in probes.iter() {
+                answers.push(sketch.inner.estimate(&p.data_input()).max(0) as u64);
+            }
+            let footprint = memory_count_min_space_saving_lib(&sketch);
+            (answers, footprint)
+        }) as QueryPass<u64>);
+    }
+    Ok(out)
+}
+
+pub fn query_count_min_space_saving_lib_topk<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<()>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<TopkAnswer<T>>>, BuildError> {
+    merge_query_count_min_space_saving_lib_topk(params, items, probes, 1, passes)
+}
+
+pub fn merge_query_count_min_space_saving_lib_topk<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<()>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<TopkAnswer<T>>>, BuildError> {
+    let k = answered_k_count_min_space_saving_lib(params)?;
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (mut sketch, rest) = count_min_space_saving_lib_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch.inner.merge(&other.inner);
+        }
+        let probes = probes.clone();
+        out.push(Box::new(move || {
+            let mut answers = Vec::with_capacity(probes.len());
+            for p in probes.iter() {
+                answers.push({
+                    let _ = p;
+                    sketch
+                        .inner
+                        .top_k(k)
+                        .into_iter()
+                        .map(|(key, count)| {
+                            (
+                                T::from_data_input(&key.as_data_input()),
+                                count.max(0) as u64,
+                            )
+                        })
+                        .collect()
+                });
+            }
+            let footprint = memory_count_min_space_saving_lib(&sketch);
+            (answers, footprint)
+        }) as QueryPass<TopkAnswer<T>>);
+    }
+    Ok(out)
+}
+
+pub fn merge_count_min_space_saving_lib<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (mut acc, rest) = count_min_space_saving_lib_shards(params, &items, shards)?;
+        out.push(Box::new(move || {
+            for other in rest.iter() {
+                acc.inner.merge(&other.inner);
+            }
+            memory_count_min_space_saving_lib(&acc)
+        }) as Pass);
+    }
+    Ok(out)
+}
+
+pub fn merge_step_count_min_space_saving_lib<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (acc, rest) = count_min_space_saving_lib_shards(params, &items, shards)?;
+        let acc: Shared<_> = Rc::new(RefCell::new(acc));
+        let (driven, read) = (acc.clone(), acc);
+        out.push(StepPass {
+            steps: rest.len(),
+            step: Box::new(move |i| {
+                let acc = &mut *driven.borrow_mut();
+                let other = &rest[i];
+                acc.inner.merge(&other.inner);
+            }),
+            footprint: Box::new(move || memory_count_min_space_saving_lib(&read.borrow())),
+        });
+    }
+    Ok(out)
+}
+
+#[allow(clippy::type_complexity)]
+fn count_min_space_saving_lib_shards<T: FrequencyValue>(
+    params: &ParamSet,
+    items: &[T],
+    shards: usize,
+) -> Result<(CountMinSpaceSavingLib, Vec<CountMinSpaceSavingLib>), BuildError> {
+    let mut parts: Vec<CountMinSpaceSavingLib> = Vec::new();
+    for shard in partition(items, shards) {
+        let mut sketch = build_count_min_space_saving_lib(params)?;
+        for v in shard {
+            sketch.inner.update(&v.data_input());
+        }
+        parts.push(sketch);
+    }
+    let rest = parts.split_off(1);
+    Ok((
+        parts.pop().expect("a split of the stream is never empty"),
+        rest,
+    ))
 }

@@ -15,7 +15,7 @@ use super::{f64_values, GroundTruth};
 /// are read on the same ruler.
 pub(crate) const GRID_POINTS: usize = 101;
 
-pub(crate) fn probe_fractions(asked: &[f64]) -> Vec<f64> {
+fn probe_fractions(asked: &[f64]) -> Vec<f64> {
     if asked.is_empty() {
         (0..GRID_POINTS).map(|i| i as f64 / 100.0).collect()
     } else {
@@ -92,10 +92,9 @@ impl GroundTruth for RankErrorGT {
 /// excluded. A probe the sketch could not answer (`NaN`) is excluded too and
 /// counted in `unanswered_points`. DDSketch's bound holds per quantile, so the
 /// worst probe is reported as `max_relative_value_error` beside the mean.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct RelativeValueErrorGT {
     pub column: usize,
-    pub fractions: Vec<f64>,
 }
 
 impl GroundTruth for RelativeValueErrorGT {
@@ -113,7 +112,7 @@ impl GroundTruth for RelativeValueErrorGT {
         if truth.is_empty() {
             return Vec::new();
         }
-        probe_fractions(&self.fractions)
+        (0..GRID_POINTS).map(|i| i as f64 / 100.0).collect()
     }
 
     fn score(&self, truth: &Vec<f64>, probes: &[f64], answers: &[f64]) -> BTreeMap<String, f64> {
@@ -129,7 +128,6 @@ impl GroundTruth for RelativeValueErrorGT {
         let mut max = 0.0_f64;
         let mut scored = 0usize;
         let mut unanswered = 0usize;
-        let mut per_probe = Vec::new();
         for (q, estimate) in probes.iter().zip(answers) {
             let exact = quantile_value(truth, *q);
             if exact == 0.0 {
@@ -143,9 +141,6 @@ impl GroundTruth for RelativeValueErrorGT {
             sum += err;
             max = max.max(err);
             scored += 1;
-            if !self.fractions.is_empty() {
-                per_probe.push((format!("relative_value_error_q{q}"), err));
-            }
         }
         let mut metrics = metrics_from([
             ("items", truth.len() as f64),
@@ -157,7 +152,6 @@ impl GroundTruth for RelativeValueErrorGT {
             metrics.insert("mean_relative_value_error".into(), sum / scored as f64);
             metrics.insert("max_relative_value_error".into(), max);
         }
-        metrics.extend(per_probe);
         metrics
     }
 }
@@ -260,10 +254,7 @@ mod tests {
 
     #[test]
     fn relative_value_error_averages_nonzero_exact_quantiles_only() {
-        let gt = RelativeValueErrorGT {
-            column: 0,
-            fractions: Vec::new(),
-        };
+        let gt = RelativeValueErrorGT { column: 0 };
         let truth = vec![0.0, 10.0, 20.0];
         let scores = gt.score(&truth, &[0.0, 0.5, 1.0], &[100.0, 11.0, 16.0]);
 
@@ -279,10 +270,7 @@ mod tests {
     /// shows the per-quantile guarantee is broken.
     #[test]
     fn relative_value_error_reports_the_worst_quantile() {
-        let gt = RelativeValueErrorGT {
-            column: 0,
-            fractions: Vec::new(),
-        };
+        let gt = RelativeValueErrorGT { column: 0 };
         let truth: Vec<f64> = (1..=100).map(f64::from).collect();
         let probes: Vec<f64> = (1..=20).map(|i| i as f64 / 20.0).collect();
         let answers: Vec<f64> = probes
@@ -301,10 +289,7 @@ mod tests {
     /// A probe the sketch could not answer is counted, not averaged in.
     #[test]
     fn relative_value_error_skips_unanswered_probes() {
-        let gt = RelativeValueErrorGT {
-            column: 0,
-            fractions: Vec::new(),
-        };
+        let gt = RelativeValueErrorGT { column: 0 };
         let scores = gt.score(&vec![10.0, 20.0], &[0.0, 1.0], &[f64::NAN, 22.0]);
         assert_eq!(scores["scored_points"], 1.0);
         assert_eq!(scores["unanswered_points"], 1.0);
@@ -314,10 +299,7 @@ mod tests {
 
     #[test]
     fn relative_value_error_omits_the_mean_when_every_exact_quantile_is_zero() {
-        let gt = RelativeValueErrorGT {
-            column: 0,
-            fractions: Vec::new(),
-        };
+        let gt = RelativeValueErrorGT { column: 0 };
         let scores = gt.score(&vec![0.0; 3], &[0.0, 0.5, 1.0], &[0.0, 1.0, -1.0]);
 
         assert_eq!(scores["grid_points"], 3.0);
@@ -327,10 +309,7 @@ mod tests {
 
     #[test]
     fn relative_value_error_uses_ddsketchs_quantile_rank() {
-        let gt = RelativeValueErrorGT {
-            column: 0,
-            fractions: Vec::new(),
-        };
+        let gt = RelativeValueErrorGT { column: 0 };
         let scores = gt.score(&vec![10.0, 20.0, 40.0, 80.0], &[0.3], &[24.0]);
 
         // ceil(0.3 * 4) - 1 is 1, so the exact value is 20, not 10.
@@ -339,10 +318,7 @@ mod tests {
 
     #[test]
     fn relative_value_error_uses_the_first_item_at_zero_quantile() {
-        let gt = RelativeValueErrorGT {
-            column: 0,
-            fractions: Vec::new(),
-        };
+        let gt = RelativeValueErrorGT { column: 0 };
         let scores = gt.score(&vec![10.0, 20.0, 40.0], &[0.0], &[11.0]);
 
         assert!((scores["mean_relative_value_error"] - 0.1).abs() < f64::EPSILON);
@@ -350,10 +326,7 @@ mod tests {
 
     #[test]
     fn relative_value_error_uses_the_last_item_at_one_quantile() {
-        let gt = RelativeValueErrorGT {
-            column: 0,
-            fractions: Vec::new(),
-        };
+        let gt = RelativeValueErrorGT { column: 0 };
         let scores = gt.score(&vec![10.0, 20.0, 40.0], &[1.0], &[44.0]);
 
         assert!((scores["mean_relative_value_error"] - 0.1).abs() < f64::EPSILON);

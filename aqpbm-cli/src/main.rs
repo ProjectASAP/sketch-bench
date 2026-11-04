@@ -48,7 +48,7 @@ use report_sink::ReportSink;
 // them — is sketch-domain knowledge and lives in `sketch-bench`. The CLI does
 // not know the set; it asks.
 use sketch_bench::registry;
-use sketch_bench::request::{Capability, Requirement};
+use sketch_bench::request::Requirement;
 
 /// What is measured. No default and no `all`: a request names the measurements
 /// it wants, and a shorthand that swept every operation against every metric
@@ -356,9 +356,10 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     let mut group_columns = args.group_columns.clone();
     group_columns.sort_unstable();
     group_columns.dedup();
+    let row = registry::find(&variant, &library);
     if args.per_group_out.is_some() {
-        if !variant.starts_with("hydra-") {
-            bail!("--per-group-out: only the hydra-* rows score groups, and {variant} is not one");
+        if !row.is_some_and(|row| row.capability.name().starts_with("subpop-")) {
+            bail!("--per-group-out: only the subpopulation rows score groups, and {variant}/{library} is not one");
         }
         match want.iter().filter(|(_, m)| *m == Metric::Accuracy).count() {
             0 => bail!("--per-group-out writes an accuracy measurement, and none was asked for"),
@@ -369,12 +370,12 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         }
     }
     if !args.quantiles.is_empty() {
-        let capability = registry::find(&variant, &library).map(|row| row.capability);
-        if !matches!(
-            capability,
-            Some(Capability::Quantile | Capability::SubpopQuantile)
-        ) {
-            bail!("--quantiles: only a quantile row is asked at fractions, and {variant}/{library} is not one");
+        let comparator = args
+            .comparator
+            .as_deref()
+            .or(row.and_then(|row| row.comparator));
+        if comparator != Some("rank-error") {
+            bail!("--quantiles: only a row scored by rank error is asked at fractions, and {variant}/{library} is not one");
         }
         if let Some(q) = args.quantiles.iter().find(|q| !(0.0..=1.0).contains(*q)) {
             bail!("--quantiles: {q} is outside [0, 1]");

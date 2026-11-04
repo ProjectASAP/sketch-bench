@@ -222,7 +222,7 @@ pub struct SketchbenchArgs {
     #[arg(
         long,
         value_delimiter = ',',
-        help = "Comma-separated fractions in [0, 1] a quantile row is asked at, one error per fraction; omitted asks the 101-point grid",
+        help = "Comma-separated fractions in [0, 1] a rank-error row is asked at, one error per fraction; omitted asks the 101-point grid",
         help_heading = "Measurement content"
     )]
     pub quantiles: Vec<f64>,
@@ -270,7 +270,7 @@ pub struct SketchbenchArgs {
     /// Path to append JSONL records to. `-` or omitted sends them to stdout.
     #[arg(long, help_heading = "Output")]
     pub report: Option<String>,
-    /// Write a `hydra-*` row's per-group errors to this CSV, one row per group:
+    /// Write a subpopulation row's per-group errors to this CSV, one row per group:
     /// `group_key,n_q,error,d_q,l2_q` (`n_q` is the group's record count, `error` the
     /// row's own metric, empty for a group that cannot be scored, such as one
     /// with zero entropy). The `n_q` sum to the stream's records; the record's

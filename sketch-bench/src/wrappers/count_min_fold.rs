@@ -1,84 +1,231 @@
 use crate::params::{CountMinFoldParams, ParamSet};
-use crate::wrappers::cms_heap::sketchlib::TopkAnswer;
+use crate::wrappers::cms_heap::sketchlib::{heap_capacity, top_k, TopkAnswer};
 use crate::wrappers::frequency_value::FrequencyValue;
-use crate::wrappers::row_bodies::{ranked, topk_k, Answers, Merges, RowSketch};
-use crate::wrappers::{require_positive, BuildError};
+use crate::wrappers::{partition, require_positive, BuildError, Pass, QueryPass, Shared, StepPass};
 use asap_sketchlib::CountMinSketchFold;
+use std::cell::RefCell;
+use std::rc::Rc;
 
-const MAX_FULL_COLS: usize = 65_536;
-
-pub(crate) fn check_fold(
-    name: &str,
-    rows: usize,
-    full_cols: usize,
-    fold_level: u32,
-) -> Result<(), BuildError> {
-    require_positive(name, "rows", rows)?;
-    if !full_cols.is_power_of_two() || full_cols > MAX_FULL_COLS {
-        return Err(BuildError(format!(
-            "{name}: full_cols={full_cols} must be a power of two at most {MAX_FULL_COLS}"
-        )));
-    }
-    if fold_level > full_cols.trailing_zeros() {
-        return Err(BuildError(format!(
-            "{name}: fold_level={fold_level} folds full_cols={full_cols} below one column"
-        )));
-    }
-    Ok(())
-}
+const NAME: &str = "asap CountMinSketchFold";
 
 pub struct CountMinFoldLib {
     inner: CountMinSketchFold,
-    k: usize,
 }
 
-impl<T: FrequencyValue> RowSketch<T> for CountMinFoldLib {
-    fn build(params: &ParamSet) -> Result<Self, BuildError> {
-        let p: CountMinFoldParams = params.parse()?;
-        let name = "asap CountMinSketchFold";
-        check_fold(name, p.rows, p.full_cols, p.fold_level)?;
-        require_positive(name, "heap_size", p.heap_size)?;
-        Ok(CountMinFoldLib {
-            inner: CountMinSketchFold::new(p.rows, p.full_cols, p.fold_level, p.heap_size),
-            k: topk_k(name, p.topk_k, p.heap_size)?,
-        })
+pub fn build_count_min_fold_lib(config: &ParamSet) -> Result<CountMinFoldLib, BuildError> {
+    let p: CountMinFoldParams = config.parse()?;
+    require_positive(NAME, "rows", p.rows)?;
+    require_positive(NAME, "heap_size", p.heap_size)?;
+    if !p.full_cols.is_power_of_two() || p.full_cols > 65_536 {
+        return Err(BuildError(format!(
+            "{NAME}: full_cols={} must be a power of two at most 65536",
+            p.full_cols
+        )));
     }
-
-    fn insert(&mut self, item: &T) {
-        self.inner.update(&item.data_input());
+    if p.fold_level > p.full_cols.trailing_zeros() {
+        return Err(BuildError(format!(
+            "{NAME}: fold_level={} folds full_cols={} below one column",
+            p.fold_level, p.full_cols
+        )));
     }
-
-    fn memory(&self) -> usize {
-        self.inner.memory_bytes()
-    }
+    Ok(CountMinFoldLib {
+        inner: CountMinSketchFold::new(p.rows, p.full_cols, p.fold_level, p.heap_size),
+    })
 }
 
-impl<T: FrequencyValue> Answers<T, u64> for CountMinFoldLib {
-    fn answer(&mut self, probe: &T) -> u64 {
-        self.inner.estimate(&probe.data_input()).max(0) as u64
-    }
+pub fn memory_count_min_fold_lib(sketch: &CountMinFoldLib) -> usize {
+    sketch.inner.memory_bytes()
 }
 
-impl<T: FrequencyValue> Answers<(), TopkAnswer<T>> for CountMinFoldLib {
-    fn answer(&mut self, _probe: &()) -> TopkAnswer<T> {
-        let entries = self
-            .inner
-            .heap()
-            .heap()
-            .iter()
-            .map(|e| {
-                (
-                    T::from_data_input(&e.key.as_data_input()),
-                    e.count.max(0) as u64,
-                )
-            })
-            .collect();
-        ranked(entries, self.k)
-    }
+pub fn answered_k_count_min_fold_lib(config: &ParamSet) -> Result<usize, BuildError> {
+    let p: CountMinFoldParams = config.parse()?;
+    Ok(heap_capacity(NAME, Some(p.heap_size), p.topk_k)?.1)
 }
 
-impl Merges for CountMinFoldLib {
-    fn merge(&mut self, other: &Self) {
-        self.inner.merge_same_level(&other.inner);
+pub fn insert_count_min_fold_lib<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let mut sketch = build_count_min_fold_lib(params)?;
+        let items = items.clone();
+        out.push(Box::new(move || {
+            for v in items.iter() {
+                sketch.inner.update(&v.data_input());
+            }
+            memory_count_min_fold_lib(&sketch)
+        }) as Pass);
     }
+    Ok(out)
+}
+
+pub fn insert_step_count_min_fold_lib<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_count_min_fold_lib(params)?));
+        let (driven, read) = (sketch.clone(), sketch);
+        let stream = items.clone();
+        out.push(StepPass {
+            steps: items.len(),
+            step: Box::new(move |i| {
+                let sketch = &mut *driven.borrow_mut();
+                let v = &stream[i];
+                sketch.inner.update(&v.data_input());
+            }),
+            footprint: Box::new(move || memory_count_min_fold_lib(&read.borrow())),
+        });
+    }
+    Ok(out)
+}
+
+pub fn query_count_min_fold_lib_estimate<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<T>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<u64>>, BuildError> {
+    merge_query_count_min_fold_lib_estimate(params, items, probes, 1, passes)
+}
+
+pub fn merge_query_count_min_fold_lib_estimate<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<T>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<u64>>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (mut sketch, rest) = count_min_fold_lib_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch.inner.merge_same_level(&other.inner);
+        }
+        let probes = probes.clone();
+        out.push(Box::new(move || {
+            let mut answers = Vec::with_capacity(probes.len());
+            for p in probes.iter() {
+                answers.push(sketch.inner.estimate(&p.data_input()).max(0) as u64);
+            }
+            let footprint = memory_count_min_fold_lib(&sketch);
+            (answers, footprint)
+        }) as QueryPass<u64>);
+    }
+    Ok(out)
+}
+
+pub fn query_count_min_fold_lib_topk<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<()>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<TopkAnswer<T>>>, BuildError> {
+    merge_query_count_min_fold_lib_topk(params, items, probes, 1, passes)
+}
+
+pub fn merge_query_count_min_fold_lib_topk<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<()>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<TopkAnswer<T>>>, BuildError> {
+    let k = answered_k_count_min_fold_lib(params)?;
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (mut sketch, rest) = count_min_fold_lib_shards(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch.inner.merge_same_level(&other.inner);
+        }
+        let probes = probes.clone();
+        out.push(Box::new(move || {
+            let mut answers = Vec::with_capacity(probes.len());
+            for p in probes.iter() {
+                answers.push({
+                    let _ = p;
+                    top_k(sketch.inner.heap().heap().iter(), k)
+                        .into_iter()
+                        .map(|e| {
+                            (
+                                T::from_data_input(&e.key.as_data_input()),
+                                e.count.max(0) as u64,
+                            )
+                        })
+                        .collect()
+                });
+            }
+            let footprint = memory_count_min_fold_lib(&sketch);
+            (answers, footprint)
+        }) as QueryPass<TopkAnswer<T>>);
+    }
+    Ok(out)
+}
+
+pub fn merge_count_min_fold_lib<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (mut acc, rest) = count_min_fold_lib_shards(params, &items, shards)?;
+        out.push(Box::new(move || {
+            for other in rest.iter() {
+                acc.inner.merge_same_level(&other.inner);
+            }
+            memory_count_min_fold_lib(&acc)
+        }) as Pass);
+    }
+    Ok(out)
+}
+
+pub fn merge_step_count_min_fold_lib<T: FrequencyValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (acc, rest) = count_min_fold_lib_shards(params, &items, shards)?;
+        let acc: Shared<_> = Rc::new(RefCell::new(acc));
+        let (driven, read) = (acc.clone(), acc);
+        out.push(StepPass {
+            steps: rest.len(),
+            step: Box::new(move |i| {
+                let acc = &mut *driven.borrow_mut();
+                let other = &rest[i];
+                acc.inner.merge_same_level(&other.inner);
+            }),
+            footprint: Box::new(move || memory_count_min_fold_lib(&read.borrow())),
+        });
+    }
+    Ok(out)
+}
+
+#[allow(clippy::type_complexity)]
+fn count_min_fold_lib_shards<T: FrequencyValue>(
+    params: &ParamSet,
+    items: &[T],
+    shards: usize,
+) -> Result<(CountMinFoldLib, Vec<CountMinFoldLib>), BuildError> {
+    let mut parts: Vec<CountMinFoldLib> = Vec::new();
+    for shard in partition(items, shards) {
+        let mut sketch = build_count_min_fold_lib(params)?;
+        for v in shard {
+            sketch.inner.update(&v.data_input());
+        }
+        parts.push(sketch);
+    }
+    let rest = parts.split_off(1);
+    Ok((
+        parts.pop().expect("a split of the stream is never empty"),
+        rest,
+    ))
 }

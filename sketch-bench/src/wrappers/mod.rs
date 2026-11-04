@@ -8,17 +8,13 @@
 // one place.
 pub mod cms;
 pub mod cms_heap;
-pub mod coco;
 pub mod count_min_fold;
-pub mod count_min_hll;
 pub mod count_min_space_saving;
 pub mod count_sketch_fold;
-pub mod count_sketch_l2_norm;
 pub mod count_sketch_space_saving;
 pub mod cs;
 pub mod cs_heap;
 pub mod dd;
-pub mod elastic;
 pub mod exact;
 pub mod hll;
 pub mod hydra_cms;
@@ -29,10 +25,7 @@ pub mod hydra_univmon;
 pub mod kll;
 pub mod kmv;
 pub mod space_saving;
-pub mod uniform_sampling;
 pub mod univmon;
-pub mod univmon_q;
-pub mod univmon_two_tier;
 
 // Shared by rows across several algorithms.
 pub mod fixed_matrix;
@@ -40,7 +33,6 @@ pub mod frequency_value;
 pub mod hydra_shared;
 pub mod polars_shared;
 pub mod quantile_value;
-pub mod row_bodies;
 
 use crate::params::ParamSet;
 use aqpbm_core::DataGenError;

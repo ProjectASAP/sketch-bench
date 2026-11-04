@@ -360,41 +360,171 @@ pub fn insert_parallel_hll_fast_path<T: CardinalityValue>(
 }
 
 pub struct HllLibErtl<R: asap_sketchlib::HllRegisterStorage = asap_sketchlib::HllRegistersP14> {
-    inner: asap_sketchlib::hll::HyperLogLogImpl<Ertl, R>,
+    pub(super) inner: asap_sketchlib::hll::HyperLogLogImpl<Ertl, R>,
 }
 
-impl<R: asap_sketchlib::HllRegisterStorage + 'static, T: CardinalityValue>
-    crate::wrappers::row_bodies::RowSketch<T> for HllLibErtl<R>
-{
-    fn build(params: &ParamSet) -> Result<Self, BuildError> {
-        let p: HllParams = params.parse()?;
-        if p.lg_k as usize != R::PRECISION {
-            return Err(unsupported_precision(p.lg_k));
+pub fn build_hll_lib_ertl<R: asap_sketchlib::HllRegisterStorage>(
+    config: &ParamSet,
+) -> Result<HllLibErtl<R>, BuildError> {
+    let p: HllParams = config.parse()?;
+    if p.lg_k as usize != R::PRECISION {
+        return Err(unsupported_precision(p.lg_k));
+    }
+    Ok(HllLibErtl {
+        inner: asap_sketchlib::hll::HyperLogLogImpl::<Ertl, R>::new(),
+    })
+}
+
+pub fn memory_hll_lib_ertl<R: asap_sketchlib::HllRegisterStorage>(sketch: &HllLibErtl<R>) -> usize {
+    sketch.inner.memory_bytes()
+}
+
+pub fn insert_hll_lib_ertl<R: asap_sketchlib::HllRegisterStorage + 'static, T: CardinalityValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let mut sketch = build_hll_lib_ertl::<R>(params)?;
+        let items = items.clone();
+        out.push(Box::new(move || {
+            for v in items.iter() {
+                sketch.inner.update(&v.data_input());
+            }
+            memory_hll_lib_ertl(&sketch)
+        }) as Pass);
+    }
+    Ok(out)
+}
+
+pub fn insert_step_hll_lib_ertl<
+    R: asap_sketchlib::HllRegisterStorage + 'static,
+    T: CardinalityValue,
+>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let sketch: Shared<_> = Rc::new(RefCell::new(build_hll_lib_ertl::<R>(params)?));
+        let (driven, read) = (sketch.clone(), sketch);
+        let stream = items.clone();
+        out.push(StepPass {
+            steps: items.len(),
+            step: Box::new(move |i| {
+                let sketch = &mut *driven.borrow_mut();
+                let v = &stream[i];
+                sketch.inner.update(&v.data_input());
+            }),
+            footprint: Box::new(move || memory_hll_lib_ertl(&read.borrow())),
+        });
+    }
+    Ok(out)
+}
+
+pub fn query_hll_lib_ertl<R: asap_sketchlib::HllRegisterStorage + 'static, T: CardinalityValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<()>>,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    merge_query_hll_lib_ertl::<R, T>(params, items, probes, 1, passes)
+}
+
+pub fn merge_query_hll_lib_ertl<
+    R: asap_sketchlib::HllRegisterStorage + 'static,
+    T: CardinalityValue,
+>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    probes: Rc<Vec<()>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<QueryPass<f64>>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (mut sketch, rest) = hll_lib_ertl_shards::<R, T>(params, &items, shards)?;
+        for other in rest.iter() {
+            sketch.inner.merge(&other.inner);
         }
-        Ok(HllLibErtl {
-            inner: asap_sketchlib::hll::HyperLogLogImpl::<Ertl, R>::new(),
-        })
+        let probes = probes.clone();
+        out.push(Box::new(move || {
+            let mut answers = Vec::with_capacity(probes.len());
+            for _p in probes.iter() {
+                answers.push(sketch.inner.estimate() as f64);
+            }
+            let footprint = memory_hll_lib_ertl(&sketch);
+            (answers, footprint)
+        }) as QueryPass<f64>);
     }
-
-    fn insert(&mut self, item: &T) {
-        self.inner.update(&item.data_input());
-    }
-
-    fn memory(&self) -> usize {
-        self.inner.memory_bytes()
-    }
+    Ok(out)
 }
 
-impl<R: asap_sketchlib::HllRegisterStorage> crate::wrappers::row_bodies::Answers<(), f64>
-    for HllLibErtl<R>
-{
-    fn answer(&mut self, _probe: &()) -> f64 {
-        self.inner.estimate() as f64
+pub fn merge_hll_lib_ertl<R: asap_sketchlib::HllRegisterStorage + 'static, T: CardinalityValue>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<Pass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (mut acc, rest) = hll_lib_ertl_shards::<R, T>(params, &items, shards)?;
+        out.push(Box::new(move || {
+            for other in rest.iter() {
+                acc.inner.merge(&other.inner);
+            }
+            memory_hll_lib_ertl(&acc)
+        }) as Pass);
     }
+    Ok(out)
 }
 
-impl<R: asap_sketchlib::HllRegisterStorage> crate::wrappers::row_bodies::Merges for HllLibErtl<R> {
-    fn merge(&mut self, other: &Self) {
-        self.inner.merge(&other.inner);
+pub fn merge_step_hll_lib_ertl<
+    R: asap_sketchlib::HllRegisterStorage + 'static,
+    T: CardinalityValue,
+>(
+    params: &ParamSet,
+    items: Rc<Vec<T>>,
+    shards: usize,
+    passes: usize,
+) -> Result<Vec<StepPass>, BuildError> {
+    let mut out = Vec::with_capacity(passes);
+    for _ in 0..passes {
+        let (acc, rest) = hll_lib_ertl_shards::<R, T>(params, &items, shards)?;
+        let acc: Shared<_> = Rc::new(RefCell::new(acc));
+        let (driven, read) = (acc.clone(), acc);
+        out.push(StepPass {
+            steps: rest.len(),
+            step: Box::new(move |i| {
+                let acc = &mut *driven.borrow_mut();
+                let other = &rest[i];
+                acc.inner.merge(&other.inner);
+            }),
+            footprint: Box::new(move || memory_hll_lib_ertl(&read.borrow())),
+        });
     }
+    Ok(out)
+}
+
+#[allow(clippy::type_complexity)]
+fn hll_lib_ertl_shards<R: asap_sketchlib::HllRegisterStorage + 'static, T: CardinalityValue>(
+    params: &ParamSet,
+    items: &[T],
+    shards: usize,
+) -> Result<(HllLibErtl<R>, Vec<HllLibErtl<R>>), BuildError> {
+    let mut parts: Vec<HllLibErtl<R>> = Vec::new();
+    for shard in partition(items, shards) {
+        let mut sketch = build_hll_lib_ertl::<R>(params)?;
+        for v in shard {
+            sketch.inner.update(&v.data_input());
+        }
+        parts.push(sketch);
+    }
+    let rest = parts.split_off(1);
+    Ok((
+        parts.pop().expect("a split of the stream is never empty"),
+        rest,
+    ))
 }

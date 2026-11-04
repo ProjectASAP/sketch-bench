@@ -33,7 +33,7 @@ impl<K> TopkGT<K> {
 
 pub struct TopkTruth<K: CountedValue> {
     top: Vec<(K, u64)>,
-    exact: HashMap<K::CountKey, u64>,
+    exact: HashMap<K::CountKey, (K, u64)>,
     stream: StreamStats,
 }
 
@@ -59,12 +59,8 @@ where
                 .or_insert_with(|| (it.clone(), 0))
                 .1 += 1;
         }
-        let counts: HashMap<K::CountKey, u64> = exact
-            .iter()
-            .map(|(key, (_, c))| (key.clone(), *c))
-            .collect();
-        let stream = StreamStats::of_counts(counts.values().copied());
-        let mut exact_vec: Vec<(K, u64)> = exact.into_values().collect();
+        let stream = StreamStats::of_counts(exact.values().map(|(_, c)| *c));
+        let mut exact_vec: Vec<&(K, u64)> = exact.values().collect();
         // Count descending, ties on the key — a total order, the same one every
         // top-k impl ranks by. On count alone the k-th place falls to HashMap
         // order, and an exact source scores below 1.0 against itself.
@@ -73,11 +69,8 @@ where
                 .then_with(|| a.0.count_key().cmp(&b.0.count_key()))
         });
         exact_vec.truncate(self.k);
-        Ok(TopkTruth {
-            top: exact_vec,
-            exact: counts,
-            stream,
-        })
+        let top = exact_vec.into_iter().cloned().collect();
+        Ok(TopkTruth { top, exact, stream })
     }
 
     fn probes(&self, _truth: &TopkTruth<K>) -> Vec<()> {
@@ -118,7 +111,10 @@ where
 
         let count_errs: Vec<f64> = est
             .iter()
-            .map(|(k, c)| (*c as f64 - *exact.get(&k.count_key()).unwrap_or(&0) as f64).abs())
+            .map(|(k, c)| {
+                let true_count = exact.get(&k.count_key()).map_or(0, |(_, c)| *c);
+                (*c as f64 - true_count as f64).abs()
+            })
             .collect();
         let max_count_err = count_errs.iter().copied().fold(0.0f64, f64::max);
         let mean_count_err = if count_errs.is_empty() {
