@@ -139,18 +139,19 @@ impl ParamSet {
     }
 }
 
-pub fn takes_seed(variant: &str) -> bool {
-    KllParams::owns(variant)
-        || HydraKllParams::owns(variant)
-        || CocoParams::owns(variant)
-        || UniformSamplingParams::owns(variant)
-        || NitroParams::owns(variant)
+pub fn takes_seed(variant: &str, library: &str) -> bool {
+    library == "lib"
+        && (KllParams::owns(variant)
+            || HydraKllParams::owns(variant)
+            || CocoParams::owns(variant)
+            || UniformSamplingParams::owns(variant)
+            || NitroParams::owns(variant))
 }
 
 pub fn seeded_rows() -> Vec<String> {
     crate::registry::REGISTRY
         .iter()
-        .filter(|row| takes_seed(row.variant))
+        .filter(|row| takes_seed(row.variant, row.library))
         .map(|row| format!("{}/{}", row.variant, row.library))
         .collect()
 }

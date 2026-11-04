@@ -1,8 +1,9 @@
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use aqpbm_core::metrics::MetricsMask;
 use aqpbm_core::TrialMode;
 use aqpbm_datagen::{splitmix64, GeneratedTable, KeyOffset, TableDescription};
 use sketch_bench::params::{seeded_rows, takes_seed, ParamSet};
+use sketch_bench::registry::SketchId;
 
 use crate::cli::SketchbenchArgs;
 
@@ -20,14 +21,14 @@ pub fn derived_seed(seed: u64, trial: u64) -> u64 {
     }
 }
 
-pub fn requested(args: &SketchbenchArgs) -> bool {
+pub fn trial_options_given(args: &SketchbenchArgs) -> bool {
     args.trials != 1 || args.trial_start.is_some() || args.trial_mode.is_some()
 }
 
 pub fn key_columns(comparator: Option<&str>, description: &TableDescription) -> Vec<usize> {
     let value = description.column_spec.len().saturating_sub(1);
     match comparator.unwrap_or("none") {
-        "frequency" | "cardinality" | "topk" | "heavy-hitter" | "membership" => vec![value],
+        "frequency" | "cardinality" | "topk" | "membership" => vec![value],
         name if name.starts_with("keyed-") => vec![0],
         "subpop-rank-error" | "subpop-cdf-error" | "subpop-sum" => (0..value).collect(),
         name if name.starts_with("subpop-") => (0..=value).collect(),
@@ -35,28 +36,17 @@ pub fn key_columns(comparator: Option<&str>, description: &TableDescription) -> 
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn check(
     args: &SketchbenchArgs,
     metrics: MetricsMask,
-    mode: TrialMode,
-    variant: &str,
-    library: &str,
-    comparator: Option<&str>,
-    key_columns: &[usize],
+    row: &SketchId,
     description: Option<&TableDescription>,
 ) -> Result<()> {
     if args.trials == 0 {
         bail!("--trials must be >= 1");
     }
-    if !requested(args) {
+    if !trial_options_given(args) {
         return Ok(());
-    }
-    if args.repeat_experiment > 1 {
-        bail!(
-            "--trials is the accuracy axis and --repeat-experiment the throughput one; \
-             ask for one of them"
-        );
     }
     if metrics != MetricsMask::ACCURACY {
         bail!(
@@ -66,28 +56,30 @@ pub fn check(
     let Some(description) = description else {
         bail!("--trials: an external workload has no seeds or keys a trial could draw again");
     };
-    let comparator = comparator.unwrap_or("none");
-    match mode {
+    let (variant, library) = (row.variant, row.library);
+    let key_columns = key_columns(row.comparator, description);
+    match args.trial_mode.unwrap_or_default() {
         TrialMode::Relabel if key_columns.is_empty() => bail!(
-            "--trial-mode relabel moves keys, and {variant}/{library} is scored by \
-             {comparator}, which scores values; use fresh"
+            "--trial-mode relabel moves keys, and {variant}/{library} is scored by {}, which \
+             scores values; use fresh",
+            row.comparator.unwrap_or("none")
         ),
-        TrialMode::Reseed if !takes_seed(variant) => bail!(
-            "--trial-mode reseed sets the row's seed field, and {variant}/{library} has none; \
-             the rows with one are {}",
+        TrialMode::Reseed if !takes_seed(variant, library) => bail!(
+            "--trial-mode reseed sets the row's seed field, and {variant}/{library} uses none; \
+             the rows that use one are {}",
             seeded_rows().join(", ")
         ),
-        _ => {}
-    }
-    if mode != TrialMode::Reseed {
-        if let Some(&column) = key_columns
-            .iter()
-            .find(|&&c| description.column_spec[c].key_offset.is_some())
-        {
-            bail!(
-                "--trials: column '{}' already carries a key_offset, and a trial sets its own",
-                description.column_label[column]
-            );
+        TrialMode::Reseed => {}
+        TrialMode::Fresh | TrialMode::Relabel => {
+            if let Some(&column) = key_columns
+                .iter()
+                .find(|&&c| description.column_spec[c].key_offset.is_some())
+            {
+                bail!(
+                    "--trials: column '{}' already carries a key_offset, and a trial sets its own",
+                    description.column_label[column]
+                );
+            }
         }
     }
     Ok(())
@@ -115,7 +107,7 @@ fn key_offset(data_type: &str, trial: u64) -> Result<Option<KeyOffset>> {
     }
 }
 
-pub fn relabel(
+pub fn offset_key_columns(
     description: &mut TableDescription,
     table: &mut GeneratedTable,
     key_columns: &[usize],
@@ -124,7 +116,9 @@ pub fn relabel(
     for &column in key_columns {
         let spec = &mut description.column_spec[column];
         if let Some(offset) = key_offset(&spec.data_type, trial)? {
-            offset.apply(&mut table.data[column])?;
+            offset
+                .apply(&mut table.data[column])
+                .map_err(|e| anyhow!("column '{}': {e}", description.column_label[column]))?;
             spec.key_offset = Some(offset);
         }
     }
@@ -135,15 +129,26 @@ pub fn reseeded_params(params: &ParamSet, trial: u64) -> ParamSet {
     params.with_seed(derived_seed(params.seed().unwrap_or(0), trial))
 }
 
-pub fn seeds(description: &TableDescription, burst_seed: u64, params: &ParamSet) -> String {
+pub fn seeds_message(
+    description: &TableDescription,
+    mode: TrialMode,
+    trial: u64,
+    burst_seed: u64,
+    params: &ParamSet,
+) -> String {
+    let trial_seed = |seed| match mode {
+        TrialMode::Fresh => derived_seed(seed, trial),
+        TrialMode::Relabel | TrialMode::Reseed => seed,
+    };
     let columns: Vec<String> = description
         .column_spec
         .iter()
-        .map(|column| column.distribution.seed().to_string())
+        .map(|column| trial_seed(column.distribution.seed()).to_string())
         .collect();
     let mut out = format!(
-        "column seeds [{}], burst seed {burst_seed}",
-        columns.join(", ")
+        "column seeds [{}], burst seed {}",
+        columns.join(", "),
+        trial_seed(burst_seed)
     );
     if let Some(seed) = params.seed() {
         out.push_str(&format!(", sketch seed {seed}"));
@@ -154,7 +159,7 @@ pub fn seeds(description: &TableDescription, burst_seed: u64, params: &ParamSet)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aqpbm_datagen::{ColumnData, ColumnSpec, DataDistribution, ZipfParameter, RULE_NONE};
+    use aqpbm_datagen::{ColumnSpec, DataDistribution, ParetoParameter, ZipfParameter, RULE_NONE};
 
     fn column(data_type: &str, seed: u64) -> ColumnSpec {
         ColumnSpec {
@@ -191,7 +196,7 @@ mod tests {
             let base = TableDescription::single("key", column(data_type, 7), 500);
             let mut description = base.clone();
             let mut table = base.generate().unwrap();
-            relabel(&mut description, &mut table, &[0], 5).unwrap();
+            offset_key_columns(&mut description, &mut table, &[0], 5).unwrap();
             assert!(description.column_spec[0].key_offset.is_some());
             assert_eq!(description.generate().unwrap(), table, "{data_type}");
             assert_ne!(base.generate().unwrap(), table, "{data_type}");
@@ -199,10 +204,27 @@ mod tests {
     }
 
     #[test]
-    fn an_f64_key_past_two_to_the_fifty_three_is_refused() {
-        let mut column = ColumnData::Float64(vec![1.0]);
-        let err = KeyOffset::Add(1 << 53).apply(&mut column).unwrap_err();
-        assert!(err.to_string().contains("2^53"), "{err}");
+    fn a_non_integer_f64_key_is_not_relabelled() {
+        let mut description = TableDescription::single(
+            "latency",
+            ColumnSpec {
+                distribution: DataDistribution::Pareto(ParetoParameter {
+                    alpha: 2.0,
+                    scale: 1.0,
+                    seed: 3,
+                }),
+                ..column("f64", 3)
+            },
+            100,
+        );
+        let mut table = description.generate().unwrap();
+        let err = offset_key_columns(&mut description, &mut table, &[0], 1)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("'latency'") && err.contains("non-integer"),
+            "{err}"
+        );
     }
 
     #[test]

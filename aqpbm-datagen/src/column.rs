@@ -83,14 +83,16 @@ impl KeyOffset {
                 }
             }
             (KeyOffset::Add(offset), ColumnData::Float64(values)) => {
+                let offset = *offset as f64;
                 for value in values {
-                    *value += *offset as f64;
-                    if value.abs() >= (1u64 << f64::MANTISSA_DIGITS) as f64 {
+                    let moved = *value + offset;
+                    if moved - offset != *value {
                         return Err(DataGenError::BadParam(format!(
-                            "key_offset {offset} moves an f64 key to {value}, past 2^53, \
-                             where keys are no longer exact integers"
+                            "key_offset {offset} does not move the f64 key {value} exactly; \
+                             non-integer f64 keys cannot be relabelled"
                         )));
                     }
+                    *value = moved;
                 }
             }
             (KeyOffset::Prefix(prefix), ColumnData::String(values)) => {
@@ -188,20 +190,6 @@ impl ColumnSpec {
                 }
                 Some(_) => {}
             }
-        }
-
-        match (&self.key_offset, self.data_type.as_str()) {
-            (Some(KeyOffset::Add(_)), "string") => {
-                return Err(DataGenError::BadParam(
-                    "key_offset: a string column takes a prefix, not a number".into(),
-                ))
-            }
-            (Some(KeyOffset::Prefix(_)), data_type) if data_type != "string" => {
-                return Err(DataGenError::BadParam(format!(
-                    "key_offset: a {data_type} column takes a number, not a prefix"
-                )))
-            }
-            _ => {}
         }
 
         // A string is rendered from its rank in the domain, so anything that

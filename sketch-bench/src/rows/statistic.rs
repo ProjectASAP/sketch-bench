@@ -514,7 +514,7 @@ where
 
 /// The scorer, also writing every group to `path` as `group_key,n_q,error,d_q,l2_q`
 /// whenever it scores; `error` is empty for a group that cannot be scored. Every pass answers the same, so
-/// each rewrites the same rows. The file is created here, so a path that
+/// each rewrites the same rows. The file must already exist, so a path that
 /// cannot be written fails before anything is measured.
 fn per_group_written<A: 'static>(
     score: Score<A>,
@@ -525,13 +525,7 @@ fn per_group_written<A: 'static>(
 ) -> Result<Score<A>, RunError> {
     let fail =
         |e: std::io::Error| RunError::Sketch(format!("--per-group-out {}: {e}", path.display()));
-    let start = match trial {
-        None => {
-            std::fs::File::create(path).map_err(fail)?;
-            0
-        }
-        Some(_) => std::fs::metadata(path).map_err(fail)?.len(),
-    };
+    let start = std::fs::metadata(path).map_err(fail)?.len();
     let path = path.to_path_buf();
     Ok(Rc::new(move |answers: &[A]| {
         let trial_column = trial.map_or(String::new(), |t| format!("{t},"));

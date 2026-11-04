@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::marker::PhantomData;
 
-use aqpbm_datagen::{DataGenError, GeneratedTable, KeyOffset};
+use aqpbm_datagen::{ColumnItem, DataGenError, GeneratedTable, KeyOffset};
 
 use super::{curve, CountedValue, GroundTruth};
 
@@ -31,6 +31,12 @@ pub struct MembershipTruth<K> {
     distinct: usize,
 }
 
+fn offset_key<K: ColumnItem>(offset: &KeyOffset, key: K) -> Result<K, DataGenError> {
+    let mut column = K::into_column(vec![key]);
+    offset.apply(&mut column)?;
+    Ok(K::from_column(column)?.remove(0))
+}
+
 impl<K: CountedValue> GroundTruth for MembershipGT<K> {
     type Truth = MembershipTruth<K>;
     type Probe = K;
@@ -47,19 +53,19 @@ impl<K: CountedValue> GroundTruth for MembershipGT<K> {
         }
         let mut members = curve::shuffled(&distinct);
         members.truncate(MEMBER_PROBES);
-        let mut candidates: Vec<K> = (0..(NON_MEMBER_PROBES + seen.len()) as u64)
-            .map(K::absent_candidate)
-            .collect();
-        if let Some(offset) = &self.key_offset {
-            let mut column = K::into_column(candidates);
-            offset.apply(&mut column)?;
-            candidates = K::from_column(column)?;
-        }
-        let non_members = candidates
-            .into_iter()
-            .filter(|k| !seen.contains(&k.count_key()))
-            .take(NON_MEMBER_PROBES)
-            .collect();
+        let absent = |k: &K| !seen.contains(&k.count_key());
+        let non_members = match &self.key_offset {
+            None => (0..)
+                .map(K::absent_candidate)
+                .filter(absent)
+                .take(NON_MEMBER_PROBES)
+                .collect(),
+            Some(offset) => (0..)
+                .map(|i| offset_key(offset, K::absent_candidate(i)))
+                .filter(|k| k.as_ref().map_or(true, absent))
+                .take(NON_MEMBER_PROBES)
+                .collect::<Result<_, _>>()?,
+        };
         Ok(MembershipTruth {
             members,
             non_members,
