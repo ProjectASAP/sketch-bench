@@ -132,16 +132,15 @@ pub fn merge_query_space_saving_lib_topk<T: FrequencyValue>(
         let probes = probes.clone();
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
-            for p in probes.iter() {
-                answers.push({
-                    let _ = p;
+            for _p in probes.iter() {
+                answers.push(
                     sketch
                         .inner
                         .top_k(k)
                         .into_iter()
                         .map(|(key, count, _)| (T::from_data_input(&key.as_data_input()), count))
-                        .collect()
-                });
+                        .collect(),
+                );
             }
             let footprint = memory_space_saving_lib(&sketch);
             (answers, footprint)

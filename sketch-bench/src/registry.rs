@@ -1032,6 +1032,22 @@ pub const REGISTRY: &[SketchId] = &[
             .union(MetricsMask::ACCURACY),
     },
     SketchId {
+        algorithm: "bloom",
+        variant: "bloom",
+        library: "lib",
+        description: "asap Bloom, partitioned, RegularPath",
+        capability: Capability::Membership,
+        comparator: Some("membership"),
+        operations: OperationMask::INSERT
+            .union(OperationMask::QUERY)
+            .union(OperationMask::MERGE),
+        metrics: MetricsMask::THROUGHPUT
+            .union(MetricsMask::LATENCY)
+            .union(MetricsMask::CPU)
+            .union(MetricsMask::MEMORY)
+            .union(MetricsMask::ACCURACY),
+    },
+    SketchId {
         algorithm: "space-saving",
         variant: "space-saving",
         library: "lib",
@@ -1609,6 +1625,7 @@ mod tests {
     fn every_declared_comparator_is_one_core_ships() {
         const KNOWN: &[&str] = &[
             "cardinality",
+            "membership",
             "frequency",
             "rank-error",
             "relative-value-error",

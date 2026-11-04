@@ -79,6 +79,32 @@ pub(super) fn cardinality_row<T: ColumnItem>(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(super) fn membership_row<T: CountedValue>(
+    req: &Requirement,
+    description: &TableDescription,
+    table: GeneratedTable,
+    want: &[(Operation, Metric)],
+    insert: InsertBody<T>,
+    insert_step: InsertStepBody<T>,
+    query: QueryBody<T, T, bool>,
+    merge: Option<Folds<T, T, bool>>,
+) -> Result<Measurements, RunError> {
+    scored_row(
+        req,
+        description,
+        table,
+        want,
+        MembershipGT::<T>::over_column(value_column(description)),
+        peel::<T>,
+        insert,
+        insert_step,
+        query,
+        merge,
+        None,
+    )
+}
+
 /// A row answering **top-k**: the heaviest `k` keys, ranked. The probe is
 /// `()` — one question, the whole list, asked repeatedly for timing — and `k` is
 /// the row's `topk_k` (`chl::answered_k`, default `chl::TOPK_K`), whatever its

@@ -6,6 +6,7 @@
 // looking for "the datasketches Count-Min" goes to `cms/datasketches.rs`, and
 // finds the type, how it is built, how it is fed, and how it is asked, all in
 // one place.
+pub mod bloom;
 pub mod cms;
 pub mod cms_heap;
 pub mod count_min_fold;

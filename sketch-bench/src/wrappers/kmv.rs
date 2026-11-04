@@ -88,11 +88,8 @@ pub fn merge_query_kmv_lib<T: CardinalityValue>(
         let probes = probes.clone();
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
-            for p in probes.iter() {
-                answers.push({
-                    let _ = p;
-                    sketch.inner.estimate()
-                });
+            for _p in probes.iter() {
+                answers.push(sketch.inner.estimate());
             }
             let footprint = memory_kmv_lib(&sketch);
             (answers, footprint)

@@ -9,6 +9,7 @@ use crate::params::ParamSet;
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Capability {
     Cardinality,
+    Membership,
     Frequency,
     Quantile,
     TopK,
@@ -39,6 +40,7 @@ impl Capability {
     pub fn name(self) -> &'static str {
         match self {
             Capability::Cardinality => "cardinality",
+            Capability::Membership => "membership",
             Capability::Frequency => "frequency",
             Capability::Quantile => "quantile",
             Capability::TopK => "topk",

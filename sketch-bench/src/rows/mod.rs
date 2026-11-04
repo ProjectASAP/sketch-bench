@@ -22,6 +22,7 @@ use aqpbm_core::accuracy::frequency::FrequencyGT;
 use aqpbm_core::accuracy::keyed::{
     KeyedCardinalityGT, KeyedEntropyGT, KeyedL1NormGT, KeyedL2NormGT,
 };
+use aqpbm_core::accuracy::membership::MembershipGT;
 use aqpbm_core::accuracy::quantile::{RankErrorGT, RelativeValueErrorGT};
 use aqpbm_core::accuracy::subpopulation::{
     GroupKey, SubpopCardinalityGT, SubpopCdfErrorGT, SubpopEntropyGT, SubpopFrequencyGT,
@@ -152,6 +153,7 @@ fn binding(variant: &str, library: &str) -> Option<RowBinding> {
         }
         ("hll-ertl", "lib") => row_hll_ertl_lib,
         ("kmv", "lib") => row_kmv_lib,
+        ("bloom", "lib") => row_bloom_lib,
         ("space-saving", "lib") => row_space_saving_lib,
         ("space-saving-topk", "lib") => row_space_saving_topk_lib,
         ("count-min-space-saving", "lib") => row_count_min_space_saving_lib,
@@ -171,6 +173,7 @@ fn binding(variant: &str, library: &str) -> Option<RowBinding> {
     })
 }
 
+mod bloom;
 mod cms;
 mod cms_heap;
 mod cs;
@@ -189,6 +192,7 @@ mod space_saving;
 mod statistic;
 mod univmon;
 
+use bloom::*;
 use cms::*;
 use cms_heap::*;
 use cs::*;

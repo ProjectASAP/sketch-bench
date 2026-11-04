@@ -17,6 +17,7 @@ pub(crate) mod curve;
 pub mod frequency;
 pub mod heavy_hitter;
 pub mod keyed;
+pub mod membership;
 pub mod quantile;
 pub mod subpopulation;
 pub mod topk;
@@ -38,6 +39,8 @@ pub trait CountedValue: ColumnItem {
     type CountKey: Eq + std::hash::Hash + Ord + Clone;
 
     fn count_key(&self) -> Self::CountKey;
+
+    fn absent_candidate(i: u64) -> Self;
 }
 
 impl CountedValue for i64 {
@@ -45,6 +48,10 @@ impl CountedValue for i64 {
     #[inline(always)]
     fn count_key(&self) -> i64 {
         *self
+    }
+
+    fn absent_candidate(i: u64) -> i64 {
+        -(i as i64) - 1
     }
 }
 
@@ -54,6 +61,10 @@ impl CountedValue for u64 {
     fn count_key(&self) -> u64 {
         *self
     }
+
+    fn absent_candidate(i: u64) -> u64 {
+        u64::MAX - i
+    }
 }
 
 impl CountedValue for f64 {
@@ -62,6 +73,10 @@ impl CountedValue for f64 {
     fn count_key(&self) -> u64 {
         self.to_bits()
     }
+
+    fn absent_candidate(i: u64) -> f64 {
+        -(i as f64) - 0.5
+    }
 }
 
 impl CountedValue for String {
@@ -69,6 +84,10 @@ impl CountedValue for String {
     #[inline(always)]
     fn count_key(&self) -> String {
         self.clone()
+    }
+
+    fn absent_candidate(i: u64) -> String {
+        format!("absent-{i}")
     }
 }
 

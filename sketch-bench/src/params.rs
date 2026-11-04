@@ -606,6 +606,21 @@ sketch_params!(KmvParams, "kmv", KmvParams { k: 1024 });
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct BloomParams {
+    pub rows: usize,
+    pub cols: usize,
+}
+sketch_params!(
+    BloomParams,
+    "bloom",
+    BloomParams {
+        rows: 7,
+        cols: 65536
+    }
+);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SpaceSavingParams {
     pub capacity: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -787,6 +802,7 @@ mod tests {
         check::<HydraUnivmonParams>();
         check::<UnivMonParams>();
         check::<KmvParams>();
+        check::<BloomParams>();
         check::<SpaceSavingParams>();
         check::<CountMinSpaceSavingParams>();
         check::<CountSketchSpaceSavingParams>();
