@@ -97,6 +97,15 @@ impl DataDistribution {
         }
     }
 
+    pub fn set_seed(&mut self, seed: u64) {
+        match self {
+            DataDistribution::Zipf(p) => p.seed = seed,
+            DataDistribution::Uniform(p) => p.seed = seed,
+            DataDistribution::Normal(p) => p.seed = seed,
+            DataDistribution::Pareto(p) => p.seed = seed,
+        }
+    }
+
     /// The bounded span, or `None` for Normal and Pareto — which are unbounded, so a
     /// `cardinality` over it would be a claim this crate cannot keep.
     pub fn domain(&self) -> Option<Domain> {

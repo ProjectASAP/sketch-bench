@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::marker::PhantomData;
 
-use aqpbm_datagen::{DataGenError, GeneratedTable};
+use aqpbm_datagen::{ColumnItem, DataGenError, GeneratedTable, KeyOffset};
 
 use super::{curve, CountedValue, GroundTruth};
 
@@ -11,13 +11,15 @@ const NON_MEMBER_PROBES: usize = 100_000;
 
 pub struct MembershipGT<K> {
     pub column: usize,
+    pub key_offset: Option<KeyOffset>,
     key: PhantomData<K>,
 }
 
 impl<K> MembershipGT<K> {
-    pub fn over_column(column: usize) -> Self {
+    pub fn over_column(column: usize, key_offset: Option<KeyOffset>) -> Self {
         Self {
             column,
+            key_offset,
             key: PhantomData,
         }
     }
@@ -27,6 +29,12 @@ pub struct MembershipTruth<K> {
     members: Vec<K>,
     non_members: Vec<K>,
     distinct: usize,
+}
+
+fn offset_key<K: ColumnItem>(offset: &KeyOffset, key: K) -> Result<K, DataGenError> {
+    let mut column = K::into_column(vec![key]);
+    offset.apply(&mut column)?;
+    Ok(K::from_column(column)?.remove(0))
 }
 
 impl<K: CountedValue> GroundTruth for MembershipGT<K> {
@@ -45,11 +53,19 @@ impl<K: CountedValue> GroundTruth for MembershipGT<K> {
         }
         let mut members = curve::shuffled(&distinct);
         members.truncate(MEMBER_PROBES);
-        let non_members = (0..)
-            .map(K::absent_candidate)
-            .filter(|k| !seen.contains(&k.count_key()))
-            .take(NON_MEMBER_PROBES)
-            .collect();
+        let absent = |k: &K| !seen.contains(&k.count_key());
+        let non_members = match &self.key_offset {
+            None => (0..)
+                .map(K::absent_candidate)
+                .filter(absent)
+                .take(NON_MEMBER_PROBES)
+                .collect(),
+            Some(offset) => (0..)
+                .map(|i| offset_key(offset, K::absent_candidate(i)))
+                .filter(|k| k.as_ref().map_or(true, absent))
+                .take(NON_MEMBER_PROBES)
+                .collect::<Result<_, _>>()?,
+        };
         Ok(MembershipTruth {
             members,
             non_members,
@@ -102,7 +118,7 @@ mod tests {
     fn an_exact_set_has_no_false_answers_and_a_yes_to_everything_has_fpr_one() {
         let items: Vec<i64> = vec![1, 2, 2, 3, -1];
         let table = table_of(&["key"], vec![ColumnData::Int64(items.clone())]);
-        let gt = MembershipGT::<i64>::over_column(0);
+        let gt = MembershipGT::<i64>::over_column(0, None);
         let set: HashSet<i64> = items.into_iter().collect();
         let mut exact = set.clone();
         let cmp = crate::accuracy::score_with(

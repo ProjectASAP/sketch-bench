@@ -11,14 +11,14 @@ pub mod table;
 pub mod value;
 
 pub use burst::{inject_interval_bursts, BurstSpec};
-pub use column::{ColumnSpec, DATA_TYPES};
+pub use column::{ColumnSpec, KeyOffset, DATA_TYPES};
 pub use dist::{
     DataDistribution, Domain, NormalParameter, ParetoParameter, Sampler, UniformParameter,
     ZipfParameter,
 };
 pub use error::DataGenError;
 pub use rule::{RULE_MASK_ALL, RULE_MONOTONIC_INCREASE, RULE_NONE};
-pub use table::{GeneratedTable, TableDescription};
+pub use table::{splitmix64, GeneratedTable, TableDescription};
 pub use value::{ColumnData, ColumnItem, StrCfg, StringOpts};
 
 #[cfg(test)]
@@ -65,6 +65,7 @@ mod tests {
             fan_out: None,
             scale_by: None,
             scale_range: None,
+            key_offset: None,
         }
     }
 

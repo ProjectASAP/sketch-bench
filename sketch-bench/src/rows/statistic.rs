@@ -95,7 +95,12 @@ pub(super) fn membership_row<T: CountedValue>(
         description,
         table,
         want,
-        MembershipGT::<T>::over_column(value_column(description)),
+        MembershipGT::<T>::over_column(
+            value_column(description),
+            description.column_spec[value_column(description)]
+                .key_offset
+                .clone(),
+        ),
         peel::<T>,
         insert,
         insert_step,
@@ -444,7 +449,7 @@ where
                 value_column(description),
             )
             .map_err(|e| RunError::Sketch(format!("--per-group-out: {e}")))?;
-            per_group_written(score, per_group, shapes, path)?
+            per_group_written(score, per_group, shapes, path, req.trial)?
         }
         None => score,
     };
@@ -509,20 +514,28 @@ where
 
 /// The scorer, also writing every group to `path` as `group_key,n_q,error,d_q,l2_q`
 /// whenever it scores; `error` is empty for a group that cannot be scored. Every pass answers the same, so
-/// each rewrites the same rows. The file is created here, so a path that
+/// each rewrites the same rows. The file must already exist, so a path that
 /// cannot be written fails before anything is measured.
 fn per_group_written<A: 'static>(
     score: Score<A>,
     per_group: PerGroup<A>,
     shapes: std::collections::HashMap<String, aqpbm_core::accuracy::subpopulation::GroupShape>,
     path: &std::path::Path,
+    trial: Option<u64>,
 ) -> Result<Score<A>, RunError> {
     let fail =
         |e: std::io::Error| RunError::Sketch(format!("--per-group-out {}: {e}", path.display()));
-    std::fs::File::create(path).map_err(fail)?;
+    let start = std::fs::metadata(path).map_err(fail)?.len();
     let path = path.to_path_buf();
     Ok(Rc::new(move |answers: &[A]| {
-        let mut csv = String::from("group_key,n_q,error,d_q,l2_q\n");
+        let trial_column = trial.map_or(String::new(), |t| format!("{t},"));
+        let mut csv = String::new();
+        if start == 0 {
+            if trial.is_some() {
+                csv.push_str("trial,");
+            }
+            csv.push_str("group_key,n_q,error,d_q,l2_q\n");
+        }
         for g in per_group(answers) {
             let shape = shapes.get(&g.group);
             let d_q = shape.map_or(String::new(), |s| s.d_q.to_string());
@@ -534,10 +547,21 @@ fn per_group_written<A: 'static>(
                 g.group
             };
             let error = g.error.map_or(String::new(), |e| e.to_string());
-            csv.push_str(&format!("{key},{},{error},{d_q},{l2_q}\n", g.n_q));
+            csv.push_str(&format!(
+                "{trial_column}{key},{},{error},{d_q},{l2_q}\n",
+                g.n_q
+            ));
         }
-        std::fs::write(&path, csv)
-            .unwrap_or_else(|e| panic!("--per-group-out {}: {e}", path.display()));
+        let written = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .and_then(|mut file| {
+                use std::io::{Seek, Write};
+                file.set_len(start)?;
+                file.seek(std::io::SeekFrom::Start(start))?;
+                file.write_all(csv.as_bytes())
+            });
+        written.unwrap_or_else(|e| panic!("--per-group-out {}: {e}", path.display()));
         score(answers)
     }))
 }

@@ -136,4 +136,5 @@ pub struct Requirement {
     /// Measured runs, and the warm-ups run and discarded before them
     pub runs: usize,
     pub warmup_runs: usize,
+    pub trial: Option<u64>,
 }

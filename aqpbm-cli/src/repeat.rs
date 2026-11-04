@@ -195,6 +195,7 @@ mod tests {
                 fan_out: None,
                 scale_by: None,
                 scale_range: None,
+                key_offset: None,
             },
             1000,
         );
@@ -226,6 +227,8 @@ mod tests {
             merge_shards: Some(4),
             merge_split: None,
             merge_supported: Some(true),
+            trial: None,
+            trial_mode: None,
         });
         rec
     }

@@ -54,6 +54,61 @@ pub struct ColumnSpec {
     /// Required with `scale_by`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale_range: Option<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_offset: Option<KeyOffset>,
+}
+
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum KeyOffset {
+    Add(u64),
+    Prefix(String),
+}
+
+impl KeyOffset {
+    pub fn apply(&self, column: &mut ColumnData) -> Result<(), DataGenError> {
+        match (self, column) {
+            (KeyOffset::Add(offset), ColumnData::Int64(values)) => {
+                let overflow =
+                    || DataGenError::BadParam(format!("key_offset {offset} overflows an i64 key"));
+                let offset = i64::try_from(*offset).map_err(|_| overflow())?;
+                for value in values {
+                    *value = value.checked_add(offset).ok_or_else(overflow)?;
+                }
+            }
+            (KeyOffset::Add(offset), ColumnData::Unsigned64(values)) => {
+                for value in values {
+                    *value = value.wrapping_add(*offset);
+                }
+            }
+            (KeyOffset::Add(offset), ColumnData::Float64(values)) => {
+                let offset = *offset as f64;
+                for value in values {
+                    let moved = *value + offset;
+                    if moved - offset != *value {
+                        return Err(DataGenError::BadParam(format!(
+                            "key_offset {offset} does not move the f64 key {value} exactly; \
+                             non-integer f64 keys cannot be relabelled"
+                        )));
+                    }
+                    *value = moved;
+                }
+            }
+            (KeyOffset::Prefix(prefix), ColumnData::String(values)) => {
+                for value in values {
+                    value.insert_str(0, prefix);
+                }
+            }
+            (offset, column) => {
+                return Err(DataGenError::BadParam(format!(
+                    "key_offset {offset:?} does not apply to a {} column",
+                    column.kind()
+                )))
+            }
+        }
+        Ok(())
+    }
 }
 
 impl ColumnSpec {
@@ -292,7 +347,7 @@ impl ColumnSpec {
         let fnv = label.bytes().fold(0xCBF2_9CE4_8422_2325u64, |h, b| {
             (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01B3)
         });
-        let x = crate::table::mix_connected_bits(fnv ^ self.distribution.seed());
+        let x = crate::table::splitmix64(fnv ^ self.distribution.seed());
         let u = (x >> 11) as f64 / (1u64 << 53) as f64;
         lo * (hi / lo).powf(u)
     }
