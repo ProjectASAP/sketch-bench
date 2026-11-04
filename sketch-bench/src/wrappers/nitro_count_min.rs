@@ -20,12 +20,12 @@ pub fn build_nitro_count_min_lib(config: &ParamSet) -> Result<NitroCountMinLib, 
     }
     require_positive(NAME, "rows", p.rows)?;
     CountMinSketch::check_shape(p.rows, p.cols).map_err(|e| BuildError(format!("{NAME}: {e}")))?;
+    let target = CountMinSketch::<Vector2D<i32>, FastPath>::with_dimensions(p.rows, p.cols);
     Ok(NitroCountMinLib {
-        inner: NitroBatch::with_target_and_seed(
-            p.sample_rate,
-            CountMinSketch::<Vector2D<i32>, FastPath>::with_dimensions(p.rows, p.cols),
-            p.seed,
-        ),
+        inner: match p.seed {
+            Some(seed) => NitroBatch::with_target_and_seed(p.sample_rate, target, seed),
+            None => NitroBatch::with_target(p.sample_rate, target),
+        },
     })
 }
 

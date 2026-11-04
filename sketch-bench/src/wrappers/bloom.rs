@@ -3,12 +3,12 @@ use crate::wrappers::frequency_value::FrequencyValue;
 use crate::wrappers::{
     partition, require_positive, require_range, BuildError, Pass, QueryPass, Shared, StepPass,
 };
-use asap_sketchlib::sketches::bloom::BLOOM_MAX_SLICES;
+use asap_sketchlib::sketches::bloom::{BLOOM_MAX_BITS, BLOOM_MAX_SLICES};
 use asap_sketchlib::Bloom;
-
-const NAME: &str = "asap Bloom";
 use std::cell::RefCell;
 use std::rc::Rc;
+
+const NAME: &str = "asap Bloom";
 
 pub struct BloomLib {
     inner: Bloom,
@@ -18,6 +18,18 @@ pub fn build_bloom_lib(config: &ParamSet) -> Result<BloomLib, BuildError> {
     let p: BloomParams = config.parse()?;
     require_positive(NAME, "cols", p.cols)?;
     require_range(NAME, "rows", p.rows, 1, BLOOM_MAX_SLICES)?;
+    if !p.cols.is_power_of_two() {
+        return Err(BuildError(format!(
+            "{NAME}: cols={} is not a power of two, where the library's false-positive bound holds",
+            p.cols
+        )));
+    }
+    if p.rows.saturating_mul(p.cols) > BLOOM_MAX_BITS {
+        return Err(BuildError(format!(
+            "{NAME}: rows={} x cols={} exceeds the {BLOOM_MAX_BITS} bits a filter holds",
+            p.rows, p.cols
+        )));
+    }
     Ok(BloomLib {
         inner: Bloom::with_dimensions(p.rows, p.cols),
     })
@@ -166,4 +178,17 @@ fn bloom_lib_shards<T: FrequencyValue>(
         parts.pop().expect("a split of the stream is never empty"),
         rest,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_power_of_two_width_builds() {
+        let ok = ParamSet::single("bloom", "rows=4 cols=65536").unwrap();
+        assert!(build_bloom_lib(&ok).is_ok());
+        let odd = ParamSet::single("bloom", "rows=4 cols=60000").unwrap();
+        assert!(build_bloom_lib(&odd).is_err());
+    }
 }

@@ -1458,7 +1458,6 @@ pub const REGISTRY: &[SketchId] = &[
             .union(OperationMask::QUERY)
             .union(OperationMask::MERGE),
         metrics: MetricsMask::THROUGHPUT
-            .union(MetricsMask::LATENCY)
             .union(MetricsMask::CPU)
             .union(MetricsMask::MEMORY)
             .union(MetricsMask::ACCURACY),
@@ -1474,7 +1473,6 @@ pub const REGISTRY: &[SketchId] = &[
             .union(OperationMask::QUERY)
             .union(OperationMask::MERGE),
         metrics: MetricsMask::THROUGHPUT
-            .union(MetricsMask::LATENCY)
             .union(MetricsMask::CPU)
             .union(MetricsMask::MEMORY)
             .union(MetricsMask::ACCURACY),
@@ -1805,12 +1803,20 @@ impl std::fmt::Display for ResolveError {
                 library,
                 metric,
                 capability,
-            } => {
+            } if *metric == "accuracy" => {
                 write!(
                     f,
                     "{variant}/{library} answers no statistic (capability {capability}), \
                      so nothing can score its {metric}"
                 )
+            }
+            ResolveError::MetricUnsupported {
+                variant,
+                library,
+                metric,
+                ..
+            } => {
+                write!(f, "{variant}/{library} does not measure {metric}")
             }
             ResolveError::NothingMeasuresIt { operation, metric } => {
                 write!(

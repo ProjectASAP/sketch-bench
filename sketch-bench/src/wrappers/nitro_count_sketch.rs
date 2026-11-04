@@ -20,12 +20,12 @@ pub fn build_nitro_count_sketch_lib(config: &ParamSet) -> Result<NitroCountSketc
     }
     require_positive(NAME, "rows", p.rows)?;
     CountSketch::check_shape(p.rows, p.cols).map_err(|e| BuildError(format!("{NAME}: {e}")))?;
+    let target = CountSketch::<Vector2D<i32>, FastPath>::with_dimensions(p.rows, p.cols);
     Ok(NitroCountSketchLib {
-        inner: NitroBatch::with_target_and_seed(
-            p.sample_rate,
-            CountSketch::<Vector2D<i32>, FastPath>::with_dimensions(p.rows, p.cols),
-            p.seed,
-        ),
+        inner: match p.seed {
+            Some(seed) => NitroBatch::with_target_and_seed(p.sample_rate, target, seed),
+            None => NitroBatch::with_target(p.sample_rate, target),
+        },
     })
 }
 

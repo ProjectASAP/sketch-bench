@@ -44,10 +44,10 @@ pub fn insert_elastic_lib(
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
         let mut sketch = build_elastic_lib(params)?;
-        let items = items.clone();
+        let owned = items.to_vec();
         out.push(Box::new(move || {
-            for v in items.iter() {
-                sketch.inner.update(v.clone());
+            for v in owned {
+                sketch.inner.update(v);
             }
             memory_elastic_lib(&sketch)
         }) as Pass);
@@ -64,13 +64,12 @@ pub fn insert_step_elastic_lib(
     for _ in 0..passes {
         let sketch: Shared<_> = Rc::new(RefCell::new(build_elastic_lib(params)?));
         let (driven, read) = (sketch.clone(), sketch);
-        let stream = items.clone();
+        let mut owned = items.to_vec();
         out.push(StepPass {
             steps: items.len(),
             step: Box::new(move |i| {
                 let sketch = &mut *driven.borrow_mut();
-                let v = &stream[i];
-                sketch.inner.update(v.clone());
+                sketch.inner.update(std::mem::take(&mut owned[i]));
             }),
             footprint: Box::new(move || memory_elastic_lib(&read.borrow())),
         });
@@ -100,11 +99,11 @@ pub fn merge_query_elastic_lib_estimate(
         for other in rest.iter() {
             sketch.inner.merge(&other.inner);
         }
-        let probes = probes.clone();
+        let owned = probes.to_vec();
         out.push(Box::new(move || {
-            let mut answers = Vec::with_capacity(probes.len());
-            for p in probes.iter() {
-                answers.push(sketch.inner.estimate(p.clone()).max(0) as u64);
+            let mut answers = Vec::with_capacity(owned.len());
+            for p in owned {
+                answers.push(sketch.inner.estimate(p).max(0) as u64);
             }
             let footprint = memory_elastic_lib(&sketch);
             (answers, footprint)

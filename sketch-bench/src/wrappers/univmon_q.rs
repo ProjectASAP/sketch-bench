@@ -9,28 +9,6 @@ use std::rc::Rc;
 
 const NAME: &str = "asap UnivMonQ";
 
-pub trait UnivMonQValue: NumericalValue + QuantileValue + 'static {
-    fn from_f64(value: f64) -> Self;
-}
-
-impl UnivMonQValue for i64 {
-    fn from_f64(value: f64) -> Self {
-        value as i64
-    }
-}
-
-impl UnivMonQValue for u64 {
-    fn from_f64(value: f64) -> Self {
-        value as u64
-    }
-}
-
-impl UnivMonQValue for f64 {
-    fn from_f64(value: f64) -> Self {
-        value
-    }
-}
-
 pub struct UnivMonQLib {
     inner: UnivMonQ,
 }
@@ -60,7 +38,7 @@ pub fn answered_k_univmon_q_lib(config: &ParamSet) -> Result<usize, BuildError> 
     Ok(heap_capacity(NAME, Some(p.heap_size), p.topk_k)?.1)
 }
 
-pub fn insert_univmon_q_lib<T: UnivMonQValue>(
+pub fn insert_univmon_q_lib<T: NumericalValue + QuantileValue + 'static>(
     params: &ParamSet,
     items: Rc<Vec<T>>,
     passes: usize,
@@ -79,7 +57,7 @@ pub fn insert_univmon_q_lib<T: UnivMonQValue>(
     Ok(out)
 }
 
-pub fn insert_step_univmon_q_lib<T: UnivMonQValue>(
+pub fn insert_step_univmon_q_lib<T: NumericalValue + QuantileValue + 'static>(
     params: &ParamSet,
     items: Rc<Vec<T>>,
     passes: usize,
@@ -102,7 +80,7 @@ pub fn insert_step_univmon_q_lib<T: UnivMonQValue>(
     Ok(out)
 }
 
-pub fn query_univmon_q_lib_quantile<T: UnivMonQValue>(
+pub fn query_univmon_q_lib_quantile<T: NumericalValue + QuantileValue + 'static>(
     params: &ParamSet,
     items: Rc<Vec<T>>,
     probes: Rc<Vec<f64>>,
@@ -111,7 +89,7 @@ pub fn query_univmon_q_lib_quantile<T: UnivMonQValue>(
     merge_query_univmon_q_lib_quantile(params, items, probes, 1, passes)
 }
 
-pub fn merge_query_univmon_q_lib_quantile<T: UnivMonQValue>(
+pub fn merge_query_univmon_q_lib_quantile<T: NumericalValue + QuantileValue + 'static>(
     params: &ParamSet,
     items: Rc<Vec<T>>,
     probes: Rc<Vec<f64>>,
@@ -140,7 +118,7 @@ pub fn merge_query_univmon_q_lib_quantile<T: UnivMonQValue>(
     Ok(out)
 }
 
-pub fn query_univmon_q_lib_cardinality<T: UnivMonQValue>(
+pub fn query_univmon_q_lib_cardinality<T: NumericalValue + QuantileValue + 'static>(
     params: &ParamSet,
     items: Rc<Vec<T>>,
     probes: Rc<Vec<()>>,
@@ -149,7 +127,7 @@ pub fn query_univmon_q_lib_cardinality<T: UnivMonQValue>(
     merge_query_univmon_q_lib_cardinality(params, items, probes, 1, passes)
 }
 
-pub fn merge_query_univmon_q_lib_cardinality<T: UnivMonQValue>(
+pub fn merge_query_univmon_q_lib_cardinality<T: NumericalValue + QuantileValue + 'static>(
     params: &ParamSet,
     items: Rc<Vec<T>>,
     probes: Rc<Vec<()>>,
@@ -178,25 +156,25 @@ pub fn merge_query_univmon_q_lib_cardinality<T: UnivMonQValue>(
     Ok(out)
 }
 
-pub fn query_univmon_q_lib_frequency<T: UnivMonQValue>(
+pub fn query_univmon_q_lib_frequency(
     params: &ParamSet,
-    items: Rc<Vec<T>>,
-    probes: Rc<Vec<T>>,
+    items: Rc<Vec<f64>>,
+    probes: Rc<Vec<f64>>,
     passes: usize,
 ) -> Result<Vec<QueryPass<u64>>, BuildError> {
     merge_query_univmon_q_lib_frequency(params, items, probes, 1, passes)
 }
 
-pub fn merge_query_univmon_q_lib_frequency<T: UnivMonQValue>(
+pub fn merge_query_univmon_q_lib_frequency(
     params: &ParamSet,
-    items: Rc<Vec<T>>,
-    probes: Rc<Vec<T>>,
+    items: Rc<Vec<f64>>,
+    probes: Rc<Vec<f64>>,
     shards: usize,
     passes: usize,
 ) -> Result<Vec<QueryPass<u64>>, BuildError> {
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let (mut sketch, rest) = univmon_q_lib_shards(params, &items, shards)?;
+        let (mut sketch, rest) = univmon_q_lib_shards::<f64>(params, &items, shards)?;
         for other in rest.iter() {
             sketch
                 .inner
@@ -207,7 +185,7 @@ pub fn merge_query_univmon_q_lib_frequency<T: UnivMonQValue>(
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for p in probes.iter() {
-                answers.push(sketch.inner.estimate_frequency(NumericalValue::to_f64(*p)));
+                answers.push(sketch.inner.estimate_frequency(*p));
             }
             let footprint = memory_univmon_q_lib(&sketch);
             (answers, footprint)
@@ -216,26 +194,26 @@ pub fn merge_query_univmon_q_lib_frequency<T: UnivMonQValue>(
     Ok(out)
 }
 
-pub fn query_univmon_q_lib_topk<T: UnivMonQValue>(
+pub fn query_univmon_q_lib_topk(
     params: &ParamSet,
-    items: Rc<Vec<T>>,
+    items: Rc<Vec<f64>>,
     probes: Rc<Vec<()>>,
     passes: usize,
-) -> Result<Vec<QueryPass<TopkAnswer<T>>>, BuildError> {
+) -> Result<Vec<QueryPass<TopkAnswer<f64>>>, BuildError> {
     merge_query_univmon_q_lib_topk(params, items, probes, 1, passes)
 }
 
-pub fn merge_query_univmon_q_lib_topk<T: UnivMonQValue>(
+pub fn merge_query_univmon_q_lib_topk(
     params: &ParamSet,
-    items: Rc<Vec<T>>,
+    items: Rc<Vec<f64>>,
     probes: Rc<Vec<()>>,
     shards: usize,
     passes: usize,
-) -> Result<Vec<QueryPass<TopkAnswer<T>>>, BuildError> {
+) -> Result<Vec<QueryPass<TopkAnswer<f64>>>, BuildError> {
     let k = answered_k_univmon_q_lib(params)?;
     let mut out = Vec::with_capacity(passes);
     for _ in 0..passes {
-        let (mut sketch, rest) = univmon_q_lib_shards(params, &items, shards)?;
+        let (mut sketch, rest) = univmon_q_lib_shards::<f64>(params, &items, shards)?;
         for other in rest.iter() {
             sketch
                 .inner
@@ -246,23 +224,16 @@ pub fn merge_query_univmon_q_lib_topk<T: UnivMonQValue>(
         out.push(Box::new(move || {
             let mut answers = Vec::with_capacity(probes.len());
             for _p in probes.iter() {
-                answers.push(
-                    sketch
-                        .inner
-                        .heavy_hitters(k)
-                        .into_iter()
-                        .map(|(value, count)| (T::from_f64(value), count))
-                        .collect(),
-                );
+                answers.push(sketch.inner.heavy_hitters(k).into_iter().collect());
             }
             let footprint = memory_univmon_q_lib(&sketch);
             (answers, footprint)
-        }) as QueryPass<TopkAnswer<T>>);
+        }) as QueryPass<TopkAnswer<f64>>);
     }
     Ok(out)
 }
 
-pub fn merge_univmon_q_lib<T: UnivMonQValue>(
+pub fn merge_univmon_q_lib<T: NumericalValue + QuantileValue + 'static>(
     params: &ParamSet,
     items: Rc<Vec<T>>,
     shards: usize,
@@ -283,7 +254,7 @@ pub fn merge_univmon_q_lib<T: UnivMonQValue>(
     Ok(out)
 }
 
-pub fn merge_step_univmon_q_lib<T: UnivMonQValue>(
+pub fn merge_step_univmon_q_lib<T: NumericalValue + QuantileValue + 'static>(
     params: &ParamSet,
     items: Rc<Vec<T>>,
     shards: usize,
@@ -310,7 +281,7 @@ pub fn merge_step_univmon_q_lib<T: UnivMonQValue>(
 }
 
 #[allow(clippy::type_complexity)]
-fn univmon_q_lib_shards<T: UnivMonQValue>(
+fn univmon_q_lib_shards<T: NumericalValue + QuantileValue + 'static>(
     params: &ParamSet,
     items: &[T],
     shards: usize,

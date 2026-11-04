@@ -2,11 +2,7 @@
 //! `FastPath`/`RegularPath` hashing — no `FixedMatrix` or parallel-insert
 //! variant, see the follow-up issue linked from #95.
 
-use crate::params::{
-    CmsHeapParams, CountMinFoldParams, CountMinSpaceSavingParams, CountSketchFoldParams,
-    CountSketchSpaceSavingParams, CsHeapParams, ElasticParams, ParamSet, SpaceSavingParams,
-    UnivMonQParams,
-};
+use crate::params::{CmsHeapParams, CsHeapParams, ParamSet};
 use crate::wrappers::frequency_value::FrequencyValue;
 use crate::wrappers::{require_positive, BuildError, Pass, QueryPass, Shared, StepPass};
 use std::cell::RefCell;
@@ -50,38 +46,6 @@ pub fn answered_k(params: &ParamSet) -> usize {
         .ok()
         .and_then(|p| p.topk_k)
         .or_else(|| params.parse::<CsHeapParams>().ok().and_then(|p| p.topk_k))
-        .or_else(|| {
-            params
-                .parse::<SpaceSavingParams>()
-                .ok()
-                .and_then(|p| p.topk_k)
-        })
-        .or_else(|| {
-            params
-                .parse::<CountMinSpaceSavingParams>()
-                .ok()
-                .and_then(|p| p.topk_k)
-        })
-        .or_else(|| {
-            params
-                .parse::<CountSketchSpaceSavingParams>()
-                .ok()
-                .and_then(|p| p.topk_k)
-        })
-        .or_else(|| {
-            params
-                .parse::<CountMinFoldParams>()
-                .ok()
-                .and_then(|p| p.topk_k)
-        })
-        .or_else(|| {
-            params
-                .parse::<CountSketchFoldParams>()
-                .ok()
-                .and_then(|p| p.topk_k)
-        })
-        .or_else(|| params.parse::<ElasticParams>().ok().and_then(|p| p.topk_k))
-        .or_else(|| params.parse::<UnivMonQParams>().ok().and_then(|p| p.topk_k))
         .unwrap_or(TOPK_K)
 }
 

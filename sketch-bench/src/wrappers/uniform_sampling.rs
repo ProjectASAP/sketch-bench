@@ -18,7 +18,10 @@ pub fn build_uniform_sampling_lib(config: &ParamSet) -> Result<UniformSamplingLi
         )));
     }
     Ok(UniformSamplingLib {
-        inner: UniformSampling::with_seed(p.sample_rate, p.seed),
+        inner: match p.seed {
+            Some(seed) => UniformSampling::with_seed(p.sample_rate, seed),
+            None => UniformSampling::new(p.sample_rate),
+        },
     })
 }
 

@@ -368,10 +368,10 @@ sketch_params!(HllParams, "hll", HllParams { lg_k: 14 });
 #[serde(deny_unknown_fields)]
 pub struct KllParams {
     pub k: u32,
-    #[serde(default)]
-    pub seed: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
 }
-sketch_params!(KllParams, "kll", KllParams { k: 100, seed: 0 });
+sketch_params!(KllParams, "kll", KllParams { k: 100, seed: None });
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -564,8 +564,8 @@ pub struct HydraKllParams {
     pub rows: usize,
     pub cols: usize,
     pub cell_k: u32,
-    #[serde(default)]
-    pub seed: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
 }
 sketch_params!(
     HydraKllParams,
@@ -574,7 +574,7 @@ sketch_params!(
         rows: 3,
         cols: 128,
         cell_k: 200,
-        seed: 0
+        seed: None
     }
 );
 
@@ -750,8 +750,8 @@ sketch_params!(
 pub struct CocoParams {
     pub rows: usize,
     pub cols: usize,
-    #[serde(default)]
-    pub seed: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
 }
 sketch_params!(
     CocoParams,
@@ -759,7 +759,7 @@ sketch_params!(
     CocoParams {
         rows: 2,
         cols: 1024,
-        seed: 0
+        seed: None
     }
 );
 
@@ -799,15 +799,15 @@ sketch_params!(
 #[serde(deny_unknown_fields)]
 pub struct UniformSamplingParams {
     pub sample_rate: f64,
-    #[serde(default)]
-    pub seed: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
 }
 sketch_params!(
     UniformSamplingParams,
     "uniform-sampling",
     UniformSamplingParams {
         sample_rate: 0.01,
-        seed: 0
+        seed: None
     }
 );
 
@@ -872,8 +872,8 @@ pub struct NitroParams {
     pub sample_rate: f64,
     pub rows: usize,
     pub cols: usize,
-    #[serde(default)]
-    pub seed: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
 }
 sketch_params!(
     NitroParams,
@@ -882,7 +882,7 @@ sketch_params!(
         sample_rate: 0.1,
         rows: 3,
         cols: 1024,
-        seed: 0
+        seed: None
     }
 );
 

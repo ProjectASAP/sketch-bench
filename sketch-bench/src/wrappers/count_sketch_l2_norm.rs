@@ -16,6 +16,14 @@ pub fn build_count_sketch_l2_norm_lib(
     require_positive("asap CountSketchWithL2Norm", "rows", p.rows)?;
     CountSketch::check_shape(p.rows, p.cols)
         .map_err(|e| BuildError(format!("asap CountSketchWithL2Norm: {e}")))?;
+    let column_bits = p.cols.next_power_of_two().ilog2() as usize;
+    if p.rows * (column_bits + 1) > 128 {
+        return Err(BuildError(format!(
+            "asap CountSketchWithL2Norm: rows={} x ({column_bits} column bits + 1 sign bit) \
+             exceeds the 128-bit key hash",
+            p.rows
+        )));
+    }
     Ok(CountSketchL2NormLib {
         inner: CountSketchWithL2Norm::with_dimensions(p.rows, p.cols),
     })
@@ -164,4 +172,17 @@ fn count_sketch_l2_norm_lib_shards<K: FrequencyValue>(
         parts.pop().expect("a split of the stream is never empty"),
         rest,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_shape_past_the_hash_bits_is_refused_not_built() {
+        let ok = ParamSet::single("count-sketch-l2-norm", "rows=3 cols=1024").unwrap();
+        assert!(build_count_sketch_l2_norm_lib(&ok).is_ok());
+        let wide = ParamSet::single("count-sketch-l2-norm", "rows=8 cols=1048576").unwrap();
+        assert!(build_count_sketch_l2_norm_lib(&wide).is_err());
+    }
 }

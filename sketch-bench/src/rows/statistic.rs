@@ -107,14 +107,16 @@ pub(super) fn membership_row<T: CountedValue>(
 
 /// A row answering **top-k**: the heaviest `k` keys, ranked. The probe is
 /// `()` — one question, the whole list, asked repeatedly for timing — and `k` is
-/// the row's `topk_k` (`chl::answered_k`, default `chl::TOPK_K`), whatever its
-/// heap's capacity (`heap=`): a larger heap answers its heaviest `k`.
+/// the `k` the row's own wrapper answers (for the heap rows `chl::answered_k`,
+/// default `chl::TOPK_K`), whatever its heap's capacity: a larger heap answers
+/// its heaviest `k`.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn topk_row<T: CountedValue>(
     req: &Requirement,
     description: &TableDescription,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
+    k: usize,
     insert: InsertBody<T>,
     insert_step: InsertStepBody<T>,
     query: QueryBody<T, (), chl::TopkAnswer<T>>,
@@ -125,7 +127,7 @@ pub(super) fn topk_row<T: CountedValue>(
         description,
         table,
         want,
-        TopkGT::<T>::over_column(chl::answered_k(&req.params), value_column(description)),
+        TopkGT::<T>::over_column(k, value_column(description)),
         peel::<T>,
         insert,
         insert_step,

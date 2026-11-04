@@ -17,7 +17,10 @@ pub fn build_kll_dynamic_lib<T: NumericalValue>(
     let p: KllParams = config.parse()?;
     require_range("asap KllDynamic", "k", p.k, LIB_K_MIN, LIB_K_MAX)?;
     Ok(KllDynamicLib {
-        inner: KllDynamic::<T>::with_k_and_seed(p.k as i32, p.seed),
+        inner: match p.seed {
+            Some(seed) => KllDynamic::<T>::with_k_and_seed(p.k as i32, seed),
+            None => KllDynamic::<T>::with_k(p.k as i32),
+        },
     })
 }
 

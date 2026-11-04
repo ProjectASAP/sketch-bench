@@ -20,10 +20,9 @@ fn oxide_kll(k: u32) -> Result<sketch_oxide::quantiles::KllSketch, BuildError> {
 }
 
 fn oxide_takes_no_seed(p: &KllParams) -> Result<(), BuildError> {
-    if p.seed != 0 {
+    if let Some(seed) = p.seed {
         return Err(BuildError(format!(
-            "oxide KLL: seed={} asked, but sketch_oxide's KLL takes no seed",
-            p.seed
+            "oxide KLL: seed={seed} asked, but sketch_oxide's KLL takes no seed"
         )));
     }
     Ok(())

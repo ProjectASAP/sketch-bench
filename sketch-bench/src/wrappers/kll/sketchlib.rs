@@ -12,7 +12,7 @@ use std::rc::Rc;
 
 /// `k` this library cannot hold is an error naming both, not a run at some
 /// other `k` reported as the one asked for.
-fn lib_kll<T>(k: u32, seed: u64) -> Result<asap_sketchlib::Kll<T>, BuildError>
+fn lib_kll<T>(k: u32, seed: Option<u64>) -> Result<asap_sketchlib::Kll<T>, BuildError>
 where
     T: asap_sketchlib::common::numerical::NumericalValue,
 {
@@ -22,7 +22,10 @@ where
              to that range, so any other k would run at a value this record does not name"
         )));
     }
-    Ok(asap_sketchlib::Kll::<T>::with_k_and_seed(k as i32, seed))
+    Ok(match seed {
+        Some(seed) => asap_sketchlib::Kll::<T>::with_k_and_seed(k as i32, seed),
+        None => asap_sketchlib::Kll::<T>::with_k(k as i32),
+    })
 }
 
 /// Generic *in the library*: `KLL<T>` stores `T` and orders it with
@@ -436,4 +439,27 @@ where
         }) as Pass);
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn median_after(config: &str) -> f64 {
+        let params = ParamSet::single("kll-percall", config).unwrap();
+        let mut sketch = build_kll_lib_per_call::<i64>(&params).unwrap();
+        for v in 0..100_000i64 {
+            sketch.inner.update(&(v * 7919 % 100_003));
+        }
+        sketch.inner.quantile(0.5)
+    }
+
+    #[test]
+    fn a_seed_fixes_the_compaction_and_oxide_refuses_one() {
+        assert_eq!(median_after("k=50 seed=7"), median_after("k=50 seed=7"));
+        let seeded = ParamSet::single("kll-percall", "k=200 seed=7").unwrap();
+        assert!(crate::wrappers::kll::oxide::build_kll_oxide_per_call::<i64>(&seeded).is_err());
+        let unseeded = ParamSet::single("kll-percall", "k=200").unwrap();
+        assert!(crate::wrappers::kll::oxide::build_kll_oxide_per_call::<i64>(&unseeded).is_ok());
+    }
 }

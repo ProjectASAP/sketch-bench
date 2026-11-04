@@ -193,6 +193,7 @@ fn binding(variant: &str, library: &str) -> Option<RowBinding> {
 mod bloom;
 mod cms;
 mod cms_heap;
+mod count_matrix;
 mod cs;
 mod dd;
 mod exact;
@@ -205,14 +206,17 @@ mod kll;
 mod kmv;
 mod materialise;
 mod measurement;
-mod sketchlib_more;
+mod nitro;
 mod space_saving;
 mod statistic;
+mod string_keyed;
+mod uniform_sampling;
 mod univmon;
 
 use bloom::*;
 use cms::*;
 use cms_heap::*;
+use count_matrix::*;
 use cs::*;
 use dd::*;
 use exact::*;
@@ -225,9 +229,11 @@ use kll::*;
 use kmv::*;
 use materialise::*;
 use measurement::*;
-use sketchlib_more::*;
+use nitro::*;
 use space_saving::*;
 use statistic::*;
+use string_keyed::*;
+use uniform_sampling::*;
 use univmon::*;
 
 #[cfg(test)]

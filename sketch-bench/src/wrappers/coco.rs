@@ -13,7 +13,10 @@ pub fn build_coco_lib(config: &ParamSet) -> Result<CocoLib, BuildError> {
     require_positive("asap CocoSketch", "rows", p.rows)?;
     require_positive("asap CocoSketch", "cols", p.cols)?;
     Ok(CocoLib {
-        inner: CocoSketch::with_dimensions_and_seed(p.rows, p.cols, p.seed),
+        inner: match p.seed {
+            Some(seed) => CocoSketch::with_dimensions_and_seed(p.rows, p.cols, seed),
+            None => CocoSketch::with_dimensions(p.rows, p.cols),
+        },
     })
 }
 

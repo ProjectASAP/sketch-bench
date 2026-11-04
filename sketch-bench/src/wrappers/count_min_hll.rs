@@ -1,7 +1,7 @@
 use crate::params::{CountMinHllParams, ParamSet};
 use crate::wrappers::hll::CardinalityValue;
 use crate::wrappers::hydra_shared::labels;
-use crate::wrappers::polars_shared::{group_key, subset_key};
+use crate::wrappers::polars_shared::{group_key, write_subset_key};
 use crate::wrappers::{
     partition, require_positive, require_range, BuildError, Pass, QueryPass, Shared, StepPass,
 };
@@ -14,6 +14,7 @@ const NAME: &str = "asap CountMinHll";
 
 pub struct CountMinHllLib {
     inner: CountMinHll,
+    key: String,
 }
 
 pub fn build_count_min_hll_lib(config: &ParamSet) -> Result<CountMinHllLib, BuildError> {
@@ -35,6 +36,7 @@ pub fn build_count_min_hll_lib(config: &ParamSet) -> Result<CountMinHllLib, Buil
     }
     Ok(CountMinHllLib {
         inner: CountMinHll::with_dimensions(p.rows, p.cols, p.precision),
+        key: String::new(),
     })
 }
 
@@ -47,8 +49,8 @@ impl CountMinHllLib {
         let parts: Vec<&str> = record.0.split(';').collect();
         let value = record.1.data_input();
         for mask in 1..(1usize << parts.len()) {
-            let key = subset_key(&parts, mask);
-            self.inner.update(&DataInput::Str(&key), &value);
+            write_subset_key(&parts, mask, &mut self.key);
+            self.inner.update(&DataInput::Str(&self.key), &value);
         }
     }
 

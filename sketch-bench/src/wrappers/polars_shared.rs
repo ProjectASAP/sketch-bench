@@ -270,6 +270,12 @@ impl<T: PolarsColumnItem> PolarsQuantileCore<T> {
 /// value in another (#74), in the baseline as in the sketch.
 pub fn subset_key(parts: &[&str], mask: usize) -> String {
     let mut out = String::new();
+    write_subset_key(parts, mask, &mut out);
+    out
+}
+
+pub fn write_subset_key(parts: &[&str], mask: usize, out: &mut String) {
+    out.clear();
     for (j, part) in parts.iter().enumerate() {
         if (mask >> j) & 1 == 1 {
             if !out.is_empty() {
@@ -284,7 +290,6 @@ pub fn subset_key(parts: &[&str], mask: usize) -> String {
             }
         }
     }
-    out
 }
 
 /// The key a probe reads: `labels` holds a value at each grouped column and
