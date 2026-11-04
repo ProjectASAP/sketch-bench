@@ -371,9 +371,9 @@ class SyntheticQueriesTest(unittest.TestCase):
                     synthetic_queries(templates="multigroup")
 
 
-COMMITTED_TABLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
-                                "rqe-optimizer", "results", "autosketch-vs-asap-inputs",
-                                "tables")
+# A copy of ASAPQuery's rqe-optimizer/results/autosketch-vs-asap-inputs/tables.
+COMMITTED_TABLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "testdata",
+                                "autosketch-vs-asap-tables")
 
 
 # Classic templates 7 and 9, dropped since the committed tables.
