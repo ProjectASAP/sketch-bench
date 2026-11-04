@@ -433,8 +433,8 @@ def rollout_dashboard():
              "fieldConfig": {"defaults": {**LINES, "unit": "s", "displayName": "${__field.labels.query} ${__field.name}"},
                              "overrides": [by_ref("A", "blue", 2), by_ref("B", "orange")]},
              "options": LEGEND}, 0, 9, 24, 8)
-    b.panel({"type": "timeseries", "title": "Relative error of approx",
-             "targets": [rows_of("A", "low_level", 'metric="relative_error"', "relative_error", by="query")],
+    b.panel({"type": "timeseries", "title": "Rank error of approx",
+             "targets": [rows_of("A", "low_level", 'metric="rank_error"', "rank_error", by="query")],
              "fieldConfig": {"defaults": {**LINES, "unit": "percentunit", "displayName": "${__field.labels.query}"},
                              "overrides": []},
              "options": LEGEND}, 0, 17, 24, 6)
@@ -579,6 +579,72 @@ AGREEMENT = ("Defined per application. Threshold alert: evaluations where exact 
              "Top clients: mean clients shared by the exact and approx top lists, as a fraction of the list size.")
 
 
+STAGE1 = ("run_id", "trial", "query", "error metric", "target", "failure probability", "max error", "mean error",
+          "evaluations over target", "evaluations", "mean query ms", "insert samples per second", "peak state bytes",
+          "exact mean query ms", "exact mean samples read at query")
+SAME, FALSE_ROLLBACK, MISSED_ROLLBACK = "same decision", "false rollback", "missed rollback"
+
+
+def rollouts_by_error(ref, use_case, query, outcomes, name, y):
+    root = (f'$[use_case="{use_case}" and $exists(details.stage2)].details.stage2'
+            f'[outcome in {in_list(outcomes)}].{{"max rank error": $lookup(`max error`, "{query}"), "{name}": {y}}}')
+    return iq(ref, INDEX, root, [col("max rank error", "max rank error", "number"), col(name, name, "number")])
+
+
+def two_stages_dashboard():
+    use_case = "canary_release"
+    b = Board()
+    b.row("Stage 1: sketch configuration to approx query result", 0)
+    stage1 = (f'$[use_case="{use_case}" and $exists(details.stage1)].( $e := $; $e.details.stage1.( '
+              '$merge([$, {"run_id": $e.run_id, "trial": $e.details.trial}]) ) )')
+    text = ("run_id", "query", "error metric")
+    b.panel({"type": "table",
+             "title": "Per run and query: measured error against the target, and the cost "
+                      "(failure probability: the share of evaluations allowed over the target)",
+             "targets": [iq("A", INDEX, stage1, [col(k, k, "string") for k in text]
+                            + [col(k, k, "number") for k in STAGE1 if k not in text])],
+             "transformations": order(*STAGE1) + [{"id": "sortBy", "options": {"sort": [{"field": "run_id"}]}}],
+             "fieldConfig": {"defaults": {"custom": {"minWidth": 60, "wrapHeaderText": True,
+                                                     "cellOptions": {"type": "auto", "wrapText": True}}},
+                             "overrides": [
+                 {"matcher": {"id": "byRegexp", "options": "^(target|max error|mean error)$"},
+                  "properties": [{"id": "unit", "value": "percentunit"}, {"id": "decimals", "value": 2}]},
+                 {"matcher": {"id": "byName", "options": "peak state bytes"},
+                  "properties": [{"id": "unit", "value": "bytes"}]},
+                 {"matcher": {"id": "byRegexp", "options": "query ms"},
+                  "properties": [{"id": "decimals", "value": 3}]},
+                 {"matcher": {"id": "byRegexp", "options": "per second|samples read"},
+                  "properties": [{"id": "unit", "value": "short"}]},
+                 {"matcher": {"id": "byName", "options": "run_id"},
+                  "properties": [{"id": "custom.width", "value": 200}, {"id": "links", "value": [{
+                      "title": "Open this run", "url": "/d/rollout/rollout?var-run=${__data.fields.run_id}"}]}]}]},
+             "options": {"showHeader": True}}, 0, 1, 24, 14)
+
+    b.row("Stage 2: approx query result to rollout decision", 15)
+    for x, query in ((0, "p99_canary"), (12, "p99_stable")):
+        b.panel({"type": "xychart",
+                 "title": f"Each rollout of every run: decision against the max rank error of {query} over its checks",
+                 "targets": [rollouts_by_error("A", use_case, query, ["true_positive", "true_negative"], SAME, 1),
+                             rollouts_by_error("B", use_case, query, ["false_positive"], FALSE_ROLLBACK, 0),
+                             rollouts_by_error("C", use_case, query, ["false_negative"], MISSED_ROLLBACK, 0)],
+                 "fieldConfig": {"defaults": {"custom": {"show": "points", "pointSize": {"fixed": 7}},
+                                              "min": -0.2, "max": 1.2},
+                                 "overrides": [
+                     {"matcher": {"id": "byName", "options": "max rank error"},
+                      "properties": [{"id": "unit", "value": "percentunit"}, {"id": "min", "value": 0},
+                                     {"id": "max", "value": None}]},
+                     *[{"matcher": {"id": "byName", "options": n},
+                        "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": c}}]}
+                       for n, c in ((SAME, "green"), (FALSE_ROLLBACK, "orange"), (MISSED_ROLLBACK, "red"))]]},
+                 "options": {"mapping": "manual", "series": [
+                     {"frame": {"matcher": {"id": "byIndex", "options": i}},
+                      "x": {"matcher": {"id": "byName", "options": "max rank error"}},
+                      "y": {"matcher": {"id": "byName", "options": name}}}
+                     for i, name in enumerate((SAME, FALSE_ROLLBACK, MISSED_ROLLBACK))], **LEGEND}},
+                x, 16, 12, 12)
+    return dashboard("two-stages", "Canary release in two stages", b, [])
+
+
 def overview_dashboard():
     rows = ('$[$exists(details.fidelity)].( $e := $; '
             '$append($keys($e.details.plans), $keys($e.details.unsupported)).( $q := $; '
@@ -660,7 +726,7 @@ def overview_dashboard():
 
 def main():
     for board in (overview_dashboard(), alert_dashboard(), decision_dashboard(), rollout_dashboard(),
-                  topk_dashboard()):
+                  topk_dashboard(), two_stages_dashboard()):
         with open(os.path.join(OUT, board["uid"] + ".json"), "w") as f:
             json.dump(board, f, indent=2)
             f.write("\n")

@@ -1,11 +1,12 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Parser;
 use serde_json::{json, Value};
 
-use aqpbm_planeval::data::generate;
+use aqpbm_planeval::data::{generate, Series};
 use aqpbm_planeval::plan::{plan, summary, Arm};
 use aqpbm_planeval::run::Driver;
 use aqpbm_planeval::spec::Spec;
@@ -50,6 +51,29 @@ struct Args {
     out: PathBuf,
 }
 
+fn rank_in_window(
+    series: &[Series],
+    labels: &BTreeMap<String, String>,
+    start_exclusive: i64,
+    end_inclusive: i64,
+    value: f64,
+) -> Result<(f64, f64)> {
+    let unnamed = |l: &BTreeMap<String, String>| {
+        l.iter()
+            .filter(|(k, _)| k.as_str() != "__name__")
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect::<BTreeMap<_, _>>()
+    };
+    let wanted = unnamed(labels);
+    let mut matched = series.iter().filter(|s| unnamed(&s.labels) == wanted);
+    let (Some(found), None) = (matched.next(), matched.next()) else {
+        bail!("no single series has the answer's labels {labels:?}");
+    };
+    found
+        .rank_of(start_exclusive, end_inclusive, value)
+        .with_context(|| format!("series {labels:?} has no sample in the window"))
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -89,6 +113,8 @@ async fn main() -> Result<()> {
             .with_context(|| format!("installing the plan of {}", query.id))?;
         let started = Instant::now();
         let mut answers: Vec<Value> = Vec::new();
+        let mut costs: Vec<Value> = Vec::new();
+        let ranked = query.accuracy_metric.as_deref() == Some("rank");
         let mut disagreements = 0usize;
         let mut views_refreshed = 0usize;
         let times = spec.evaluation_times(query);
@@ -102,8 +128,24 @@ async fn main() -> Result<()> {
                     disagreements += 1;
                 }
             }
+            let cost = &evaluation.cost;
+            costs.push(json!({
+                "time": t,
+                "refresh_seconds": cost.refresh_seconds,
+                "samples_ingested": cost.samples_ingested,
+                "query_seconds": cost.query_seconds,
+                "samples_read_at_query": cost.samples_read_at_query,
+                "state_bytes": cost.state_bytes,
+            }));
             for (labels, value) in evaluation.answers {
-                answers.push(json!({"time": t, "series": labels, "value": value}));
+                let mut answer = json!({"time": t, "series": labels, "value": value});
+                if ranked {
+                    let (below, at_most) =
+                        rank_in_window(&series, &labels, t - query.window_ms, t, value)
+                            .with_context(|| format!("{} at {t}", query.id))?;
+                    answer["rank"] = json!([below, at_most]);
+                }
+                answers.push(answer);
             }
         }
         let elapsed = started.elapsed().as_secs_f64();
@@ -130,6 +172,7 @@ async fn main() -> Result<()> {
             "views_refreshed": views_refreshed,
             "reference_disagreements": args.check_reference.then_some(disagreements),
             "answers": answers,
+            "costs": costs,
         }));
     }
     let document = json!({

@@ -468,7 +468,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Relative error of approx",
+      "title": "Rank error of approx",
       "targets": [
         {
           "refId": "A",
@@ -485,7 +485,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[metric=\"relative_error\"].{\"time\": time, \"value\": value, \"query\": labels.query}; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[metric=\"rank_error\"].{\"time\": time, \"value\": value, \"query\": labels.query}; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "time",
@@ -494,7 +494,7 @@
             },
             {
               "selector": "value",
-              "text": "relative_error",
+              "text": "rank_error",
               "type": "number"
             },
             {

@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use aqpbm_planeval::data::generate;
+use aqpbm_planeval::data::{generate, Series};
 use aqpbm_planeval::plan::{plan, Arm};
 use aqpbm_planeval::run::Driver;
 use aqpbm_planeval::spec::Spec;
@@ -85,6 +85,13 @@ async fn panes_built_at_ingestion_answer_as_the_query_time_reference() {
     for t in spec.evaluation_times(&spec.queries[0]) {
         let evaluation = driver.evaluate(&series, t).unwrap();
         refreshed += evaluation.views_refreshed;
+        assert_eq!(evaluation.cost.samples_read_at_query, 0, "at {t}");
+        assert!(evaluation.cost.state_bytes > 0, "at {t}");
+        assert_eq!(
+            evaluation.cost.samples_ingested > 0,
+            evaluation.views_refreshed > 0,
+            "at {t}"
+        );
         assert_eq!(
             Some(&evaluation.answers),
             evaluation.reference_answers.as_ref(),
@@ -108,4 +115,15 @@ fn the_use_case_1_spec_draws_the_samples_it_drew_before_specs_had_many_series() 
     }
     assert_eq!(series[0].points.len(), 1_800_000);
     assert_eq!(hash, 0x2b28_6d1f_7dab_be70);
+}
+
+#[test]
+fn rank_of_is_the_share_of_window_samples_below_and_at_the_value() {
+    let series = Series {
+        labels: Default::default(),
+        points: vec![(1, 5.0), (2, 1.0), (3, 3.0), (4, 3.0), (5, 2.0)],
+    };
+    assert_eq!(series.rank_of(0, 5, 3.0), Some((0.4, 0.8)));
+    assert_eq!(series.rank_of(1, 5, 3.0), Some((0.5, 1.0)));
+    assert_eq!(series.rank_of(5, 9, 3.0), None);
 }

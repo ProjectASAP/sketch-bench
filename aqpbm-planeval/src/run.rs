@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{anyhow, bail, Result};
 use asap_executor::physical_planner::compile;
@@ -36,6 +37,31 @@ pub struct Evaluation {
     pub answers: Vec<Answer>,
     pub reference_answers: Option<Vec<Answer>>,
     pub views_refreshed: usize,
+    pub cost: Cost,
+}
+
+pub struct Cost {
+    pub refresh_seconds: f64,
+    pub samples_ingested: usize,
+    pub query_seconds: f64,
+    pub samples_read_at_query: usize,
+    pub state_bytes: usize,
+}
+
+fn samples(slices: &[Slice]) -> usize {
+    slices.iter().map(|(_, points)| points.len()).sum()
+}
+
+fn state_bytes(state: &Batch) -> usize {
+    state
+        .to_rows()
+        .iter()
+        .flatten()
+        .map(|cell| match cell {
+            Value::Summary { state, .. } => state.approx_memory_bytes(),
+            _ => 0,
+        })
+        .sum()
 }
 
 fn state_key(view: &MaterializedView, evaluation_ms: i64) -> String {
@@ -237,6 +263,8 @@ impl Driver {
     pub fn evaluate(&mut self, series: &[Series], evaluation_ms: i64) -> Result<Evaluation> {
         let dag = &self.plan.dag;
         let mut views_refreshed = 0;
+        let mut samples_ingested = 0;
+        let refresh_started = Instant::now();
         let mut built: BTreeMap<u64, (Batch, (i64, i64))> = BTreeMap::new();
         for view in &self.views {
             let built_for_ms = match view.refresh {
@@ -278,6 +306,7 @@ impl Driver {
                     },
                 };
                 let slices = between(series, span.0, span.1);
+                samples_ingested += samples(&slices);
                 let batches =
                     execute(dag, sources, &slices, &[view.node_id as u64], scope)?.remove(0);
                 let schema = batches
@@ -299,6 +328,7 @@ impl Driver {
             stored.retention_ms = stored.retention_ms.max(view.retention_ms);
             built.insert(view.node_id as u64, (stored.state.clone(), span));
         }
+        let refresh_seconds = refresh_started.elapsed().as_secs_f64();
         let mut inputs = BTreeMap::new();
         let mut pending = Self::roots(&self.plan);
         let mut seen = BTreeSet::new();
@@ -325,11 +355,20 @@ impl Driver {
         let query = Scope::Query {
             evaluation_time_ms: evaluation_ms,
         };
+        let query_started = Instant::now();
         let answers_now = answers(
             &execute(dag, inputs, &raw, &Self::roots(&self.plan), query.clone())?.remove(0),
         )?;
+        let query_seconds = query_started.elapsed().as_secs_f64();
         self.store
             .retain(|_, state| state.start_ms >= evaluation_ms - state.retention_ms as i64);
+        let cost = Cost {
+            refresh_seconds,
+            samples_ingested,
+            query_seconds,
+            samples_read_at_query: samples(&raw),
+            state_bytes: self.store.values().map(|s| state_bytes(&s.state)).sum(),
+        };
         let reference_answers = match &self.reference {
             None => None,
             Some(reference) => {
@@ -358,6 +397,7 @@ impl Driver {
             answers: answers_now,
             reference_answers,
             views_refreshed,
+            cost,
         })
     }
 }
