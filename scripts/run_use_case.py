@@ -177,10 +177,16 @@ def rank_errors(run_id, use_case, signal, exact_query, approx_query):
     return rows
 
 
-def query_latencies(run_id, use_case, signal, exact_query, approx_query):
+def query_costs(run_id, use_case, signal, exact_query, approx_query):
     labels = {"use_case": use_case, "signal": signal, "query": exact_query["id"]}
-    return [row(c["time"], "low_level", run_id, {**labels, "arm": arm}, "query_latency", c["query_seconds"], "s")
-            for arm, query in (("exact", exact_query), ("approx", approx_query)) for c in query.get("costs", [])]
+    rows = []
+    for arm, query in (("exact", exact_query), ("approx", approx_query)):
+        for c in query.get("costs", []):
+            rows.append(row(c["time"], "low_level", run_id, {**labels, "arm": arm}, "query_latency",
+                            c["query_seconds"], "s"))
+            rows.append(row(c["time"], "low_level", run_id, {**labels, "arm": arm}, "query_memory",
+                            c["state_bytes"] + c["samples_read_at_query"] * SAMPLE_BYTES, "bytes"))
+    return rows
 
 
 def mean(values):
@@ -314,14 +320,14 @@ def write_arm(data, case, prefix, arm, exact, approx, trial=1):
     run_id = f"{prefix}-{arm}" if trial == 1 else f"{prefix}-{arm}-trial{trial}"
     use_case = exact["use_case"]
     exact_by_id = {q["id"]: q for q in exact["queries"]}
-    rows, errors, latencies, planned, plans, unsupported = [], [], [], [], {}, {}
+    rows, errors, costs, planned, plans, unsupported = [], [], [], [], {}, {}
     for q in approx["queries"]:
         if "unsupported" in q:
             unsupported[q["id"]] = short_reason(q["unsupported"])
             continue
         rows += query_rows(run_id, use_case, case["signal"](q["id"]), exact_by_id[q["id"]], q)
         errors += rank_errors(run_id, use_case, case["signal"](q["id"]), exact_by_id[q["id"]], q)
-        latencies += query_latencies(run_id, use_case, case["signal"](q["id"]), exact_by_id[q["id"]], q)
+        costs += query_costs(run_id, use_case, case["signal"](q["id"]), exact_by_id[q["id"]], q)
         planned.append(q)
         plans[q["id"]] = describe_plan(q["plan"])
     if not rows or unsupported and case["needs_every_query"]:
@@ -345,7 +351,7 @@ def write_arm(data, case, prefix, arm, exact, approx, trial=1):
     details["stage1"] = [stage1(approx["arm"], exact_by_id[q["id"]], q, derived) for q in planned]
     if "stage2" in case:
         details["stage2"] = case["stage2"](derived, errors)
-    write_run(data, run_id, use_case, rows + derived + latencies, details, case["split"])
+    write_run(data, run_id, use_case, rows + derived + costs, details, case["split"])
     print(f"{run_id}: {len(plans)} queries, {len(unsupported)} unsupported", file=sys.stderr)
 
 

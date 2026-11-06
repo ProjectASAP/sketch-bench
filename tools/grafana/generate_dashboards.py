@@ -443,20 +443,23 @@ def rollout_dashboard():
              "fieldConfig": {"defaults": {**LINES, "unit": "percentunit", "displayName": "${__field.labels.query}"},
                              "overrides": []},
              "options": LEGEND}, 0, 17, 12, 6)
-    b.panel({"type": "timeseries", "title": "Query latency per evaluation: exact vs approx",
-             "description": "Plan compile time excluded. Trials of an arm share one exact run.",
-             "targets": [rows_of("A", "low_level", 'metric="query_latency" and labels.arm="exact"', "exact",
-                                 by="query"),
-                         rows_of("B", "low_level", 'metric="query_latency" and labels.arm="approx"', "approx",
-                                 by="query")],
-             "fieldConfig": {"defaults": {**LINES, "unit": "s",
-                                          "custom": {**LINES["custom"],
-                                                     "scaleDistribution": {"type": "log", "log": 10}},
-                                          "displayName": "${__field.labels.query} ${__field.name}"},
-                             "overrides": [by_ref("A", "blue", 2), by_ref("B", "orange")]},
-             "options": LEGEND}, 12, 17, 12, 6)
+    for x, y, w, metric, title, unit, note in (
+            (12, 17, 12, "query_latency", "Query latency per evaluation", "s", "Plan compile time excluded. "),
+            (0, 23, 24, "query_memory", "Bytes per evaluation: sketch state plus raw samples read", "bytes", "")):
+        b.panel({"type": "timeseries", "title": f"{title}: exact vs approx",
+                 "description": note + "Trials of an arm share one exact run.",
+                 "targets": [rows_of("A", "low_level", f'metric="{metric}" and labels.arm="exact"', "exact",
+                                     by="query"),
+                             rows_of("B", "low_level", f'metric="{metric}" and labels.arm="approx"', "approx",
+                                     by="query")],
+                 "fieldConfig": {"defaults": {**LINES, "unit": unit,
+                                              "custom": {**LINES["custom"],
+                                                         "scaleDistribution": {"type": "log", "log": 10}},
+                                              "displayName": "${__field.labels.query} ${__field.name}"},
+                                 "overrides": [by_ref("A", "blue", 2), by_ref("B", "orange")]},
+                 "options": LEGEND}, x, y, w, 6)
 
-    b.row("Application: rollout controller, rule ${rule}", 23)
+    b.row("Application: rollout controller, rule ${rule}", 29)
     ratio = 'labels.app="rollout_controller"'
     b.panel({"type": "timeseries", "title": "Canary p99 over stable p99 (rule ours compares it with the tolerance)",
              "targets": [rows_of("A", "app_state", f'{ratio} and metric="ratio" and labels.arm="exact"', "exact"),
@@ -465,7 +468,7 @@ def rollout_dashboard():
              "fieldConfig": {"defaults": LINES,
                              "overrides": [by_ref("A", "blue", 2), by_ref("B", "orange"), dashed("C", "red")]
                              + named("exact", "approx", "tolerance")},
-             "options": LEGEND}, 0, 24, 24, 7)
+             "options": LEGEND}, 0, 30, 24, 7)
     b.panel(strip_panel("Check result and rollout decision per check, with what differs",
                         [(f'{app} and metric="check" and labels.arm="exact"', "exact check"),
                          (f'{app} and metric="check" and labels.arm="approx"', "approx check"),
@@ -474,10 +477,10 @@ def rollout_dashboard():
                          (f'{app} and metric="annotation"', "annotation")],
                         {"failed": {"color": "red", "text": "failed"}, "passed": OFF,
                          "rollback": {"color": "red", "text": "rollback"},
-                         "promote": {"color": "green", "text": "promote"}}), 0, 31, 24, 9)
+                         "promote": {"color": "green", "text": "promote"}}), 0, 37, 24, 9)
 
-    b.row("Fidelity over rollouts", 40)
-    b.panel(outcome_stat("Rollouts by outcome (positive: rollback)", summary, app), 0, 41, 6, 8)
+    b.row("Fidelity over rollouts", 46)
+    b.panel(outcome_stat("Rollouts by outcome (positive: rollback)", summary, app), 0, 47, 6, 8)
     b.panel({"type": "stat", "title": "Rollouts",
              "targets": [iq("A", summary, metric_values(app), by_metric_columns(
                  ("rollouts", "rollouts"), ("agreement", "same decision"),
@@ -489,7 +492,7 @@ def rollout_dashboard():
              "fieldConfig": {"defaults": TEXT, "overrides": [
                  {"matcher": {"id": "byName", "options": "same decision"},
                   "properties": [{"id": "unit", "value": "percentunit"}, {"id": "decimals", "value": 1}]}]},
-             "options": STAT}, 6, 41, 6, 8)
+             "options": STAT}, 6, 47, 6, 8)
     b.panel({"type": "table", "title": "Rollouts",
              "targets": [iq("A", RUN + "fidelity_event.json", f'$[{app} and metric="rollout"]',
                             [T, col("labels.rollout", "rollout", "string"), col("labels.exact", "exact", "string"),
@@ -499,13 +502,13 @@ def rollout_dashboard():
                  {"matcher": {"id": "byName", "options": "outcome"},
                   "properties": [{"id": "mappings", "value": [{"type": "value", "options": {
                       value: {"text": text, "index": i} for i, (value, text) in enumerate(OUTCOMES.items())}}]}]}]},
-             "options": {"showHeader": True}}, 12, 41, 7, 8)
+             "options": {"showHeader": True}}, 12, 47, 7, 8)
     b.panel({"type": "table", "title": "Fidelity events",
              "targets": [iq("A", RUN + "fidelity_event.json", f'$[{app} and metric!="rollout"]',
                             [T, col("metric", "event", "string"), col("value", "evaluations", "number")])],
              "transformations": order("time", "event", "evaluations"),
              "fieldConfig": {"defaults": {"custom": {"minWidth": 60}}, "overrides": []},
-             "options": {"showHeader": True}}, 19, 41, 5, 8)
+             "options": {"showHeader": True}}, 19, 47, 5, 8)
     return dashboard(uid, "Canary rollout", b,
                      [run_variable(use_cases), variable("rule", summary, '$[metric="rollouts"].labels', "signal")])
 
