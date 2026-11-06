@@ -442,7 +442,19 @@ def rollout_dashboard():
              "targets": [rows_of("A", "low_level", 'metric="rank_error"', "rank_error", by="query")],
              "fieldConfig": {"defaults": {**LINES, "unit": "percentunit", "displayName": "${__field.labels.query}"},
                              "overrides": []},
-             "options": LEGEND}, 0, 17, 24, 6)
+             "options": LEGEND}, 0, 17, 12, 6)
+    b.panel({"type": "timeseries", "title": "Query latency per evaluation: exact vs approx",
+             "description": "Plan compile time excluded. Trials of an arm share one exact run.",
+             "targets": [rows_of("A", "low_level", 'metric="query_latency" and labels.arm="exact"', "exact",
+                                 by="query"),
+                         rows_of("B", "low_level", 'metric="query_latency" and labels.arm="approx"', "approx",
+                                 by="query")],
+             "fieldConfig": {"defaults": {**LINES, "unit": "s",
+                                          "custom": {**LINES["custom"],
+                                                     "scaleDistribution": {"type": "log", "log": 10}},
+                                          "displayName": "${__field.labels.query} ${__field.name}"},
+                             "overrides": [by_ref("A", "blue", 2), by_ref("B", "orange")]},
+             "options": LEGEND}, 12, 17, 12, 6)
 
     b.row("Application: rollout controller, rule ${rule}", 23)
     ratio = 'labels.app="rollout_controller"'
@@ -629,26 +641,8 @@ def two_stages_dashboard():
                   "properties": [{"id": "custom.width", "value": 200}, {"id": "links", "value": [{
                       "title": "Open this run", "url": "/d/rollout/rollout?var-run=${__data.fields.run_id}"}]}]}]},
              "options": {"showHeader": True}}, 0, 1, 24, 14)
-    latency = (f'$[use_case="{use_case}" and $exists(details.stage1)].( $e := $; $e.details.stage1.( '
-               '{"query and run": query & "  " & $e.run_id, "approx plan": `mean query ms`, '
-               '"exact plan": `exact mean query ms`} ) )')
-    b.panel({"type": "barchart",
-             "title": "Mean query latency per evaluation, approx plan against exact plan",
-             "description": "Plan compile time excluded. Trials of an arm share one exact run.",
-             "targets": [iq("A", INDEX, latency, [col("query and run", "query and run", "string"),
-                                                  col("approx plan", "approx plan", "number"),
-                                                  col("exact plan", "exact plan", "number")])],
-             "transformations": [{"id": "sortBy", "options": {"sort": [{"field": "query and run"}]}}],
-             "fieldConfig": {"defaults": {"unit": "ms",
-                                          "custom": {"scaleDistribution": {"type": "log", "log": 10}}},
-                             "overrides": [
-                 {"matcher": {"id": "byName", "options": n},
-                  "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": c}}]}
-                 for n, c in (("approx plan", "blue"), ("exact plan", "orange"))]},
-             "options": {"orientation": "horizontal", "xField": "query and run", "groupWidth": 0.8,
-                         "barWidth": 0.9, "showValue": "never", **LEGEND}}, 0, 15, 24, 22)
 
-    b.row("Stage 2: approx query result to rollout decision, rule ${rule}", 37)
+    b.row("Stage 2: approx query result to rollout decision, rule ${rule}", 15)
     b.panel({"type": "xychart",
              "title": "${query}: each rollout's decision against the query's max error over its checks",
              "description": "Rank error for p99, relative error for success rate.",
@@ -670,7 +664,7 @@ def two_stages_dashboard():
                   "x": {"matcher": {"id": "byName", "options": "max error"}},
                   "y": {"matcher": {"id": "byName", "options": name}}}
                  for i, name in enumerate((SAME, FALSE_ROLLBACK, MISSED_ROLLBACK))], **LEGEND}},
-            0, 38, 12, 12)
+            0, 16, 12, 12)
     stage2 = f'$[use_case="{use_case}" and $exists(details.stage2)].details.stage2'
     rules = f'$map($distinct({stage2}.rule), function($v) {{ {{"rule": $v}} }})'
     queries = f'$map($distinct({stage2}[rule="${{rule}}"].$keys(`max error`)), function($v) {{ {{"query": $v}} }})'

@@ -407,136 +407,13 @@
       }
     },
     {
-      "type": "barchart",
-      "title": "Mean query latency per evaluation, approx plan against exact plan",
-      "description": "Plan compile time excluded. Trials of an arm share one exact run.",
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "yesoreyeram-infinity-datasource",
-            "uid": "approx-rows"
-          },
-          "type": "json",
-          "source": "url",
-          "parser": "backend",
-          "format": "table",
-          "url": "http://localhost:8000/runs/index.json",
-          "url_options": {
-            "method": "GET",
-            "data": ""
-          },
-          "root_selector": "( $r := $[use_case=\"canary_release\" and $exists(details.stage1)].( $e := $; $e.details.stage1.( {\"query and run\": query & \"  \" & $e.run_id, \"approx plan\": `mean query ms`, \"exact plan\": `exact mean query ms`} ) ); $exists($r) ? $r : [] )",
-          "columns": [
-            {
-              "selector": "query and run",
-              "text": "query and run",
-              "type": "string"
-            },
-            {
-              "selector": "approx plan",
-              "text": "approx plan",
-              "type": "number"
-            },
-            {
-              "selector": "exact plan",
-              "text": "exact plan",
-              "type": "number"
-            }
-          ]
-        }
-      ],
-      "transformations": [
-        {
-          "id": "sortBy",
-          "options": {
-            "sort": [
-              {
-                "field": "query and run"
-              }
-            ]
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ms",
-          "custom": {
-            "scaleDistribution": {
-              "type": "log",
-              "log": 10
-            }
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "approx plan"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "blue"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "exact plan"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "orange"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "orientation": "horizontal",
-        "xField": "query and run",
-        "groupWidth": 0.8,
-        "barWidth": 0.9,
-        "showValue": "never",
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
       "id": 3,
-      "gridPos": {
-        "x": 0,
-        "y": 15,
-        "w": 24,
-        "h": 22
-      },
-      "datasource": {
-        "type": "yesoreyeram-infinity-datasource",
-        "uid": "approx-rows"
-      }
-    },
-    {
-      "id": 4,
       "type": "row",
       "title": "Stage 2: approx query result to rollout decision, rule ${rule}",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 37,
+        "y": 15,
         "w": 24,
         "h": 1
       },
@@ -791,10 +668,10 @@
           "sort": "none"
         }
       },
-      "id": 5,
+      "id": 4,
       "gridPos": {
         "x": 0,
-        "y": 38,
+        "y": 16,
         "w": 12,
         "h": 12
       },
