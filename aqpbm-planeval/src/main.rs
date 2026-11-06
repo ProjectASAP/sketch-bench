@@ -134,6 +134,7 @@ async fn main() -> Result<()> {
                 "refresh_seconds": cost.refresh_seconds,
                 "samples_ingested": cost.samples_ingested,
                 "query_seconds": cost.query_seconds,
+                "compile_seconds": cost.compile_seconds,
                 "samples_read_at_query": cost.samples_read_at_query,
                 "state_bytes": cost.state_bytes,
             }));
