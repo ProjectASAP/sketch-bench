@@ -64,6 +64,17 @@ def dashed(ref, color):
                            {"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [10, 10]}}]}
 
 
+def exact_solid_approx_dashed(path, colors, metric=None):
+    targets, overrides = [], []
+    for query, color in colors.items():
+        for arm, style in (("exact", by_ref), ("approx", dashed)):
+            ref = f"{query} {arm}"
+            sel = f'labels.query="{query}" and labels.arm="{arm}"'
+            targets.append(rows_of(ref, path, f'metric="{metric}" and {sel}' if metric else sel, ref))
+            overrides.append(style(ref, color))
+    return targets, overrides
+
+
 def order(*names):
     return [{"id": "organize", "options": {"indexByName": {n: i for i, n in enumerate(names)},
                                            "excludeByName": {}, "renameByName": {}}}]
@@ -221,7 +232,7 @@ def variable(name, url, root, selector):
                       "infinityQuery": iq("variable", url, root, [col(selector, name, "string")])}}
 
 
-def dashboard(uid, title, board, variables, annotations=()):
+def dashboard(uid, title, board, variables, annotations=(), to="2026-01-01T01:00:00.000Z"):
     return {
         "uid": uid,
         "title": title,
@@ -229,7 +240,7 @@ def dashboard(uid, title, board, variables, annotations=()):
         "timezone": "utc",
         "editable": False,
         "schemaVersion": 41,
-        "time": {"from": "2026-01-01T00:00:00.000Z", "to": "2026-01-01T01:00:00.000Z"},
+        "time": {"from": "2026-01-01T00:00:00.000Z", "to": to},
         "templating": {"list": variables},
         "annotations": {"list": [
             {"name": "Annotations & Alerts", "builtIn": 1, "enable": True, "hide": True,
@@ -416,6 +427,9 @@ def decision_dashboard():
                       in_run("container_in_run", "container", "container")], annotations)
 
 
+QUERY_COLORS = {"p99_canary": "orange", "p99_stable": "blue", "success_rate_canary": "green"}
+
+
 def rollout_dashboard():
     uid = "rollout"
     use_cases = ["canary_release"]
@@ -427,36 +441,29 @@ def rollout_dashboard():
     plans_panel(b, 12, 1, 12, 7)
 
     b.row("Query result", 8)
-    for x, w, title, unit, grafana_unit in ((0, 16, "p99 latency of canary and stable", "s", "s"),
-                                            (16, 8, "Success rate of canary", "ratio", "percentunit")):
-        b.panel({"type": "timeseries", "title": f"{title}: exact vs approx",
-                 "targets": [rows_of("A", "query_result", f'unit="{unit}" and labels.arm="exact"', "exact",
-                                     by="query"),
-                             rows_of("B", "query_result", f'unit="{unit}" and labels.arm="approx"', "approx",
-                                     by="query")],
-                 "fieldConfig": {"defaults": {**LINES, "unit": grafana_unit,
-                                              "displayName": "${__field.labels.query} ${__field.name}"},
-                                 "overrides": [by_ref("A", "blue", 2), by_ref("B", "orange")]},
+    for x, w, title, queries, unit in ((0, 16, "p99 latency of canary and stable", ("p99_canary", "p99_stable"), "s"),
+                                       (16, 8, "Success rate of canary", ("success_rate_canary",), "percentunit")):
+        targets, overrides = exact_solid_approx_dashed("query_result", {q: QUERY_COLORS[q] for q in queries})
+        b.panel({"type": "timeseries", "title": f"{title}: exact vs approx", "targets": targets,
+                 "fieldConfig": {"defaults": {**LINES, "unit": unit, "displayName": "${__field.name}"},
+                                 "overrides": overrides},
                  "options": LEGEND}, x, 9, w, 8)
+    ranked = ("p99_canary", "p99_stable")
     b.panel({"type": "timeseries", "title": "Rank error of approx",
-             "targets": [rows_of("A", "low_level", 'metric="rank_error"', "rank_error", by="query")],
-             "fieldConfig": {"defaults": {**LINES, "unit": "percentunit", "displayName": "${__field.labels.query}"},
-                             "overrides": []},
+             "targets": [rows_of(q, "low_level", f'metric="rank_error" and labels.query="{q}"', q) for q in ranked],
+             "fieldConfig": {"defaults": {**LINES, "unit": "percentunit", "displayName": "${__field.name}"},
+                             "overrides": [by_ref(q, QUERY_COLORS[q]) for q in ranked]},
              "options": LEGEND}, 0, 17, 12, 6)
     for x, y, w, metric, title, unit, note in (
             (12, 17, 12, "query_latency", "Query latency per evaluation", "s", "Plan compile time excluded. "),
             (0, 23, 24, "query_memory", "Bytes per evaluation: sketch state plus raw samples read", "bytes", "")):
+        targets, overrides = exact_solid_approx_dashed("low_level", QUERY_COLORS, metric)
         b.panel({"type": "timeseries", "title": f"{title}: exact vs approx",
-                 "description": note + "Trials of an arm share one exact run.",
-                 "targets": [rows_of("A", "low_level", f'metric="{metric}" and labels.arm="exact"', "exact",
-                                     by="query"),
-                             rows_of("B", "low_level", f'metric="{metric}" and labels.arm="approx"', "approx",
-                                     by="query")],
-                 "fieldConfig": {"defaults": {**LINES, "unit": unit,
+                 "description": note + "Trials of an arm share one exact run.", "targets": targets,
+                 "fieldConfig": {"defaults": {**LINES, "unit": unit, "displayName": "${__field.name}",
                                               "custom": {**LINES["custom"],
-                                                         "scaleDistribution": {"type": "log", "log": 10}},
-                                              "displayName": "${__field.labels.query} ${__field.name}"},
-                                 "overrides": [by_ref("A", "blue", 2), by_ref("B", "orange")]},
+                                                         "scaleDistribution": {"type": "log", "log": 10}}},
+                                 "overrides": overrides},
                  "options": LEGEND}, x, y, w, 6)
 
     b.row("Application: rollout controller, rule ${rule}", 29)
@@ -510,7 +517,8 @@ def rollout_dashboard():
              "fieldConfig": {"defaults": {"custom": {"minWidth": 60}}, "overrides": []},
              "options": {"showHeader": True}}, 19, 47, 5, 8)
     return dashboard(uid, "Canary rollout", b,
-                     [run_variable(use_cases), variable("rule", summary, '$[metric="rollouts"].labels', "signal")])
+                     [run_variable(use_cases), variable("rule", summary, '$[metric="rollouts"].labels', "signal")],
+                     to="2026-01-01T04:10:00.000Z")
 
 
 def topk_dashboard():

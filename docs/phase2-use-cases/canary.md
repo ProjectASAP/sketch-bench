@@ -30,6 +30,8 @@ Sources: Flagger, Argo Rollouts, AWS CloudWatch, Keptn, Kayenta (Spinnaker), Net
 
 Checked by running each query through `planeval` on a small synthetic spec, exact and at error target 0.01 without raw data.
 
+The workload (`aqpbm-planeval/workloads/uc4_canary.json`) runs three queries: Q1 for canary (`p99_canary`) and for stable (`p99_stable`), with the ratio taken by the rule; and Q5 as a success rate, `sum(count_over_time(requests{version="canary", code="200"}[5m])) / sum(count_over_time(requests{version="canary"}[5m]))` (`success_rate_canary`), because the generator writes one sample per request, not a counter. Q2, Q3, Q4 and Q6 are not in the workload.
+
 ## 3. Data shape
 
 One wide table, one row per request. Real setups query several columns of the same requests at once (Flagger checks success rate and p99 latency together).
@@ -38,11 +40,11 @@ One wide table, one row per request. Real setups query several columns of the sa
 | --- | --- | --- | --- |
 | time | Timestamp | Stable: one request every 5 ms. Canary: one every 95 ms, so about 5% of requests. | Current workload; 5% canary population (Google SRE Workbook) |
 | version | `stable`, `canary` | Follows from the time column. | Current workload |
-| status_code | `200`, `500` | Canary in a bad release: 20% of requests return 500. Stable: no public number. | Google SRE Workbook |
-| latency | Seconds | Both versions: Pareto, alpha 3, scale 0.05 s. A slow canary is one of: <br>× 1.08 in minutes 30 to 60 and × 1.25 in minutes 70 to 110 (current workload, ours); <br>5% of requests take at least 2 s (Google SRE Workbook); <br>extra requests that take 1 s, on top of normal load ([Flagger tutorial](https://docs.flagger.app/tutorials/istio-progressive-delivery)). | As listed |
-| latency bucket counts | Counters per bucket bound `le` | Derived from latency: requests with latency ≤ each bound. Bounds not chosen yet. | Only for Q3 (Flagger template) |
+| status_code | `200`, `500` | Both versions: 0.1% of requests return 500 (no public number; ours). Canary in a bad release, minutes 120 to 150: 20% return 500. | Google SRE Workbook |
+| latency | Seconds | Both versions: Pareto, alpha 3, scale 0.05 s. A slow canary is one of: <br>× 1.08 in minutes 30 to 60 and × 1.25 in minutes 70 to 110, each ramping in over 10 minutes (current workload, ours); <br>minutes 160 to 190: 5% of requests take at least 2 s, Pareto alpha 3 scale 2 s (Google SRE Workbook); <br>minutes 200 to 230: 8.7% of requests take 1 s, standing in for extra 1 s requests on top of normal load ([Flagger tutorial](https://docs.flagger.app/tutorials/istio-progressive-delivery)). | As listed |
+| latency bucket counts | Counters per bucket bound `le` | Derived from latency: requests with latency ≤ each bound. Bounds not chosen yet. | Only for Q3 (Flagger template); not generated |
 
-The current workload has time, version and latency only; status_code and the bucket counts are new.
+The workload runs 250 minutes and has time, version, status_code and latency; the bucket counts are not generated.
 
 ## 4. Decision rules
 
@@ -52,7 +54,7 @@ On each query result:
 
 - Flagger: the check fails when canary success rate < 99% or canary p99 > 500 ms.
 - Argo Rollouts: the measurement fails when success rate < 0.95.
-- CloudWatch: the data point breaches when it is above the alarm threshold. The user sets the threshold; there is no default.
+- CloudWatch: the data point breaches when it is above the alarm threshold. The user sets the threshold; there is no default. We use Flagger's 500 ms.
 - Keptn: the objective passes when p95 is at most 10% above the average of the last 3 passing evaluations and below 600 ms.
 - Kayenta: a Mann-Whitney U test compares canary and baseline samples at 98% confidence. The metric is High or Low only when the confidence interval falls outside ±25% of the estimated shift and the effect size passes its threshold; otherwise it passes.
 - Netflix: a sequential test compares the canary and baseline distributions and flags a regression as soon as it rejects equality.
@@ -60,9 +62,9 @@ On each query result:
 
 Aggregation over multiple query results:
 
-- Flagger: roll back after 10 failed checks in total (`threshold: 10`); a passing check does not reset the count. Each passing check raises canary traffic by 2% (`stepWeight`); promote at 50% (`maxWeight`), so after at least 25 passing checks.
-- Argo Rollouts: measure every 5 minutes (`interval`), `count` times; fail, and roll back, when failures in total exceed 3 (`failureLimit`). Success needs `consecutiveSuccessLimit` passes in a row.
-- CloudWatch: alarm when 4 of the last 5 data points breach, consecutive or not; CodeDeploy then rolls back.
+- Flagger: roll back after 10 failed checks in total (`threshold: 10`); a passing check does not reset the count. Each passing check raises canary traffic by 2% (`stepWeight`); promote at 50% (`maxWeight`), so after at least 25 passing checks. A rollout therefore spans at most 34 checks, which does not line up with the 30-minute scenarios.
+- Argo Rollouts: measure every 5 minutes (`interval`), `count` times; fail, and roll back, when failures in total exceed 3 (`failureLimit`). Success needs `consecutiveSuccessLimit` passes in a row. We use `count: 10`.
+- CloudWatch: alarm when 4 of the last 5 data points breach, consecutive or not; CodeDeploy then rolls back. We cut checks into rollouts of 10.
 - Keptn: objectives are weighted into a total score; ≥ 90% passes, ≥ 75% warns, lower fails.
 - Kayenta: a group's score is the share of its metrics that pass; the final score is the weighted average of groups. At or above the pass threshold passes, at or above the marginal threshold is marginal, lower fails. A critical metric that is High or Low sets the score to 0.
 - Ours (current, no public source): checks are cut into blocks of 10; 3 slower checks in a row in a block rolls back, otherwise the block promotes.
@@ -74,23 +76,37 @@ Ours, not from a public source, to study how a rule can use the error bound:
 
 ## 5. End-to-end candidates
 
-| ID | Query | On each result | Aggregation | From |
-| --- | --- | --- | --- | --- |
-| E1 | p99 latency of canary and of stable over 5 minutes, every minute | Slower when canary p99 > 1.1 × stable p99 | Blocks of 10 checks; 3 slower in a row rolls back, otherwise promote | Current workload |
-| E2 | Canary p99 latency and canary success rate, every minute | Fails when p99 > 500 ms or success rate < 99% | Roll back at 10 failures in total; promote after 25 passes | Flagger |
-| E3 | Canary success rate over 5 minutes, every 5 minutes | Fails when success rate < 0.95 | Roll back when failures exceed 3 | Argo Rollouts |
-| E4 | Canary p99 latency, every minute | Breaches when p99 > a set threshold | Roll back when 4 of the last 5 breach | CloudWatch |
-| E5 | Canary p95 latency, once per evaluation | Fails when p95 is more than 10% above the average of the last 3 passing evaluations, or ≥ 600 ms | Score ≥ 90% passes, ≥ 75% warns | Keptn |
-| E6 | Latency samples of canary and of baseline | Mann-Whitney U test at 98% confidence | Score against the pass and marginal thresholds | Kayenta |
+| ID | Query | On each result | Aggregation | From | Rule in `scripts/rollout.py` |
+| --- | --- | --- | --- | --- | --- |
+| E1 | p99 latency of canary and of stable over 5 minutes, every minute | Slower when canary p99 > 1.1 × stable p99 | Blocks of 10 checks; 3 slower in a row rolls back, otherwise promote | Current workload | `ours` |
+| E2 | Canary p99 latency and canary success rate, every minute | Fails when p99 > 500 ms or success rate < 99% | Roll back at 10 failures in total; promote after 25 passes | Flagger | `flagger` |
+| E3 | Canary success rate over 5 minutes, every 5 minutes | Fails when success rate < 0.95 | Roll back when failures exceed 3 of 10 | Argo Rollouts | `argo_rollouts` |
+| E4 | Canary p99 latency, every minute | Breaches when p99 > 500 ms | Roll back when 4 of the last 5 breach | CloudWatch | `cloudwatch` |
+| E5 | Canary p95 latency, once per evaluation | Fails when p95 is more than 10% above the average of the last 3 passing evaluations, or ≥ 600 ms | Score ≥ 90% passes, ≥ 75% warns | Keptn | Not yet |
+| E6 | Latency samples of canary and of baseline | Mann-Whitney U test at 98% confidence | Score against the pass and marginal thresholds | Kayenta | Not yet |
 
 ## 6. Benchmark metrics
 
 | Group | Measure | Status |
 | --- | --- | --- |
-| Query accuracy | Rank error of each answer | Exists |
-| Decision | Agreement with the exact plan's decision; false and missed rollbacks; decision delay | Exists |
-| Decision | Agreement with the injected scenario | New |
-| Cost | Query latency, view refresh time, insert throughput, sketch state bytes | Exists |
-| Cost | Plan compile time, split out of query latency | New |
-| Cost | Raw sample bytes kept by the exact plan | New |
-| Cost | Planning time; process peak memory and CPU time | New |
+| Query accuracy | Rank error of each p99 answer; relative error of each success rate | Measured |
+| Decision | Agreement with the exact plan's decision; false and missed rollbacks; decision delay; per rule | Measured |
+| Decision | Agreement with the injected scenario | Not yet |
+| Cost | Query latency per evaluation, without plan compile time | Measured |
+| Cost | View refresh time and insert throughput; the sketch insertion is replayed in one batch per window, not streamed | Measured |
+| Cost | Bytes per evaluation: sketch state bytes plus raw sample bytes read at query (samples × 16 bytes) | Measured |
+| Cost | Plan compile time; planning time | Measured |
+| Cost | Process peak memory and CPU time | Not yet |
+
+Every exact and approximate plan comes from ASAPPlanner and runs in `planeval`; the exact plan's scan reads every series of the metric and filters by `version` afterwards, so raw bytes read count both versions.
+
+## 7. Reproduce
+
+```bash
+cargo build --release -p aqpbm-planeval
+python3 scripts/run_use_case.py 4 --trials 3
+python3 tools/grafana/generate_dashboards.py
+tools/grafana/run.sh
+```
+
+`run_use_case.py` runs the exact plan once, then every arm three times, and writes rows to `target/grafana-data`. Dashboards: `http://localhost:3000/d/rollout` (one run, one rule), `/d/two-stages` and `/d/overview`.
