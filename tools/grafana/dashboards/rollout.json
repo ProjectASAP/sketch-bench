@@ -9,7 +9,7 @@
   "schemaVersion": 41,
   "time": {
     "from": "2026-01-01T00:00:00.000Z",
-    "to": "2026-01-01T01:00:00.000Z"
+    "to": "2026-01-01T04:10:00.000Z"
   },
   "templating": {
     "list": [
@@ -46,6 +46,45 @@
               {
                 "selector": "run_id",
                 "text": "run_id",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "rule",
+        "label": "rule",
+        "type": "query",
+        "datasource": {
+          "type": "yesoreyeram-infinity-datasource",
+          "uid": "approx-rows"
+        },
+        "refresh": 1,
+        "query": {
+          "queryType": "infinity",
+          "query": "",
+          "refId": "variable",
+          "infinityQuery": {
+            "refId": "variable",
+            "datasource": {
+              "type": "yesoreyeram-infinity-datasource",
+              "uid": "approx-rows"
+            },
+            "type": "json",
+            "source": "url",
+            "parser": "backend",
+            "format": "table",
+            "url": "http://localhost:8000/runs/${run}/fidelity_summary.json",
+            "url_options": {
+              "method": "GET",
+              "data": ""
+            },
+            "root_selector": "( $r := $[metric=\"rollouts\"].labels; $exists($r) ? $r : [] )",
+            "columns": [
+              {
+                "selector": "signal",
+                "text": "rule",
                 "type": "string"
               }
             ]
@@ -325,7 +364,7 @@
       "title": "p99 latency of canary and stable: exact vs approx",
       "targets": [
         {
-          "refId": "A",
+          "refId": "p99_canary exact",
           "datasource": {
             "type": "yesoreyeram-infinity-datasource",
             "uid": "approx-rows"
@@ -333,13 +372,13 @@
           "type": "json",
           "source": "url",
           "parser": "backend",
-          "format": "timeseries",
+          "format": "table",
           "url": "http://localhost:8000/runs/${run}/query_result.json",
           "url_options": {
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.arm=\"exact\"].{\"time\": time, \"value\": value, \"query\": labels.query}; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.query=\"p99_canary\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "time",
@@ -348,18 +387,13 @@
             },
             {
               "selector": "value",
-              "text": "exact",
+              "text": "p99_canary exact",
               "type": "number"
-            },
-            {
-              "selector": "query",
-              "text": "query",
-              "type": "string"
             }
           ]
         },
         {
-          "refId": "B",
+          "refId": "p99_canary approx",
           "datasource": {
             "type": "yesoreyeram-infinity-datasource",
             "uid": "approx-rows"
@@ -367,13 +401,13 @@
           "type": "json",
           "source": "url",
           "parser": "backend",
-          "format": "timeseries",
+          "format": "table",
           "url": "http://localhost:8000/runs/${run}/query_result.json",
           "url_options": {
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.arm=\"approx\"].{\"time\": time, \"value\": value, \"query\": labels.query}; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.query=\"p99_canary\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "time",
@@ -382,13 +416,66 @@
             },
             {
               "selector": "value",
-              "text": "approx",
+              "text": "p99_canary approx",
               "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p99_stable exact",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/query_result.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.query=\"p99_stable\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
             },
             {
-              "selector": "query",
-              "text": "query",
-              "type": "string"
+              "selector": "value",
+              "text": "p99_stable exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p99_stable approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/query_result.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.query=\"p99_stable\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p99_stable approx",
+              "type": "number"
             }
           ]
         }
@@ -400,13 +487,57 @@
             "showPoints": "never"
           },
           "unit": "s",
-          "displayName": "${__field.labels.query} ${__field.name}"
+          "displayName": "${__field.name}"
         },
         "overrides": [
           {
             "matcher": {
               "id": "byFrameRefID",
-              "options": "A"
+              "options": "p99_canary exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p99_canary approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p99_stable exact"
             },
             "properties": [
               {
@@ -418,14 +549,279 @@
               },
               {
                 "id": "custom.lineWidth",
-                "value": 2
+                "value": 1
               }
             ]
           },
           {
             "matcher": {
               "id": "byFrameRefID",
-              "options": "B"
+              "options": "p99_stable approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "id": 5,
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 16,
+        "h": 8
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Success rate of canary: exact vs approx",
+      "targets": [
+        {
+          "refId": "success_rate_canary exact",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/query_result.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.query=\"success_rate_canary\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "success_rate_canary exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "success_rate_canary approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/query_result.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.query=\"success_rate_canary\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "success_rate_canary approx",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "unit": "percentunit",
+          "displayName": "${__field.name}"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "success_rate_canary exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "success_rate_canary approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "id": 6,
+      "gridPos": {
+        "x": 16,
+        "y": 9,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Rank error of approx",
+      "targets": [
+        {
+          "refId": "p99_canary",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"rank_error\" and labels.query=\"p99_canary\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p99_canary",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p99_stable",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"rank_error\" and labels.query=\"p99_stable\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p99_stable",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "unit": "percentunit",
+          "displayName": "${__field.name}"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p99_canary"
             },
             "properties": [
               {
@@ -433,6 +829,25 @@
                 "value": {
                   "mode": "fixed",
                   "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p99_stable"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
                 }
               },
               {
@@ -454,12 +869,12 @@
           "sort": "none"
         }
       },
-      "id": 5,
+      "id": 7,
       "gridPos": {
         "x": 0,
-        "y": 9,
-        "w": 24,
-        "h": 8
+        "y": 17,
+        "w": 12,
+        "h": 6
       },
       "datasource": {
         "type": "yesoreyeram-infinity-datasource",
@@ -468,10 +883,11 @@
     },
     {
       "type": "timeseries",
-      "title": "Relative error of approx",
+      "title": "Query latency per evaluation: exact vs approx",
+      "description": "Plan compile time excluded. Trials of an arm share one exact run.",
       "targets": [
         {
-          "refId": "A",
+          "refId": "p99_canary exact",
           "datasource": {
             "type": "yesoreyeram-infinity-datasource",
             "uid": "approx-rows"
@@ -479,13 +895,13 @@
           "type": "json",
           "source": "url",
           "parser": "backend",
-          "format": "timeseries",
+          "format": "table",
           "url": "http://localhost:8000/runs/${run}/low_level.json",
           "url_options": {
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[metric=\"relative_error\"].{\"time\": time, \"value\": value, \"query\": labels.query}; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[metric=\"query_latency\" and labels.query=\"p99_canary\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "time",
@@ -494,13 +910,153 @@
             },
             {
               "selector": "value",
-              "text": "relative_error",
+              "text": "p99_canary exact",
               "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p99_canary approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_latency\" and labels.query=\"p99_canary\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
             },
             {
-              "selector": "query",
-              "text": "query",
-              "type": "string"
+              "selector": "value",
+              "text": "p99_canary approx",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p99_stable exact",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_latency\" and labels.query=\"p99_stable\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p99_stable exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p99_stable approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_latency\" and labels.query=\"p99_stable\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p99_stable approx",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "success_rate_canary exact",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_latency\" and labels.query=\"success_rate_canary\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "success_rate_canary exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "success_rate_canary approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_latency\" and labels.query=\"success_rate_canary\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "success_rate_canary approx",
+              "type": "number"
             }
           ]
         }
@@ -509,12 +1065,149 @@
         "defaults": {
           "custom": {
             "lineWidth": 1,
-            "showPoints": "never"
+            "showPoints": "never",
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
+            }
           },
-          "unit": "percentunit",
-          "displayName": "${__field.labels.query}"
+          "unit": "s",
+          "displayName": "${__field.name}"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p99_canary exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p99_canary approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p99_stable exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p99_stable approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "success_rate_canary exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "success_rate_canary approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -527,10 +1220,361 @@
           "sort": "none"
         }
       },
-      "id": 6,
+      "id": 8,
+      "gridPos": {
+        "x": 12,
+        "y": 17,
+        "w": 12,
+        "h": 6
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Bytes per evaluation: sketch state plus raw samples read: exact vs approx",
+      "description": "Trials of an arm share one exact run.",
+      "targets": [
+        {
+          "refId": "p99_canary exact",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_memory\" and labels.query=\"p99_canary\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p99_canary exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p99_canary approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_memory\" and labels.query=\"p99_canary\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p99_canary approx",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p99_stable exact",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_memory\" and labels.query=\"p99_stable\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p99_stable exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p99_stable approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_memory\" and labels.query=\"p99_stable\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p99_stable approx",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "success_rate_canary exact",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_memory\" and labels.query=\"success_rate_canary\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "success_rate_canary exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "success_rate_canary approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_memory\" and labels.query=\"success_rate_canary\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "success_rate_canary approx",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "showPoints": "never",
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
+            }
+          },
+          "unit": "bytes",
+          "displayName": "${__field.name}"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p99_canary exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p99_canary approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p99_stable exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p99_stable approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "success_rate_canary exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "success_rate_canary approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "id": 9,
       "gridPos": {
         "x": 0,
-        "y": 17,
+        "y": 23,
         "w": 24,
         "h": 6
       },
@@ -540,13 +1584,13 @@
       }
     },
     {
-      "id": 7,
+      "id": 10,
       "type": "row",
-      "title": "Application: rollout controller",
+      "title": "Application: rollout controller, rule ${rule}",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 23,
+        "y": 29,
         "w": 24,
         "h": 1
       },
@@ -554,7 +1598,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Canary p99 over stable p99",
+      "title": "Canary p99 over stable p99 (rule ours compares it with the tolerance)",
       "targets": [
         {
           "refId": "A",
@@ -764,10 +1808,10 @@
           "sort": "none"
         }
       },
-      "id": 8,
+      "id": 11,
       "gridPos": {
         "x": 0,
-        "y": 24,
+        "y": 30,
         "w": 24,
         "h": 7
       },
@@ -778,7 +1822,7 @@
     },
     {
       "type": "state-timeline",
-      "title": "Slower check and rollout decision per evaluation, with what differs",
+      "title": "Check result and rollout decision per check, with what differs",
       "targets": [
         {
           "refId": "A",
@@ -795,7 +1839,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and metric=\"slower\" and labels.arm=\"exact\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
+          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and labels.signal=\"${rule}\" and metric=\"check\" and labels.arm=\"exact\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
           "columns": [
             {
               "selector": "time",
@@ -804,7 +1848,7 @@
             },
             {
               "selector": "value",
-              "text": "exact slower",
+              "text": "exact check",
               "type": "string"
             }
           ]
@@ -824,7 +1868,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and metric=\"slower\" and labels.arm=\"approx\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
+          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and labels.signal=\"${rule}\" and metric=\"check\" and labels.arm=\"approx\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
           "columns": [
             {
               "selector": "time",
@@ -833,7 +1877,7 @@
             },
             {
               "selector": "value",
-              "text": "approx slower",
+              "text": "approx check",
               "type": "string"
             }
           ]
@@ -853,7 +1897,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and metric=\"action\" and labels.arm=\"exact\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
+          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and labels.signal=\"${rule}\" and metric=\"action\" and labels.arm=\"exact\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
           "columns": [
             {
               "selector": "time",
@@ -882,7 +1926,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and metric=\"action\" and labels.arm=\"approx\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
+          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and labels.signal=\"${rule}\" and metric=\"action\" and labels.arm=\"approx\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
           "columns": [
             {
               "selector": "time",
@@ -911,7 +1955,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and metric=\"annotation\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
+          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and labels.signal=\"${rule}\" and metric=\"annotation\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
           "columns": [
             {
               "selector": "time",
@@ -973,12 +2017,12 @@
                   "color": "#A0703C",
                   "index": 7
                 },
-                "slower": {
+                "failed": {
                   "color": "red",
-                  "text": "slower",
+                  "text": "failed",
                   "index": 8
                 },
-                "not slower": {
+                "passed": {
                   "color": "transparent",
                   "text": " ",
                   "index": 9
@@ -1011,24 +2055,24 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "exact slower"
+              "options": "exact check"
             },
             "properties": [
               {
                 "id": "displayName",
-                "value": "exact slower"
+                "value": "exact check"
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "approx slower"
+              "options": "approx check"
             },
             "properties": [
               {
                 "id": "displayName",
-                "value": "approx slower"
+                "value": "approx check"
               }
             ]
           },
@@ -1083,10 +2127,10 @@
           "sort": "none"
         }
       },
-      "id": 9,
+      "id": 12,
       "gridPos": {
         "x": 0,
-        "y": 31,
+        "y": 37,
         "w": 24,
         "h": 9
       },
@@ -1096,13 +2140,13 @@
       }
     },
     {
-      "id": 10,
+      "id": 13,
       "type": "row",
       "title": "Fidelity over rollouts",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 40,
+        "y": 46,
         "w": 24,
         "h": 1
       },
@@ -1127,7 +2171,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := ( $m := $[labels.app=\"rollout_controller\"]; $exists($m) ? ( $s := $m{metric: value}; $s ) : [] ); $exists($r) ? $r : [] )",
+          "root_selector": "( $r := ( $m := $[labels.app=\"rollout_controller\" and labels.signal=\"${rule}\"]; $exists($m) ? ( $s := $m{metric: value}; $s ) : [] ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "true_positive",
@@ -1190,10 +2234,10 @@
         "orientation": "horizontal",
         "justifyMode": "auto"
       },
-      "id": 11,
+      "id": 14,
       "gridPos": {
         "x": 0,
-        "y": 41,
+        "y": 47,
         "w": 6,
         "h": 8
       },
@@ -1221,7 +2265,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := ( $m := $[labels.app=\"rollout_controller\"]; $exists($m) ? ( $s := $m{metric: value}; $s ) : [] ); $exists($r) ? $r : [] )",
+          "root_selector": "( $r := ( $m := $[labels.app=\"rollout_controller\" and labels.signal=\"${rule}\"]; $exists($m) ? ( $s := $m{metric: value}; $s ) : [] ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "rollouts",
@@ -1250,7 +2294,7 @@
             },
             {
               "selector": "gaps",
-              "text": "gaps in slower",
+              "text": "gaps in failed checks",
               "type": "number"
             }
           ]
@@ -1266,7 +2310,7 @@
               "mean absolute rollback delay (evaluations)": 2,
               "early rollbacks": 3,
               "late rollbacks": 4,
-              "gaps in slower": 5
+              "gaps in failed checks": 5
             },
             "excludeByName": {},
             "renameByName": {}
@@ -1313,10 +2357,10 @@
         "orientation": "horizontal",
         "justifyMode": "auto"
       },
-      "id": 12,
+      "id": 15,
       "gridPos": {
         "x": 6,
-        "y": 41,
+        "y": 47,
         "w": 6,
         "h": 8
       },
@@ -1344,7 +2388,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and metric=\"rollout\"]; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and labels.signal=\"${rule}\" and metric=\"rollout\"]; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "time",
@@ -1436,10 +2480,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 13,
+      "id": 16,
       "gridPos": {
         "x": 12,
-        "y": 41,
+        "y": 47,
         "w": 7,
         "h": 8
       },
@@ -1467,7 +2511,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and metric!=\"rollout\"]; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and labels.signal=\"${rule}\" and metric!=\"rollout\"]; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "time",
@@ -1512,10 +2556,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 14,
+      "id": 17,
       "gridPos": {
         "x": 19,
-        "y": 41,
+        "y": 47,
         "w": 5,
         "h": 8
       },

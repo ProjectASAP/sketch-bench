@@ -1,0 +1,684 @@
+{
+  "uid": "two-stages",
+  "title": "Canary release in two stages",
+  "tags": [
+    "approx-rows"
+  ],
+  "timezone": "utc",
+  "editable": false,
+  "schemaVersion": 41,
+  "time": {
+    "from": "2026-01-01T00:00:00.000Z",
+    "to": "2026-01-01T01:00:00.000Z"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "rule",
+        "label": "rule",
+        "type": "query",
+        "datasource": {
+          "type": "yesoreyeram-infinity-datasource",
+          "uid": "approx-rows"
+        },
+        "refresh": 1,
+        "query": {
+          "queryType": "infinity",
+          "query": "",
+          "refId": "variable",
+          "infinityQuery": {
+            "refId": "variable",
+            "datasource": {
+              "type": "yesoreyeram-infinity-datasource",
+              "uid": "approx-rows"
+            },
+            "type": "json",
+            "source": "url",
+            "parser": "backend",
+            "format": "table",
+            "url": "http://localhost:8000/runs/index.json",
+            "url_options": {
+              "method": "GET",
+              "data": ""
+            },
+            "root_selector": "( $r := $map($distinct($[use_case=\"canary_release\" and $exists(details.stage2)].details.stage2.rule), function($v) { {\"rule\": $v} }); $exists($r) ? $r : [] )",
+            "columns": [
+              {
+                "selector": "rule",
+                "text": "rule",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "query",
+        "label": "query",
+        "type": "query",
+        "datasource": {
+          "type": "yesoreyeram-infinity-datasource",
+          "uid": "approx-rows"
+        },
+        "refresh": 1,
+        "query": {
+          "queryType": "infinity",
+          "query": "",
+          "refId": "variable",
+          "infinityQuery": {
+            "refId": "variable",
+            "datasource": {
+              "type": "yesoreyeram-infinity-datasource",
+              "uid": "approx-rows"
+            },
+            "type": "json",
+            "source": "url",
+            "parser": "backend",
+            "format": "table",
+            "url": "http://localhost:8000/runs/index.json",
+            "url_options": {
+              "method": "GET",
+              "data": ""
+            },
+            "root_selector": "( $r := $map($distinct($[use_case=\"canary_release\" and $exists(details.stage2)].details.stage2[rule=\"${rule}\"].$keys(`max error`)), function($v) { {\"query\": $v} }); $exists($r) ? $r : [] )",
+            "columns": [
+              {
+                "selector": "query",
+                "text": "query",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "Annotations & Alerts",
+        "builtIn": 1,
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "type": "dashboard"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Stage 1: sketch configuration to approx query result",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "Per run and query: measured error against the target, and the cost (failure probability: the share of evaluations allowed over the target)",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/index.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[use_case=\"canary_release\" and $exists(details.stage1)].( $e := $; $e.details.stage1.( $merge([$, {\"run_id\": $e.run_id, \"trial\": $e.details.trial}]) ) ); $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "run_id",
+              "text": "run_id",
+              "type": "string"
+            },
+            {
+              "selector": "query",
+              "text": "query",
+              "type": "string"
+            },
+            {
+              "selector": "error metric",
+              "text": "error metric",
+              "type": "string"
+            },
+            {
+              "selector": "trial",
+              "text": "trial",
+              "type": "number"
+            },
+            {
+              "selector": "target",
+              "text": "target",
+              "type": "number"
+            },
+            {
+              "selector": "failure probability",
+              "text": "failure probability",
+              "type": "number"
+            },
+            {
+              "selector": "max error",
+              "text": "max error",
+              "type": "number"
+            },
+            {
+              "selector": "mean error",
+              "text": "mean error",
+              "type": "number"
+            },
+            {
+              "selector": "evaluations over target",
+              "text": "evaluations over target",
+              "type": "number"
+            },
+            {
+              "selector": "evaluations",
+              "text": "evaluations",
+              "type": "number"
+            },
+            {
+              "selector": "mean query ms",
+              "text": "mean query ms",
+              "type": "number"
+            },
+            {
+              "selector": "mean compile ms",
+              "text": "mean compile ms",
+              "type": "number"
+            },
+            {
+              "selector": "planning ms",
+              "text": "planning ms",
+              "type": "number"
+            },
+            {
+              "selector": "insert samples per second",
+              "text": "insert samples per second",
+              "type": "number"
+            },
+            {
+              "selector": "peak state bytes",
+              "text": "peak state bytes",
+              "type": "number"
+            },
+            {
+              "selector": "peak raw sample bytes read at query",
+              "text": "peak raw sample bytes read at query",
+              "type": "number"
+            },
+            {
+              "selector": "exact mean query ms",
+              "text": "exact mean query ms",
+              "type": "number"
+            },
+            {
+              "selector": "exact mean compile ms",
+              "text": "exact mean compile ms",
+              "type": "number"
+            },
+            {
+              "selector": "exact planning ms",
+              "text": "exact planning ms",
+              "type": "number"
+            },
+            {
+              "selector": "exact mean samples read at query",
+              "text": "exact mean samples read at query",
+              "type": "number"
+            },
+            {
+              "selector": "exact peak raw sample bytes read at query",
+              "text": "exact peak raw sample bytes read at query",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "run_id": 0,
+              "trial": 1,
+              "query": 2,
+              "error metric": 3,
+              "target": 4,
+              "failure probability": 5,
+              "max error": 6,
+              "mean error": 7,
+              "evaluations over target": 8,
+              "evaluations": 9,
+              "mean query ms": 10,
+              "mean compile ms": 11,
+              "planning ms": 12,
+              "insert samples per second": 13,
+              "peak state bytes": 14,
+              "peak raw sample bytes read at query": 15,
+              "exact mean query ms": 16,
+              "exact mean compile ms": 17,
+              "exact planning ms": 18,
+              "exact mean samples read at query": 19,
+              "exact peak raw sample bytes read at query": 20
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "run_id"
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "minWidth": 60,
+            "wrapHeaderText": true,
+            "cellOptions": {
+              "type": "auto",
+              "wrapText": true
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^(target|max error|mean error)$"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": " ms$"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 3
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "per second|samples read"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "run_id"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 200
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open this run",
+                    "url": "/d/rollout/rollout?var-run=${__data.fields.run_id}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true
+      },
+      "id": 2,
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 24,
+        "h": 14
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "id": 3,
+      "type": "row",
+      "title": "Stage 2: approx query result to rollout decision, rule ${rule}",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "xychart",
+      "title": "${query}: each rollout's decision against the query's max error over its checks",
+      "description": "Rank error for p99, relative error for success rate.",
+      "repeat": "query",
+      "repeatDirection": "h",
+      "maxPerRow": 2,
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/index.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[use_case=\"canary_release\" and $exists(details.stage2)].details.stage2[rule=\"${rule}\" and outcome in [\"true_positive\", \"true_negative\"]].{\"max error\": $lookup(`max error`, \"${query}\"), \"same decision\": 1}; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "max error",
+              "text": "max error",
+              "type": "number"
+            },
+            {
+              "selector": "same decision",
+              "text": "same decision",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/index.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[use_case=\"canary_release\" and $exists(details.stage2)].details.stage2[rule=\"${rule}\" and outcome in [\"false_positive\"]].{\"max error\": $lookup(`max error`, \"${query}\"), \"false rollback\": 0}; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "max error",
+              "text": "max error",
+              "type": "number"
+            },
+            {
+              "selector": "false rollback",
+              "text": "false rollback",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/index.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[use_case=\"canary_release\" and $exists(details.stage2)].details.stage2[rule=\"${rule}\" and outcome in [\"false_negative\"]].{\"max error\": $lookup(`max error`, \"${query}\"), \"missed rollback\": 0}; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "max error",
+              "text": "max error",
+              "type": "number"
+            },
+            {
+              "selector": "missed rollback",
+              "text": "missed rollback",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "show": "points",
+            "pointSize": {
+              "fixed": 7
+            }
+          },
+          "min": -0.2,
+          "max": 1.2
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max error"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": null
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "same decision"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "false rollback"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "missed rollback"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "mapping": "manual",
+        "series": [
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "max error"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "same decision"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 1
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "max error"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "false rollback"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 2
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "max error"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "missed rollback"
+              }
+            }
+          }
+        ],
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "id": 4,
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 12
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    }
+  ]
+}

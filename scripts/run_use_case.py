@@ -14,6 +14,7 @@ import topk_set
 from approx_rows import row, write_run
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SAMPLE_BYTES = 16
 
 
 def arm_flags(arm):
@@ -35,7 +36,7 @@ def uc1_derive(rows, queries):
 
 
 def uc4_derive(rows, queries):
-    return rollout.derive(rows, "canary_slower", "p99_canary", "p99_stable", 1.1)
+    return rollout.derive(rows)
 
 
 def uc2_derive(rows, queries):
@@ -45,6 +46,13 @@ def uc2_derive(rows, queries):
 
 def uc5_derive(rows, queries):
     return topk_set.derive(rows, "top_clients", "top10_clients", "client_id")
+
+
+def uc4_stage2(derived, errors):
+    ranked = {r["labels"]["query"] for r in errors}
+    relative = [r for r in derived if r["kind"] == "low_level" and r["metric"] == "relative_error"
+                and r["labels"]["query"] not in ranked]
+    return rollout_errors(derived, errors + relative, rollout.RULES)
 
 
 USE_CASES = {
@@ -70,11 +78,13 @@ USE_CASES = {
     "4": {
         "spec": "uc4_canary.json",
         "arms": ["raw-eps0.01", "noraw-eps0.05", "noraw-eps0.01", "noraw-eps0.005", "noraw-eps0.001"],
-        "signal": lambda query: "canary_slower",
+        "signal": lambda query: "rollout",
+        "signals": lambda query: [name for name, rule in rollout.RULES.items() if query in rule["queries"]],
         "derive": uc4_derive,
         "dashboard": "rollout",
         "needs_every_query": True,
         "split": {},
+        "stage2": uc4_stage2,
     },
     "5": {
         "spec": "uc5_top_clients.json",
@@ -145,6 +155,95 @@ def query_rows(run_id, use_case, signal, exact_query, approx_query):
     return sorted(rows, key=lambda r: r["time"])
 
 
+def unnamed(series):
+    return {k: v for k, v in series.items() if k != "__name__"}
+
+
+def rank_gap(exact, approx):
+    return max(0.0, approx[0] - exact[1], exact[0] - approx[1])
+
+
+def rank_errors(run_id, use_case, signal, exact_query, approx_query):
+    exact = {(a["time"], json.dumps(unnamed(a["series"]), sort_keys=True)): a for a in exact_query["answers"]}
+    labels = {"use_case": use_case, "signal": signal, "query": exact_query["id"]}
+    rows = []
+    for a in approx_query["answers"]:
+        if "rank" not in a:
+            continue
+        series = unnamed(a["series"])
+        e = exact[(a["time"], json.dumps(series, sort_keys=True))]
+        rows.append(row(a["time"], "low_level", run_id, {**labels, **series}, "rank_error",
+                        rank_gap(e["rank"], a["rank"]), "rank"))
+    return rows
+
+
+def query_costs(run_id, use_case, signal, exact_query, approx_query):
+    labels = {"use_case": use_case, "signal": signal, "query": exact_query["id"]}
+    rows = []
+    for arm, query in (("exact", exact_query), ("approx", approx_query)):
+        for c in query.get("costs", []):
+            rows.append(row(c["time"], "low_level", run_id, {**labels, "arm": arm}, "query_latency",
+                            c["query_seconds"], "s"))
+            rows.append(row(c["time"], "low_level", run_id, {**labels, "arm": arm}, "query_memory",
+                            c["state_bytes"] + c["samples_read_at_query"] * SAMPLE_BYTES, "bytes"))
+    return rows
+
+
+def mean(values):
+    return sum(values) / len(values) if values else None
+
+
+def costs_of(query):
+    costs = query.get("costs", [])
+    refresh = sum(c["refresh_seconds"] for c in costs)
+    return {
+        "mean query ms": mean([c["query_seconds"] * 1e3 for c in costs]),
+        "mean compile ms": mean([c["compile_seconds"] * 1e3 for c in costs]),
+        "planning ms": query.get("plan", {}).get("planning_ms"),
+        "insert samples per second": sum(c["samples_ingested"] for c in costs) / refresh if refresh else None,
+        "peak state bytes": max((c["state_bytes"] for c in costs), default=None),
+        "mean samples read at query": mean([c["samples_read_at_query"] for c in costs]),
+        "peak raw sample bytes read at query": max((c["samples_read_at_query"] * SAMPLE_BYTES for c in costs),
+                                                   default=None),
+    }
+
+
+def stage1(arm, exact_query, approx_query, derived):
+    query = exact_query["id"]
+    ranked = any("rank" in a for a in approx_query["answers"])
+    metric = "rank_error" if ranked else "relative_error"
+    errors = [r["value"] for r in derived
+              if r["kind"] == "low_level" and r["metric"] == metric and r["labels"]["query"] == query]
+    target = arm["max_error"]
+    out = {"query": query, "error metric": metric, "target": target,
+           "failure probability": arm["failure_probability"],
+           "max error": max(errors, default=None), "mean error": mean(errors), "evaluations": len(errors),
+           "evaluations over target": None if target is None else sum(e > target for e in errors)}
+    out.update(costs_of(approx_query))
+    out.update({f"exact {k}": v for k, v in costs_of(exact_query).items()})
+    return out
+
+
+def rollout_errors(derived, errors, rules):
+    by_query = {}
+    for r in errors:
+        by_query.setdefault(r["labels"]["query"], {})[r["time"]] = r["value"]
+    out = []
+    for name, rule in rules.items():
+        times = sorted({r["time"] for r in derived
+                        if r["kind"] == "app_state" and r["labels"].get("signal") == name})
+        for r in derived:
+            if r["kind"] != "fidelity_event" or r["metric"] != "rollout" or r["labels"].get("signal") != name:
+                continue
+            first = times.index(r["time"])
+            span = times[first:first + rule["checks"]]
+            out.append({"rule": name, "rollout": int(r["labels"]["rollout"]), "outcome": r["value"],
+                        "exact": r["labels"]["exact"], "approx": r["labels"]["approx"],
+                        "max error": {q: max(e[t] for t in span if t in e) for q, e in sorted(by_query.items())
+                                      if q in rule["queries"]}})
+    return sorted(out, key=lambda x: (x["rule"], x["rollout"]))
+
+
 def delay_text(s, metric, name):
     return f"; {name} {s[metric]:.2f}" if metric in s else ""
 
@@ -178,7 +277,7 @@ def headline(app, s):
         return (s["agreement"],
                 f"{s['true_positive'] + s['true_negative']} of {counted(s['rollouts'], 'rollout')} decided the same; "
                 f"{counted(s['false_positive'], 'false rollback')}, "
-                f"{counted(s['false_negative'], 'missed rollback')}; {counted(s['gaps'], 'gap')} in slower"
+                f"{counted(s['false_negative'], 'missed rollback')}; {counted(s['gaps'], 'gap')} in failed checks"
                 + signed_delay_text(s, "mean_absolute_rollback_delay", "mean absolute rollback delay",
                                     "early_rollbacks", "late_rollbacks"))
     if app == topk_set.APP:
@@ -217,16 +316,18 @@ def max_relative_errors(derived):
     return out
 
 
-def write_arm(data, case, prefix, arm, exact, approx):
-    run_id = f"{prefix}-{arm}"
+def write_arm(data, case, prefix, arm, exact, approx, trial=1):
+    run_id = f"{prefix}-{arm}" if trial == 1 else f"{prefix}-{arm}-trial{trial}"
     use_case = exact["use_case"]
     exact_by_id = {q["id"]: q for q in exact["queries"]}
-    rows, planned, plans, unsupported = [], [], {}, {}
+    rows, errors, costs, planned, plans, unsupported = [], [], [], [], {}, {}
     for q in approx["queries"]:
         if "unsupported" in q:
             unsupported[q["id"]] = short_reason(q["unsupported"])
             continue
         rows += query_rows(run_id, use_case, case["signal"](q["id"]), exact_by_id[q["id"]], q)
+        errors += rank_errors(run_id, use_case, case["signal"](q["id"]), exact_by_id[q["id"]], q)
+        costs += query_costs(run_id, use_case, case["signal"](q["id"]), exact_by_id[q["id"]], q)
         planned.append(q)
         plans[q["id"]] = describe_plan(q["plan"])
     if not rows or unsupported and case["needs_every_query"]:
@@ -234,19 +335,23 @@ def write_arm(data, case, prefix, arm, exact, approx):
         return
     details = {
         "arm": approx["arm"],
+        "trial": trial,
         "plans": plans,
         "unsupported": unsupported,
         "exact_plans": {q["id"]: describe_plan(q["plan"]) for q in exact["queries"] if "plan" in q},
         "promql": {q["id"]: q["promql"] for q in exact["queries"]},
         "planner_rev": approx["planner_rev"],
         "dashboard": case["dashboard"],
-        "signals": {q["id"]: case["signal"](q["id"]) for q in exact["queries"]},
+        "signals": {q["id"]: case.get("signals", case["signal"])(q["id"]) for q in exact["queries"]},
     }
-    derived = case["derive"](rows, planned)
+    derived = case["derive"](rows, planned) + errors
     details["max_relative_error"] = max_relative_errors(derived)
     details["sketch_bounds"] = [r for q in planned for r in sketch_bounds(q)]
     details["fidelity"] = headlines(derived)
-    write_run(data, run_id, use_case, rows + derived, details, case["split"])
+    details["stage1"] = [stage1(approx["arm"], exact_by_id[q["id"]], q, derived) for q in planned]
+    if "stage2" in case:
+        details["stage2"] = case["stage2"](derived, errors)
+    write_run(data, run_id, use_case, rows + derived + costs, details, case["split"])
     print(f"{run_id}: {len(plans)} queries, {len(unsupported)} unsupported", file=sys.stderr)
 
 
@@ -259,6 +364,8 @@ def main(argv=None):
     parser.add_argument("--data", default=os.path.join(REPO, "target", "grafana-data"))
     parser.add_argument("--raw-out", default=os.path.join(REPO, "target", "planeval"))
     parser.add_argument("--arm", action="append", help="repeatable; default every arm of the use case")
+    parser.add_argument("--trials", type=int, default=1,
+                        help="runs of each approximate arm, each with fresh sketch seeds")
     args = parser.parse_args(argv)
     case = USE_CASES[args.use_case]
     prefix = f"uc{args.use_case}"
@@ -272,8 +379,11 @@ def main(argv=None):
         if "unsupported" in q:
             sys.exit(f"the exact plan of {q['id']} is unsupported: {q['unsupported']}")
     for arm in args.arm or case["arms"]:
-        approx = run_binary(args.binary, spec, os.path.join(args.raw_out, f"{prefix}-{arm}.json"), arm_flags(arm))
-        write_arm(args.data, case, prefix, arm, exact, approx)
+        for trial in range(1, args.trials + 1):
+            name = arm if trial == 1 else f"{arm}-trial{trial}"
+            approx = run_binary(args.binary, spec, os.path.join(args.raw_out, f"{prefix}-{name}.json"),
+                                arm_flags(arm))
+            write_arm(args.data, case, prefix, arm, exact, approx, trial)
 
 if __name__ == "__main__":
     main()

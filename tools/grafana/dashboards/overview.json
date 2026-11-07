@@ -50,7 +50,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[$exists(details.fidelity)].( $e := $; $append($keys($e.details.plans), $keys($e.details.unsupported)).( $q := $; $s := $lookup($e.details.signals, $q); $f := $lookup($e.details.fidelity, $s); {\"run_id\": $e.run_id, \"use_case\": $e.use_case, \"start\": $e.start, \"end\": $e.end, \"query\": $q, \"approx plan\": $lookup($e.details.plans, $q), \"why no approx plan\": $lookup($e.details.unsupported, $q), \"max relative error\": $lookup($e.details.max_relative_error, $q), \"signal\": $s, \"agreement\": $f.agreement, \"fidelity\": $f.fidelity, \"dashboard\": $e.details.dashboard} ) ); $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[$exists(details.fidelity)].( $e := $; $append($keys($e.details.plans), $keys($e.details.unsupported)).( $q := $; $lookup($e.details.signals, $q).( $s := $; $f := $lookup($e.details.fidelity, $s); {\"run_id\": $e.run_id, \"use_case\": $e.use_case, \"start\": $e.start, \"end\": $e.end, \"query\": $q, \"approx plan\": $lookup($e.details.plans, $q), \"why no approx plan\": $lookup($e.details.unsupported, $q), \"max relative error\": $lookup($e.details.max_relative_error, $q), \"signal\": $s, \"agreement\": $f.agreement, \"fidelity\": $f.fidelity, \"dashboard\": $e.details.dashboard} ) ) ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "use_case",

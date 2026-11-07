@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{anyhow, bail, Result};
 use asap_executor::physical_planner::compile;
@@ -30,12 +31,39 @@ pub struct Driver {
     raw_lookback_ms: Option<u64>,
     store: BTreeMap<String, StoredState>,
     reference: Option<InstallablePlan>,
+    metrics: BTreeSet<String>,
 }
 
 pub struct Evaluation {
     pub answers: Vec<Answer>,
     pub reference_answers: Option<Vec<Answer>>,
     pub views_refreshed: usize,
+    pub cost: Cost,
+}
+
+pub struct Cost {
+    pub refresh_seconds: f64,
+    pub samples_ingested: usize,
+    pub query_seconds: f64,
+    pub compile_seconds: f64,
+    pub samples_read_at_query: usize,
+    pub state_bytes: usize,
+}
+
+fn samples(slices: &[Slice]) -> usize {
+    slices.iter().map(|(_, points)| points.len()).sum()
+}
+
+fn state_bytes(state: &Batch) -> usize {
+    state
+        .to_rows()
+        .iter()
+        .flatten()
+        .map(|cell| match cell {
+            Value::Summary { state, .. } => state.approx_memory_bytes(),
+            _ => 0,
+        })
+        .sum()
 }
 
 fn state_key(view: &MaterializedView, evaluation_ms: i64) -> String {
@@ -81,17 +109,20 @@ fn row(
         .collect()
 }
 
-fn time_series_store(dag: &PhysicalASAPDAG, slices: &[Slice]) -> Result<InMemoryDataStore> {
-    let mut schemas: BTreeMap<&str, Schema> = BTreeMap::new();
-    for node in &dag.nodes {
-        let PhysicalASAPOperatorPayload::NonASAP(NonASAPOp::Scan {
+fn scans(dag: &PhysicalASAPDAG) -> impl Iterator<Item = (&String, &Schema)> {
+    dag.nodes.iter().filter_map(|node| match &node.payload {
+        PhysicalASAPOperatorPayload::NonASAP(NonASAPOp::Scan {
             source: Source::TimeSeries { metric },
             schema,
             ..
-        }) = &node.payload
-        else {
-            continue;
-        };
+        }) => Some((metric, schema)),
+        _ => None,
+    })
+}
+
+fn time_series_store(dag: &PhysicalASAPDAG, slices: &[Slice]) -> Result<InMemoryDataStore> {
+    let mut schemas: BTreeMap<&str, Schema> = BTreeMap::new();
+    for (metric, schema) in scans(dag) {
         let known = schemas.entry(metric).or_insert_with(|| schema.clone());
         for field in &schema.fields {
             if !known.fields.iter().any(|f| f.name == field.name) {
@@ -134,7 +165,7 @@ fn execute(
     slices: &[Slice],
     ids: &[u64],
     scope: Scope,
-) -> Result<Vec<Vec<Batch>>> {
+) -> Result<(Vec<Vec<Batch>>, f64)> {
     let read: Vec<MaterializedView> = if views.is_empty() {
         Vec::new()
     } else {
@@ -146,7 +177,9 @@ fn execute(
     if read.len() != views.len() {
         bail!("a bound state is not one of the plan's materialized views");
     }
+    let compile_started = Instant::now();
     let compiled = compile(dag, &read, ids).map_err(|e| anyhow!("compiling: {e}"))?;
+    let compile_seconds = compile_started.elapsed().as_secs_f64();
     let mut store = time_series_store(dag, slices)?;
     for (id, batch) in views {
         store = store
@@ -156,7 +189,7 @@ fn execute(
     let instance = compiled
         .instantiate(Arc::new(store))
         .map_err(|e| anyhow!("instantiating: {e}"))?;
-    block_on(async {
+    let outputs = block_on(async {
         let context = RunContext::new(scope, Limits::default()).map_err(|e| anyhow!("{e}"))?;
         let outputs = instance
             .execute(compiled.roots(), context)
@@ -169,8 +202,9 @@ fn execute(
             }
             all.push(batches);
         }
-        Ok(all)
-    })
+        Ok::<_, anyhow::Error>(all)
+    })?;
+    Ok((outputs, compile_seconds))
 }
 
 fn series_labels(schema: &Schema, row: &[Value]) -> Result<BTreeMap<String, String>> {
@@ -221,12 +255,14 @@ impl Driver {
         } else {
             None
         };
+        let metrics = scans(&plan.dag).map(|(metric, _)| metric.clone()).collect();
         Ok(Driver {
             plan,
             views,
             raw_lookback_ms,
             store: BTreeMap::new(),
             reference,
+            metrics,
         })
     }
 
@@ -234,9 +270,23 @@ impl Driver {
         plan.dag.roots.iter().map(|&root| root as u64).collect()
     }
 
+    fn scanned<'a>(&self, slices: Vec<Slice<'a>>) -> Vec<Slice<'a>> {
+        slices
+            .into_iter()
+            .filter(|(s, _)| {
+                s.labels
+                    .get("__name__")
+                    .is_some_and(|name| self.metrics.contains(name))
+            })
+            .collect()
+    }
+
     pub fn evaluate(&mut self, series: &[Series], evaluation_ms: i64) -> Result<Evaluation> {
         let dag = &self.plan.dag;
         let mut views_refreshed = 0;
+        let mut samples_ingested = 0;
+        let mut refresh_compile_seconds = 0.0;
+        let refresh_started = Instant::now();
         let mut built: BTreeMap<u64, (Batch, (i64, i64))> = BTreeMap::new();
         for view in &self.views {
             let built_for_ms = match view.refresh {
@@ -277,9 +327,12 @@ impl Driver {
                         evaluation_time_ms: evaluation_ms,
                     },
                 };
-                let slices = between(series, span.0, span.1);
-                let batches =
-                    execute(dag, sources, &slices, &[view.node_id as u64], scope)?.remove(0);
+                let slices = self.scanned(between(series, span.0, span.1));
+                samples_ingested += samples(&slices);
+                let (mut outputs, compile_seconds) =
+                    execute(dag, sources, &slices, &[view.node_id as u64], scope)?;
+                refresh_compile_seconds += compile_seconds;
+                let batches = outputs.remove(0);
                 let schema = batches
                     .first()
                     .map(|b| b.schema().clone())
@@ -299,6 +352,7 @@ impl Driver {
             stored.retention_ms = stored.retention_ms.max(view.retention_ms);
             built.insert(view.node_id as u64, (stored.state.clone(), span));
         }
+        let refresh_seconds = refresh_started.elapsed().as_secs_f64() - refresh_compile_seconds;
         let mut inputs = BTreeMap::new();
         let mut pending = Self::roots(&self.plan);
         let mut seen = BTreeSet::new();
@@ -318,18 +372,28 @@ impl Driver {
                 ),
             }
         }
-        let raw = match self.raw_lookback_ms {
+        let raw = self.scanned(match self.raw_lookback_ms {
             Some(lookback) => between(series, evaluation_ms - lookback as i64, evaluation_ms),
             None => up_to(series, evaluation_ms),
-        };
+        });
         let query = Scope::Query {
             evaluation_time_ms: evaluation_ms,
         };
-        let answers_now = answers(
-            &execute(dag, inputs, &raw, &Self::roots(&self.plan), query.clone())?.remove(0),
-        )?;
+        let query_started = Instant::now();
+        let (mut outputs, compile_seconds) =
+            execute(dag, inputs, &raw, &Self::roots(&self.plan), query.clone())?;
+        let answers_now = answers(&outputs.remove(0))?;
+        let query_seconds = query_started.elapsed().as_secs_f64() - compile_seconds;
         self.store
             .retain(|_, state| state.start_ms >= evaluation_ms - state.retention_ms as i64);
+        let cost = Cost {
+            refresh_seconds,
+            samples_ingested,
+            query_seconds,
+            compile_seconds: refresh_compile_seconds + compile_seconds,
+            samples_read_at_query: samples(&raw),
+            state_bytes: self.store.values().map(|s| state_bytes(&s.state)).sum(),
+        };
         let reference_answers = match &self.reference {
             None => None,
             Some(reference) => {
@@ -338,13 +402,13 @@ impl Driver {
                     .iter()
                     .map(|r| r.lookback_ms)
                     .try_fold(0u64, |a, b| b.map(|b| a.max(b)));
-                let raw = match lookback {
+                let raw = self.scanned(match lookback {
                     Some(lookback) => {
                         between(series, evaluation_ms - lookback as i64, evaluation_ms)
                     }
                     None => up_to(series, evaluation_ms),
-                };
-                let out = execute(
+                });
+                let (out, _) = execute(
                     &reference.dag,
                     BTreeMap::new(),
                     &raw,
@@ -358,6 +422,7 @@ impl Driver {
             answers: answers_now,
             reference_answers,
             views_refreshed,
+            cost,
         })
     }
 }

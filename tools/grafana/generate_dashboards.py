@@ -64,6 +64,17 @@ def dashed(ref, color):
                            {"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [10, 10]}}]}
 
 
+def exact_solid_approx_dashed(path, colors, metric=None):
+    targets, overrides = [], []
+    for query, color in colors.items():
+        for arm, style in (("exact", by_ref), ("approx", dashed)):
+            ref = f"{query} {arm}"
+            sel = f'labels.query="{query}" and labels.arm="{arm}"'
+            targets.append(rows_of(ref, path, f'metric="{metric}" and {sel}' if metric else sel, ref))
+            overrides.append(style(ref, color))
+    return targets, overrides
+
+
 def order(*names):
     return [{"id": "organize", "options": {"indexByName": {n: i for i, n in enumerate(names)},
                                            "excludeByName": {}, "renameByName": {}}}]
@@ -221,7 +232,7 @@ def variable(name, url, root, selector):
                       "infinityQuery": iq("variable", url, root, [col(selector, name, "string")])}}
 
 
-def dashboard(uid, title, board, variables, annotations=()):
+def dashboard(uid, title, board, variables, annotations=(), to="2026-01-01T01:00:00.000Z"):
     return {
         "uid": uid,
         "title": title,
@@ -229,7 +240,7 @@ def dashboard(uid, title, board, variables, annotations=()):
         "timezone": "utc",
         "editable": False,
         "schemaVersion": 41,
-        "time": {"from": "2026-01-01T00:00:00.000Z", "to": "2026-01-01T01:00:00.000Z"},
+        "time": {"from": "2026-01-01T00:00:00.000Z", "to": to},
         "templating": {"list": variables},
         "annotations": {"list": [
             {"name": "Annotations & Alerts", "builtIn": 1, "enable": True, "hide": True,
@@ -416,10 +427,13 @@ def decision_dashboard():
                       in_run("container_in_run", "container", "container")], annotations)
 
 
+QUERY_COLORS = {"p99_canary": "orange", "p99_stable": "blue", "success_rate_canary": "green"}
+
+
 def rollout_dashboard():
     uid = "rollout"
     use_cases = ["canary_release"]
-    app = 'labels.app="rollout_controller"'
+    app = 'labels.app="rollout_controller" and labels.signal="${rule}"'
     summary = RUN + "fidelity_summary.json"
     b = Board()
     b.row("Runs", 0)
@@ -427,51 +441,65 @@ def rollout_dashboard():
     plans_panel(b, 12, 1, 12, 7)
 
     b.row("Query result", 8)
-    b.panel({"type": "timeseries", "title": "p99 latency of canary and stable: exact vs approx",
-             "targets": [rows_of("A", "query_result", 'labels.arm="exact"', "exact", by="query"),
-                         rows_of("B", "query_result", 'labels.arm="approx"', "approx", by="query")],
-             "fieldConfig": {"defaults": {**LINES, "unit": "s", "displayName": "${__field.labels.query} ${__field.name}"},
-                             "overrides": [by_ref("A", "blue", 2), by_ref("B", "orange")]},
-             "options": LEGEND}, 0, 9, 24, 8)
-    b.panel({"type": "timeseries", "title": "Relative error of approx",
-             "targets": [rows_of("A", "low_level", 'metric="relative_error"', "relative_error", by="query")],
-             "fieldConfig": {"defaults": {**LINES, "unit": "percentunit", "displayName": "${__field.labels.query}"},
-                             "overrides": []},
-             "options": LEGEND}, 0, 17, 24, 6)
+    for x, w, title, queries, unit in ((0, 16, "p99 latency of canary and stable", ("p99_canary", "p99_stable"), "s"),
+                                       (16, 8, "Success rate of canary", ("success_rate_canary",), "percentunit")):
+        targets, overrides = exact_solid_approx_dashed("query_result", {q: QUERY_COLORS[q] for q in queries})
+        b.panel({"type": "timeseries", "title": f"{title}: exact vs approx", "targets": targets,
+                 "fieldConfig": {"defaults": {**LINES, "unit": unit, "displayName": "${__field.name}"},
+                                 "overrides": overrides},
+                 "options": LEGEND}, x, 9, w, 8)
+    ranked = ("p99_canary", "p99_stable")
+    b.panel({"type": "timeseries", "title": "Rank error of approx",
+             "targets": [rows_of(q, "low_level", f'metric="rank_error" and labels.query="{q}"', q) for q in ranked],
+             "fieldConfig": {"defaults": {**LINES, "unit": "percentunit", "displayName": "${__field.name}"},
+                             "overrides": [by_ref(q, QUERY_COLORS[q]) for q in ranked]},
+             "options": LEGEND}, 0, 17, 12, 6)
+    for x, y, w, metric, title, unit, note in (
+            (12, 17, 12, "query_latency", "Query latency per evaluation", "s", "Plan compile time excluded. "),
+            (0, 23, 24, "query_memory", "Bytes per evaluation: sketch state plus raw samples read", "bytes", "")):
+        targets, overrides = exact_solid_approx_dashed("low_level", QUERY_COLORS, metric)
+        b.panel({"type": "timeseries", "title": f"{title}: exact vs approx",
+                 "description": note + "Trials of an arm share one exact run.", "targets": targets,
+                 "fieldConfig": {"defaults": {**LINES, "unit": unit, "displayName": "${__field.name}",
+                                              "custom": {**LINES["custom"],
+                                                         "scaleDistribution": {"type": "log", "log": 10}}},
+                                 "overrides": overrides},
+                 "options": LEGEND}, x, y, w, 6)
 
-    b.row("Application: rollout controller", 23)
-    b.panel({"type": "timeseries", "title": "Canary p99 over stable p99",
-             "targets": [rows_of("A", "app_state", f'{app} and metric="ratio" and labels.arm="exact"', "exact"),
-                         rows_of("B", "app_state", f'{app} and metric="ratio" and labels.arm="approx"', "approx"),
-                         rows_of("C", "app_state", f'{app} and metric="tolerance"', "tolerance")],
+    b.row("Application: rollout controller, rule ${rule}", 29)
+    ratio = 'labels.app="rollout_controller"'
+    b.panel({"type": "timeseries", "title": "Canary p99 over stable p99 (rule ours compares it with the tolerance)",
+             "targets": [rows_of("A", "app_state", f'{ratio} and metric="ratio" and labels.arm="exact"', "exact"),
+                         rows_of("B", "app_state", f'{ratio} and metric="ratio" and labels.arm="approx"', "approx"),
+                         rows_of("C", "app_state", f'{ratio} and metric="tolerance"', "tolerance")],
              "fieldConfig": {"defaults": LINES,
                              "overrides": [by_ref("A", "blue", 2), by_ref("B", "orange"), dashed("C", "red")]
                              + named("exact", "approx", "tolerance")},
-             "options": LEGEND}, 0, 24, 24, 7)
-    b.panel(strip_panel("Slower check and rollout decision per evaluation, with what differs",
-                        [(f'{app} and metric="slower" and labels.arm="exact"', "exact slower"),
-                         (f'{app} and metric="slower" and labels.arm="approx"', "approx slower"),
+             "options": LEGEND}, 0, 30, 24, 7)
+    b.panel(strip_panel("Check result and rollout decision per check, with what differs",
+                        [(f'{app} and metric="check" and labels.arm="exact"', "exact check"),
+                         (f'{app} and metric="check" and labels.arm="approx"', "approx check"),
                          (f'{app} and metric="action" and labels.arm="exact"', "exact action"),
                          (f'{app} and metric="action" and labels.arm="approx"', "approx action"),
                          (f'{app} and metric="annotation"', "annotation")],
-                        {"slower": {"color": "red", "text": "slower"}, "not slower": OFF,
+                        {"failed": {"color": "red", "text": "failed"}, "passed": OFF,
                          "rollback": {"color": "red", "text": "rollback"},
-                         "promote": {"color": "green", "text": "promote"}}), 0, 31, 24, 9)
+                         "promote": {"color": "green", "text": "promote"}}), 0, 37, 24, 9)
 
-    b.row("Fidelity over rollouts", 40)
-    b.panel(outcome_stat("Rollouts by outcome (positive: rollback)", summary, app), 0, 41, 6, 8)
+    b.row("Fidelity over rollouts", 46)
+    b.panel(outcome_stat("Rollouts by outcome (positive: rollback)", summary, app), 0, 47, 6, 8)
     b.panel({"type": "stat", "title": "Rollouts",
              "targets": [iq("A", summary, metric_values(app), by_metric_columns(
                  ("rollouts", "rollouts"), ("agreement", "same decision"),
                  ("mean_absolute_rollback_delay", "mean absolute rollback delay (evaluations)"),
                  ("early_rollbacks", "early rollbacks"), ("late_rollbacks", "late rollbacks"),
-                 ("gaps", "gaps in slower")))],
+                 ("gaps", "gaps in failed checks")))],
              "transformations": order("rollouts", "same decision", "mean absolute rollback delay (evaluations)",
-                                      "early rollbacks", "late rollbacks", "gaps in slower"),
+                                      "early rollbacks", "late rollbacks", "gaps in failed checks"),
              "fieldConfig": {"defaults": TEXT, "overrides": [
                  {"matcher": {"id": "byName", "options": "same decision"},
                   "properties": [{"id": "unit", "value": "percentunit"}, {"id": "decimals", "value": 1}]}]},
-             "options": STAT}, 6, 41, 6, 8)
+             "options": STAT}, 6, 47, 6, 8)
     b.panel({"type": "table", "title": "Rollouts",
              "targets": [iq("A", RUN + "fidelity_event.json", f'$[{app} and metric="rollout"]',
                             [T, col("labels.rollout", "rollout", "string"), col("labels.exact", "exact", "string"),
@@ -481,14 +509,16 @@ def rollout_dashboard():
                  {"matcher": {"id": "byName", "options": "outcome"},
                   "properties": [{"id": "mappings", "value": [{"type": "value", "options": {
                       value: {"text": text, "index": i} for i, (value, text) in enumerate(OUTCOMES.items())}}]}]}]},
-             "options": {"showHeader": True}}, 12, 41, 7, 8)
+             "options": {"showHeader": True}}, 12, 47, 7, 8)
     b.panel({"type": "table", "title": "Fidelity events",
              "targets": [iq("A", RUN + "fidelity_event.json", f'$[{app} and metric!="rollout"]',
                             [T, col("metric", "event", "string"), col("value", "evaluations", "number")])],
              "transformations": order("time", "event", "evaluations"),
              "fieldConfig": {"defaults": {"custom": {"minWidth": 60}}, "overrides": []},
-             "options": {"showHeader": True}}, 19, 41, 5, 8)
-    return dashboard(uid, "Canary rollout", b, [run_variable(use_cases)])
+             "options": {"showHeader": True}}, 19, 47, 5, 8)
+    return dashboard(uid, "Canary rollout", b,
+                     [run_variable(use_cases), variable("rule", summary, '$[metric="rollouts"].labels', "signal")],
+                     to="2026-01-01T04:10:00.000Z")
 
 
 def topk_dashboard():
@@ -579,16 +609,91 @@ AGREEMENT = ("Defined per application. Threshold alert: evaluations where exact 
              "Top clients: mean clients shared by the exact and approx top lists, as a fraction of the list size.")
 
 
+STAGE1 = ("run_id", "trial", "query", "error metric", "target", "failure probability", "max error", "mean error",
+          "evaluations over target", "evaluations", "mean query ms", "mean compile ms", "planning ms",
+          "insert samples per second", "peak state bytes", "peak raw sample bytes read at query",
+          "exact mean query ms", "exact mean compile ms", "exact planning ms", "exact mean samples read at query",
+          "exact peak raw sample bytes read at query")
+SAME, FALSE_ROLLBACK, MISSED_ROLLBACK = "same decision", "false rollback", "missed rollback"
+
+
+def rollouts_by_error(ref, use_case, outcomes, name, y):
+    root = (f'$[use_case="{use_case}" and $exists(details.stage2)].details.stage2'
+            f'[rule="${{rule}}" and outcome in {in_list(outcomes)}]'
+            f'.{{"max error": $lookup(`max error`, "${{query}}"), "{name}": {y}}}')
+    return iq(ref, INDEX, root, [col("max error", "max error", "number"), col(name, name, "number")])
+
+
+def two_stages_dashboard():
+    use_case = "canary_release"
+    b = Board()
+    b.row("Stage 1: sketch configuration to approx query result", 0)
+    stage1 = (f'$[use_case="{use_case}" and $exists(details.stage1)].( $e := $; $e.details.stage1.( '
+              '$merge([$, {"run_id": $e.run_id, "trial": $e.details.trial}]) ) )')
+    text = ("run_id", "query", "error metric")
+    b.panel({"type": "table",
+             "title": "Per run and query: measured error against the target, and the cost "
+                      "(failure probability: the share of evaluations allowed over the target)",
+             "targets": [iq("A", INDEX, stage1, [col(k, k, "string") for k in text]
+                            + [col(k, k, "number") for k in STAGE1 if k not in text])],
+             "transformations": order(*STAGE1) + [{"id": "sortBy", "options": {"sort": [{"field": "run_id"}]}}],
+             "fieldConfig": {"defaults": {"custom": {"minWidth": 60, "wrapHeaderText": True,
+                                                     "cellOptions": {"type": "auto", "wrapText": True}}},
+                             "overrides": [
+                 {"matcher": {"id": "byRegexp", "options": "^(target|max error|mean error)$"},
+                  "properties": [{"id": "unit", "value": "percentunit"}, {"id": "decimals", "value": 2}]},
+                 {"matcher": {"id": "byRegexp", "options": "bytes"},
+                  "properties": [{"id": "unit", "value": "bytes"}]},
+                 {"matcher": {"id": "byRegexp", "options": " ms$"},
+                  "properties": [{"id": "decimals", "value": 3}]},
+                 {"matcher": {"id": "byRegexp", "options": "per second|samples read"},
+                  "properties": [{"id": "unit", "value": "short"}]},
+                 {"matcher": {"id": "byName", "options": "run_id"},
+                  "properties": [{"id": "custom.width", "value": 200}, {"id": "links", "value": [{
+                      "title": "Open this run", "url": "/d/rollout/rollout?var-run=${__data.fields.run_id}"}]}]}]},
+             "options": {"showHeader": True}}, 0, 1, 24, 14)
+
+    b.row("Stage 2: approx query result to rollout decision, rule ${rule}", 15)
+    b.panel({"type": "xychart",
+             "title": "${query}: each rollout's decision against the query's max error over its checks",
+             "description": "Rank error for p99, relative error for success rate.",
+             "repeat": "query", "repeatDirection": "h", "maxPerRow": 2,
+             "targets": [rollouts_by_error("A", use_case, ["true_positive", "true_negative"], SAME, 1),
+                         rollouts_by_error("B", use_case, ["false_positive"], FALSE_ROLLBACK, 0),
+                         rollouts_by_error("C", use_case, ["false_negative"], MISSED_ROLLBACK, 0)],
+             "fieldConfig": {"defaults": {"custom": {"show": "points", "pointSize": {"fixed": 7}},
+                                          "min": -0.2, "max": 1.2},
+                             "overrides": [
+                 {"matcher": {"id": "byName", "options": "max error"},
+                  "properties": [{"id": "unit", "value": "percentunit"}, {"id": "min", "value": 0},
+                                 {"id": "max", "value": None}]},
+                 *[{"matcher": {"id": "byName", "options": n},
+                    "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": c}}]}
+                   for n, c in ((SAME, "green"), (FALSE_ROLLBACK, "orange"), (MISSED_ROLLBACK, "red"))]]},
+             "options": {"mapping": "manual", "series": [
+                 {"frame": {"matcher": {"id": "byIndex", "options": i}},
+                  "x": {"matcher": {"id": "byName", "options": "max error"}},
+                  "y": {"matcher": {"id": "byName", "options": name}}}
+                 for i, name in enumerate((SAME, FALSE_ROLLBACK, MISSED_ROLLBACK))], **LEGEND}},
+            0, 16, 12, 12)
+    stage2 = f'$[use_case="{use_case}" and $exists(details.stage2)].details.stage2'
+    rules = f'$map($distinct({stage2}.rule), function($v) {{ {{"rule": $v}} }})'
+    queries = f'$map($distinct({stage2}[rule="${{rule}}"].$keys(`max error`)), function($v) {{ {{"query": $v}} }})'
+    query = variable("query", INDEX, queries, "query")
+    query.update(multi=True, includeAll=True, current={"text": ["All"], "value": ["$__all"]})
+    return dashboard("two-stages", "Canary release in two stages", b, [variable("rule", INDEX, rules, "rule"), query])
+
+
 def overview_dashboard():
     rows = ('$[$exists(details.fidelity)].( $e := $; '
             '$append($keys($e.details.plans), $keys($e.details.unsupported)).( $q := $; '
-            '$s := $lookup($e.details.signals, $q); $f := $lookup($e.details.fidelity, $s); '
+            '$lookup($e.details.signals, $q).( $s := $; $f := $lookup($e.details.fidelity, $s); '
             '{"run_id": $e.run_id, "use_case": $e.use_case, "start": $e.start, "end": $e.end, "query": $q, '
             '"approx plan": $lookup($e.details.plans, $q), '
             '"why no approx plan": $lookup($e.details.unsupported, $q), '
             '"max relative error": $lookup($e.details.max_relative_error, $q), '
             '"signal": $s, "agreement": $f.agreement, "fidelity": $f.fidelity, '
-            '"dashboard": $e.details.dashboard} ) )')
+            '"dashboard": $e.details.dashboard} ) ) )')
     text = ("use_case", "run_id", "query", "approx plan", "why no approx plan", "signal", "fidelity", "dashboard")
     numbers = ("start", "end", "max relative error", "agreement")
     shown = ("use_case", "run_id", "query", "approx plan", "why no approx plan", "max relative error", "signal",
@@ -660,7 +765,7 @@ def overview_dashboard():
 
 def main():
     for board in (overview_dashboard(), alert_dashboard(), decision_dashboard(), rollout_dashboard(),
-                  topk_dashboard()):
+                  topk_dashboard(), two_stages_dashboard()):
         with open(os.path.join(OUT, board["uid"] + ".json"), "w") as f:
             json.dump(board, f, indent=2)
             f.write("\n")

@@ -1,5 +1,15 @@
 # Approx-bench: Five Use Cases
 
+## Two stages
+
+**Stage 1: sketch configuration → approx query result.**
+Given an error guarantee, ASAPPlanner picks the sketches.
+We measure the query result's error and the cost: latency, insert throughput, memory.
+
+**Stage 2: approx query result → application decision.**
+The input is stage 1's approx results, over every configuration and trial.
+We measure the decision fidelity against the measured result error.
+
 ## 1. DDoS detection
 
 A TCP SYN flood is a DDoS attack.
@@ -22,13 +32,26 @@ rules:
 - expr: distinct_over_time(src_ip{vm="instance1"}[5s]) > volume_threshold
 ```
 
-**Data.**
+**Query input data.**
 PromSketch evaluates entropy and distinct counting on CAIDA traces of source IP addresses from a NYC Equinix backbone link, captured on 2018-12-20 and 2019-01-17.
 It also uses synthetic data: 10M Zipf-distributed samples, 10M uniform samples in [0, 10^5], and a dynamic trace that cycles through Zipf, uniform and normal distributions, 1M samples each.
+
+**Application input data.**
+Every 5 seconds, the alerting rule receives the entropy of source IPs over the past 10 seconds, and the number of distinct source IPs over the past 10 and 5 seconds, for instance1.
 
 **Application.**
 An alert fires while any rule's condition holds.
 The paper uses the alert to find the start and the end of an attack.
+
+### Stage 1
+
+**Error.**
+Relative error of the entropy and of each distinct count.
+
+**Result.**
+Whether the error stays within the guarantee, and at what cost.
+
+### Stage 2
 
 **Question.**
 Does the approx alert fire at exactly the evaluations where the exact alert fires?
@@ -49,6 +72,9 @@ approx alert  . . . █ █ . █ █ █  .  █  .
 
 a: onset delay   b: gap   c: end delay   d: FP outside the attack
 ```
+
+**Result.**
+Whether the alert on approx results fires during the attack and only then, how many evaluations late it starts and ends, and up to which measured error.
 
 ## 2. Cloud resource scaling
 
@@ -71,15 +97,28 @@ rules:
 - expr: avg_over_time(pod_number[5m])
 ```
 
-**Data.**
+**Query input data.**
 PromSketch evaluates `quantile_over_time` and `avg_over_time` on Google Cluster Data 2019, using `start_time` as the time and `average_usage.memory` as the memory usage. <https://github.com/google/cluster-data>
 It also uses the synthetic data of use case 1.
+
+**Application input data.**
+Every minute, the scheduler receives each container's p95 CPU and p95 memory over the past 5 minutes, and the average pod count.
 
 **Application.**
 The scheduler reads the results every minute.
 It scales a container up when its p95 CPU rises above 0.8 cores or its p95 memory rises above 1.5 GB (assumed rule).
 It scales the container down when its p95 CPU falls below 0.4 cores and its p95 memory below 0.75 GB (assumed rule).
 It acts once per crossing.
+
+### Stage 1
+
+**Error.**
+Rank error of p95 CPU and p95 memory, and relative error of the average pod count.
+
+**Result.**
+Whether the error stays within the guarantee, and at what cost.
+
+### Stage 2
 
 **Question.**
 Does the scheduler take the same scaling actions on each container, at the same evaluations, on approx results as on exact results?
@@ -101,6 +140,9 @@ approx action  . . . ↑ . ↑ ↓ .
 a: onset delay   b: FP
 ```
 
+**Result.**
+Whether the scheduler on approx results takes the scaling actions it takes on exact results, how many evaluations late, and up to which measured error.
+
 ## 3. Video experience monitoring
 
 A video provider loses ad and subscription revenue when viewers have a bad experience.
@@ -118,14 +160,27 @@ FROM SessionSummaries
 GROUP BY City
 ```
 
-**Data.**
+**Query input data.**
 Hydra uses a real trace of video session summaries from one major US-based streaming-video provider.
 The trace is about 5 GB and clusters into up to 700K subpopulations.
 It also uses synthetic multidimensional data drawn from Zipf distributions with skewness from 0.7 to 0.99.
 
+**Application input data.**
+Every minute, the anomaly detector receives each city's entropy of bitrate and L1 norm of buffering ratio.
+
 **Application.**
 An anomaly detector reads the result every minute.
 It flags a city when its L1 norm of buffering is more than 3 standard deviations above its mean over the previous 30 minutes (assumed rule).
+
+### Stage 1
+
+**Error.**
+Relative error of each city's entropy and L1 norm.
+
+**Result.**
+Whether the error stays within the guarantee, and at what cost.
+
+### Stage 2
 
 **Question.**
 Does the detector flag the same cities, at the same evaluations, on approx results as on exact results?
@@ -149,6 +204,9 @@ city B flag  exact    . . . . . . . .
 a: onset delay   b: gap   c: FP
 ```
 
+**Result.**
+Whether the detector on approx results flags the cities with a buffering problem and no others, how many evaluations late, and up to which measured error.
+
 ## 4. Canary release analysis
 
 A team releases a new version of a service.
@@ -168,17 +226,30 @@ quantile_over_time(0.99, request_latency{version="canary"}[5m])
   > 1.1 * quantile_over_time(0.99, request_latency{version="stable"}[5m])
 ```
 
-**Data.**
+**Query input data.**
 Real: no public data labels latency as canary or stable.
 The Alibaba microservices trace 2021 has real response times for each call. <https://github.com/alibaba/clusterdata/tree/master/cluster-trace-microservices-v2021>
 We split one service's calls into canary and stable by Flagger's traffic shares, and raise the canary's latency during chosen periods.
 Synthetic (in sketch-bench): both versions draw latency from the same Pareto distribution, and the canary gets a fixed 5% of the samples.
 The canary's latency rises by 8%, which stays under the 10% tolerance, and later by 25%.
 
+**Application input data.**
+Every minute, the rollout controller receives the p99 latency of the canary and of the stable version over the past 5 minutes.
+
 **Application.**
 A rollout controller reads the result every minute.
 It rolls back after the canary is judged slower in 3 consecutive checks (assumed rule).
 It promotes the canary after 10 checks with no 3 consecutive slower ones (assumed rule).
+
+### Stage 1
+
+**Error.**
+Rank error of each p99.
+
+**Result.**
+Whether the error stays within the guarantee, and at what cost.
+
+### Stage 2
 
 **Question.**
 Does the controller make the same promote-or-rollback decision, at the same evaluation, on approx results as on exact results?
@@ -202,6 +273,9 @@ R: rollback
 a: gap, which resets the count   b: decision delay of 3 evaluations
 ```
 
+**Result.**
+Whether the controller on approx results makes the same promote-or-rollback decision, how many evaluations late, and up to which measured error.
+
 ## 5. Rate limiting top clients
 
 A few clients can overload an API service by sending too many requests.
@@ -221,14 +295,27 @@ ORDER BY requests DESC
 LIMIT 10
 ```
 
-**Data.**
+**Query input data.**
 Real: the NASA-HTTP logs from 1995 have 3.46M requests, each with the client host and a 1-second timestamp, and may be freely redistributed. <https://ita.ee.lbl.gov/html/contrib/NASA-HTTP.html>
 They average under 1 request per second, so a 5-minute window holds about 200 requests.
 Synthetic (in sketch-bench): 100K clients send requests following a Zipf distribution.
 Two groups of heavy clients appear in turn, sending 3% and then 2% of all requests.
 
+**Application input data.**
+Every minute, the rate limiter receives the 10 clients with the most requests over the past 5 minutes and their request counts.
+
 **Application.**
 A rate limiter caps the requests of every client in the top 10 until the next evaluation (assumed rule).
+
+### Stage 1
+
+**Error.**
+Overlap with the exact top 10, and relative error of the matched clients' counts.
+
+**Result.**
+Whether the error stays within the guarantee, and at what cost.
+
+### Stage 2
 
 **Question.**
 Does the rate limiter cap the same clients, at the same evaluations, on approx results as on exact results?
@@ -251,6 +338,9 @@ client Y capped  exact  . . . . . . . .
 
 a: onset delay   b: gap   c: FP
 ```
+
+**Result.**
+Whether the limiter on approx results caps the heavy clients and no others, how many evaluations after a client turns heavy, and up to which measured error.
 
 ---
 
