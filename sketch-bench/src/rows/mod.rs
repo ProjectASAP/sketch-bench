@@ -83,7 +83,15 @@ pub fn measurements(
             req.variant, req.library
         ))
     })?;
-    row(req, columns, table, want)
+    let mut order = columns.labels.clone();
+    order.push(columns.value);
+    let table = table.select(&order)?;
+    let columns = ColumnRoles {
+        labels: (0..columns.labels.len()).collect(),
+        value: columns.labels.len(),
+        value_key_offset: columns.value_key_offset.clone(),
+    };
+    row(req, &columns, table, want)
 }
 
 /// The pair a registry entry names, bound to the code that runs it.

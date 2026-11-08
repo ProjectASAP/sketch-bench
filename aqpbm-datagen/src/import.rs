@@ -21,6 +21,10 @@ use crate::value::ColumnData;
 
 const NANOS_PER_SECOND: i64 = 1_000_000_000;
 
+pub const START_NS: &str = "start_ns";
+
+pub const END_NS: &str = "end_ns";
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ExternalSource {
@@ -139,6 +143,14 @@ impl ExternalTableDescription {
         }
     }
 
+    fn has_intervals(&self) -> bool {
+        match self.source {
+            ExternalSource::Google => true,
+            ExternalSource::Custom => self.end_timestamp_column.is_some(),
+            ExternalSource::Boom | ExternalSource::Alibaba => false,
+        }
+    }
+
     pub fn source_timestamp_unit(&self) -> String {
         match &self.source {
             ExternalSource::Boom => "frequency-derived".to_string(),
@@ -180,7 +192,7 @@ fn load(spec: &ExternalTableDescription, data_root: &Path) -> Result<Option<Gene
     let logical = Path::new(&spec.dataset);
     if logical.is_absolute() {
         bail!(
-            "external table dataset must be relative to --data-root: {}",
+            "external table dataset must be relative to the data root: {}",
             spec.dataset
         );
     }
@@ -198,6 +210,14 @@ fn load(spec: &ExternalTableDescription, data_root: &Path) -> Result<Option<Gene
     }
     if matches!(spec.source, ExternalSource::Custom) && spec.timestamp_column.is_none() {
         bail!("custom workloads require timestamp_column");
+    }
+    if let Some(name) = spec
+        .group_columns
+        .iter()
+        .chain([&spec.value_column])
+        .find(|name| [START_NS, END_NS].contains(&name.as_str()))
+    {
+        bail!("column '{name}' clashes with the loaded table's time column of the same name");
     }
 
     let (window_start_ns, window_end_ns) = window_ns(spec)?;
@@ -224,8 +244,16 @@ fn load(spec: &ExternalTableDescription, data_root: &Path) -> Result<Option<Gene
 }
 
 fn materialise(records: &[RawRecord], spec: &ExternalTableDescription) -> Result<GeneratedTable> {
-    let mut labels = Vec::new();
-    let mut data = Vec::new();
+    let mut labels = vec![START_NS.to_string()];
+    let mut data = vec![ColumnData::Int64(
+        records.iter().map(|r| r.start_ns).collect(),
+    )];
+    if spec.has_intervals() {
+        labels.push(END_NS.to_string());
+        data.push(ColumnData::Int64(
+            records.iter().map(|r| r.end_ns).collect(),
+        ));
+    }
     for (i, column) in spec.group_columns.iter().enumerate() {
         labels.push(column.clone());
         data.push(ColumnData::String(
@@ -704,6 +732,63 @@ mod tests {
         assert_eq!(
             parse_timestamp_ns("1970-01-01T00:00:01").unwrap(),
             NANOS_PER_SECOND
+        );
+    }
+
+    fn custom_table(end_column: bool) -> GeneratedTable {
+        let root =
+            std::env::temp_dir().join(format!("aqpbm-import-{}-{end_column}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("events.csv"),
+            "ts,end_ts,service,latency\n30,40,b,2.0\n10,10,a,1.0\n90,95,a,3.0\n",
+        )
+        .unwrap();
+        let spec: ExternalTableDescription = serde_norway::from_str(&format!(
+            r#"
+source: custom
+dataset: events.csv
+mode: grouped
+timestamp_column: ts
+{}
+timestamp_unit: nanoseconds
+group_columns: [service]
+value_column: latency
+window: {{start: "0", end: "50"}}
+"#,
+            if end_column {
+                "end_timestamp_column: end_ts"
+            } else {
+                ""
+            }
+        ))
+        .unwrap();
+        let table = spec.load(&root).unwrap().unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        table
+    }
+
+    #[test]
+    fn point_records_keep_their_start_time() {
+        let table = custom_table(false);
+        assert_eq!(table.column_title, ["start_ns", "service", "latency"]);
+        assert_eq!(
+            table.column(table.column_index(START_NS).unwrap()).unwrap(),
+            &ColumnData::Int64(vec![10, 30])
+        );
+        assert!(table.column_index(END_NS).is_err());
+    }
+
+    #[test]
+    fn interval_records_keep_both_ends() {
+        let table = custom_table(true);
+        assert_eq!(
+            table.column_title,
+            ["start_ns", "end_ns", "service", "latency"]
+        );
+        assert_eq!(
+            table.column(table.column_index(END_NS).unwrap()).unwrap(),
+            &ColumnData::Int64(vec![10, 40])
         );
     }
 

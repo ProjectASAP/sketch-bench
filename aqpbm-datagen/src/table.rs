@@ -369,6 +369,29 @@ impl GeneratedTable {
             })
     }
 
+    pub fn select(self, columns: &[usize]) -> Result<GeneratedTable, DataGenError> {
+        let held = self.data.len();
+        let mut titles: Vec<Option<String>> = self.column_title.into_iter().map(Some).collect();
+        let mut data: Vec<Option<ColumnData>> = self.data.into_iter().map(Some).collect();
+        let mut picked_titles = Vec::with_capacity(columns.len());
+        let mut picked = Vec::with_capacity(columns.len());
+        for &i in columns {
+            match (
+                titles.get_mut(i).and_then(Option::take),
+                data.get_mut(i).and_then(Option::take),
+            ) {
+                (Some(title), Some(column)) => {
+                    picked_titles.push(title);
+                    picked.push(column);
+                }
+                _ => return Err(DataGenError::BadParam(format!(
+                    "column {i} was selected, but the table holds {held} or it was selected twice"
+                ))),
+            }
+        }
+        GeneratedTable::new(picked_titles, picked)
+    }
+
     pub fn take_rows(&self, rows: &[usize]) -> GeneratedTable {
         GeneratedTable {
             column_num: self.column_num,

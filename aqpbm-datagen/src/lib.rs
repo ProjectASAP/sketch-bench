@@ -20,7 +20,9 @@ pub use dist::{
 };
 pub use error::DataGenError;
 #[cfg(feature = "import")]
-pub use import::{ExternalSource, ExternalTableDescription, InputMode, WindowSpec};
+pub use import::{
+    ExternalSource, ExternalTableDescription, InputMode, WindowSpec, END_NS, START_NS,
+};
 pub use rule::{RULE_MASK_ALL, RULE_MONOTONIC_INCREASE, RULE_NONE};
 pub use table::{splitmix64, GeneratedTable, TableDescription};
 pub use value::{ColumnData, ColumnItem, StrCfg, StringOpts};
@@ -75,6 +77,24 @@ mod tests {
 
     fn one(spec: ColumnSpec, row_num: u64) -> TableDescription {
         TableDescription::single("c0", spec, row_num)
+    }
+
+    #[test]
+    fn select_reorders_and_refuses_a_repeat() {
+        let table = GeneratedTable::new(
+            vec!["t".into(), "g".into(), "v".into()],
+            vec![
+                ColumnData::Int64(vec![1, 2]),
+                ColumnData::String(vec!["a".into(), "b".into()]),
+                ColumnData::Float64(vec![0.5, 1.5]),
+            ],
+        )
+        .unwrap();
+        let picked = table.clone().select(&[1, 2]).unwrap();
+        assert_eq!(picked.column_title, ["g", "v"]);
+        assert_eq!(picked.column_num, 2);
+        assert!(table.clone().select(&[1, 1]).is_err());
+        assert!(table.select(&[3]).is_err());
     }
 
     // ---------- determinism and ranges ----------
