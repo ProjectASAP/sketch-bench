@@ -13,7 +13,9 @@ path = "src/main.rs"
 asap-planner = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "b822553f1ea7e5fc60940dd23536d1f6c99c5334", default-features = false, features = ["test-support"] }
 asap-executor = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "b822553f1ea7e5fc60940dd23536d1f6c99c5334" }
 asap-types = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "b822553f1ea7e5fc60940dd23536d1f6c99c5334" }
+asap-frontend-promql = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "b822553f1ea7e5fc60940dd23536d1f6c99c5334" }
 asap_sketchlib.workspace = true
+aqpbm-core.workspace = true
 aqpbm-datagen.workspace = true
 anyhow.workspace = true
 clap.workspace = true

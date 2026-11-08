@@ -66,15 +66,9 @@ def derive(query_rows, thresholds):
     return out
 
 
-def relative_errors(run_id, labels, times, exact, approx):
-    return [row(t, "low_level", run_id, labels, "relative_error", abs(a - e) / abs(e), "ratio")
-            for t, e, a in zip(times, exact, approx) if e != 0]
-
-
 def derive_query(run_id, labels, unit, times, exact, approx, threshold):
     app = {**labels, "app": APP}
-    out = relative_errors(run_id, labels, times, exact, approx)
-    out += [row(t, "app_state", run_id, app, "threshold", threshold, unit) for t in times]
+    out = [row(t, "app_state", run_id, app, "threshold", threshold, unit) for t in times]
     return out + alert_fidelity(run_id, app, times, [e > threshold for e in exact], [a > threshold for a in approx])
 
 

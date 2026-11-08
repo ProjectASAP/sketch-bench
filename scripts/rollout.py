@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 
 from approx_rows import row
-from threshold_alert import (EVENT_LABELS, NOTHING, annotations, cells_of, delay_summary, episodes_of,
-                             relative_errors, series)
+from threshold_alert import EVENT_LABELS, NOTHING, annotations, cells_of, delay_summary, episodes_of, series
 
 APP = "rollout_controller"
 ROLLBACK, PROMOTE = "rollback", "promote"
@@ -134,10 +133,9 @@ def derive(query_rows, rules=RULES):
     out = []
     values = {"exact": {}, "approx": {}}
     for q in queries:
-        q_labels, _, q_times, exact, approx = found[q]
+        _, _, q_times, exact, approx = found[q]
         if q_times != times:
             raise ValueError(f"queries {queries[0]} and {q} are not evaluated at the same times")
-        out += relative_errors(run_id, q_labels, times, exact, approx)
         values["exact"][q], values["approx"][q] = exact, approx
     app = {"use_case": labels["use_case"], "app": APP}
     for n, t in enumerate(times):

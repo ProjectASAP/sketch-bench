@@ -156,6 +156,48 @@ impl GroundTruth for RelativeValueErrorGT {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ReferenceRankErrorGT {
+    pub column: usize,
+}
+
+impl GroundTruth for ReferenceRankErrorGT {
+    type Truth = Vec<f64>;
+    type Probe = ();
+    type Answer = (f64, f64);
+
+    fn truth(&self, table: &GeneratedTable) -> Result<Vec<f64>, DataGenError> {
+        let mut sorted = f64_values(table.column(self.column)?)?;
+        sorted.sort_by(f64::total_cmp);
+        Ok(sorted)
+    }
+
+    fn probes(&self, truth: &Vec<f64>) -> Vec<()> {
+        if truth.is_empty() {
+            Vec::new()
+        } else {
+            vec![()]
+        }
+    }
+
+    fn score(
+        &self,
+        truth: &Vec<f64>,
+        _probes: &[()],
+        answers: &[(f64, f64)],
+    ) -> BTreeMap<String, f64> {
+        let Some(&(reference, estimate)) = answers.first() else {
+            return BTreeMap::new();
+        };
+        metrics_from([
+            ("items", truth.len() as f64),
+            ("reference", reference),
+            ("estimate", estimate),
+            ("rank_error", rank_distance(truth, reference, estimate)),
+        ])
+    }
+}
+
 // ---------- helpers ----------
 
 /// Rank error of one answer, in units of `n`. The returned value occupies the
@@ -177,6 +219,18 @@ pub(crate) fn rank_err(sorted: &[f64], est: f64, q: f64) -> f64 {
         0.0
     };
     raw / nf
+}
+
+pub fn rank_distance(sorted: &[f64], reference: f64, estimate: f64) -> f64 {
+    let nf = sorted.len() as f64;
+    if nf == 0.0 {
+        return 0.0;
+    }
+    let below = |x: f64| lower_bound(sorted, x) as f64 / nf;
+    let at_most = |x: f64| upper_bound(sorted, x) as f64 / nf;
+    0.0f64
+        .max(below(estimate) - at_most(reference))
+        .max(below(reference) - at_most(estimate))
 }
 
 fn quantile_value(sorted: &[f64], q: f64) -> f64 {
@@ -226,6 +280,34 @@ fn metrics_from<const N: usize>(pairs: [(&str, f64); N]) -> BTreeMap<String, f64
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overlapping_rank_intervals_are_no_distance_apart() {
+        let sorted = [1.0, 2.0, 2.0, 3.0];
+        assert_eq!(rank_distance(&sorted, 2.0, 2.0), 0.0);
+        assert_eq!(rank_distance(&sorted, 1.5, 2.0), 0.0);
+    }
+
+    #[test]
+    fn disjoint_rank_intervals_are_the_gap_between_them_apart() {
+        let sorted = [1.0, 2.0, 3.0, 4.0];
+        assert_eq!(rank_distance(&sorted, 1.0, 4.0), 0.5);
+        assert_eq!(rank_distance(&sorted, 4.0, 1.0), 0.5);
+    }
+
+    #[test]
+    fn the_reference_rank_error_reads_one_answer_pair() {
+        let table = crate::accuracy::table_of(
+            &["value"],
+            vec![aqpbm_datagen::ColumnData::Float64(vec![4.0, 1.0, 3.0, 2.0])],
+        );
+        let gt = ReferenceRankErrorGT { column: 0 };
+        let truth = gt.truth(&table).unwrap();
+        let probes = gt.probes(&truth);
+        let scores = gt.score(&truth, &probes, &[(1.0, 3.0)]);
+        assert_eq!(scores["rank_error"], 0.25);
+        assert_eq!(scores["items"], 4.0);
+    }
 
     #[test]
     fn asked_fractions_are_scored_one_by_one() {

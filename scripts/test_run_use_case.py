@@ -3,45 +3,40 @@
 import unittest
 
 from approx_rows import row
-from run_use_case import rank_errors, rank_gap, rollout_errors, stage1, uc4_stage2
+from run_use_case import rank_errors, relative_errors, rollout_errors, stage1, uc4_stage2
 
 
 def query(id_, answers, costs=(), planning_ms=None):
     return {"id": id_, "answers": answers, "costs": list(costs), "plan": {"planning_ms": planning_ms}}
 
 
-def answer(time, value, rank):
-    return {"time": time, "series": {"__name__": "m", "version": "canary"}, "value": value, "rank": rank}
+def answer(time, value, exact_plan):
+    return {"time": time, "series": {"__name__": "m", "version": "canary"}, "value": value,
+            "exact_plan": exact_plan}
 
 
-class RankGapTest(unittest.TestCase):
-    def test_overlapping_intervals_have_no_gap(self):
-        self.assertEqual(rank_gap((0.98, 0.99), (0.985, 0.995)), 0.0)
-
-    def test_gap_is_the_distance_between_intervals_on_either_side(self):
-        self.assertAlmostEqual(rank_gap((0.989, 0.99), (0.993, 0.994)), 0.003)
-        self.assertAlmostEqual(rank_gap((0.989, 0.99), (0.985, 0.986)), 0.003)
-
-
-class RankErrorsTest(unittest.TestCase):
-    def test_one_row_per_answer_matched_by_time_and_labels(self):
-        exact = query("p99", [answer(1000, 1.0, (0.99, 0.99)), answer(2000, 1.0, (0.99, 0.99))])
-        approx = query("p99", [answer(1000, 1.1, (0.995, 0.995)), answer(2000, 1.0, (0.99, 0.99))])
-        rows = rank_errors("r1", "uc", "sig", exact, approx)
-        self.assertEqual([(r["time"], round(r["value"], 6)) for r in rows], [(1000, 0.005), (2000, 0.0)])
+class ExactPlanErrorsTest(unittest.TestCase):
+    def test_one_row_per_answer_scored_against_the_exact_plan(self):
+        approx = query("p99", [answer(1000, 1.1, {"relative_error": 0.1, "rank_error": 0.005}),
+                               answer(2000, 1.0, {"relative_error": 0.0, "rank_error": 0.0})])
+        rows = rank_errors("r1", "uc", "sig", approx)
+        self.assertEqual([(r["time"], r["value"]) for r in rows], [(1000, 0.005), (2000, 0.0)])
         self.assertEqual(rows[0]["labels"], {"use_case": "uc", "signal": "sig", "query": "p99", "version": "canary"})
+        self.assertEqual([r["value"] for r in relative_errors("r1", "uc", "sig", approx)], [0.1, 0.0])
 
-    def test_answers_without_rank_give_no_rows(self):
-        plain = query("avg", [{"time": 1000, "series": {}, "value": 1.0}])
-        self.assertEqual(rank_errors("r1", "uc", "sig", plain, plain), [])
+    def test_answers_without_a_score_give_no_rows(self):
+        plain = query("avg", [{"time": 1000, "series": {}, "value": 1.0},
+                              answer(2000, 1.0, {"relative_error": 0.0})])
+        self.assertEqual(rank_errors("r1", "uc", "sig", plain), [])
+        self.assertEqual(len(relative_errors("r1", "uc", "sig", plain)), 1)
 
 
 class Stage1Test(unittest.TestCase):
     def test_error_against_target_and_cost(self):
-        exact = query("p99", [answer(1000, 1.0, (0.99, 0.99))],
+        exact = query("p99", [{"time": 1000, "series": {"__name__": "m", "version": "canary"}, "value": 1.0}],
                       [{"refresh_seconds": 0.0, "samples_ingested": 0, "query_seconds": 0.01,
                         "compile_seconds": 0.001, "samples_read_at_query": 500, "state_bytes": 0}], 20.0)
-        approx = query("p99", [answer(1000, 1.1, (0.995, 0.995))],
+        approx = query("p99", [answer(1000, 1.1, {"relative_error": 0.1, "rank_error": 0.005})],
                        [{"refresh_seconds": 0.5, "samples_ingested": 1000, "query_seconds": 0.002,
                          "compile_seconds": 0.0005, "samples_read_at_query": 0, "state_bytes": 4096}], 300.0)
         derived = [row(t, "low_level", "r1", {"query": "p99"}, "rank_error", e, "rank")

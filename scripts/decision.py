@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from approx_rows import row
-from threshold_alert import EVENT_LABELS, NOTHING, annotations, delay_summary, relative_errors
+from threshold_alert import EVENT_LABELS, NOTHING, annotations, delay_summary
 
 APP = "autoscaler"
 DECISIONS = ("up", "down", NOTHING)
@@ -61,7 +61,7 @@ def derive(query_rows, signal, cpu_query, memory_query, key, rule):
         raise ValueError(f"rows span runs {sorted(run_ids)}, not one")
     (run_id,) = run_ids
     cpu, cpu_labels = by_entity(query_rows, cpu_query, key)
-    memory, memory_labels = by_entity(query_rows, memory_query, key)
+    memory, _ = by_entity(query_rows, memory_query, key)
     if set(cpu) != set(memory):
         raise ValueError(f"queries {cpu_query} and {memory_query} answer for different {key} sets")
     use_case = next(iter(cpu_labels.values()))["use_case"]
@@ -79,10 +79,6 @@ def derive(query_rows, signal, cpu_query, memory_query, key, rule):
             if sorted(series) != times:
                 raise ValueError(f"{key} {entity}: queries or arms are not evaluated at the same times")
         last = max(last or times[-1], times[-1])
-        for values, labels in ((cpu, cpu_labels), (memory, memory_labels)):
-            out += relative_errors(run_id, labels[entity], times,
-                                   [values[entity]["exact"][t] for t in times],
-                                   [values[entity]["approx"][t] for t in times])
         decided = {arm: [decide(cpu[entity][arm][t], memory[entity][arm][t], rule) for t in times]
                    for arm in ("exact", "approx")}
         acted = {arm: actions_of(decisions) for arm, decisions in decided.items()}

@@ -1,8 +1,9 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use aqpbm_planeval::accuracy::{Labels, QueryTruth};
 use aqpbm_planeval::data::{generate, Series};
-use aqpbm_planeval::plan::{plan, Arm};
+use aqpbm_planeval::plan::{plan, workload, Arm};
 use aqpbm_planeval::run::Driver;
 use aqpbm_planeval::spec::Spec;
 
@@ -118,12 +119,41 @@ fn the_use_case_1_spec_draws_the_samples_it_drew_before_specs_had_many_series() 
 }
 
 #[test]
-fn rank_of_is_the_share_of_window_samples_below_and_at_the_value() {
-    let series = Series {
-        labels: Default::default(),
-        points: vec![(1, 5.0), (2, 1.0), (3, 3.0), (4, 3.0), (5, 2.0)],
+fn a_quantile_answer_is_scored_by_rank_within_its_window_and_series() {
+    let labels = |k: &str| -> Labels {
+        [("__name__", "m"), ("k", k)]
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect()
     };
-    assert_eq!(series.rank_of(0, 5, 3.0), Some((0.4, 0.8)));
-    assert_eq!(series.rank_of(1, 5, 3.0), Some((0.5, 1.0)));
-    assert_eq!(series.rank_of(5, 9, 3.0), None);
+    let series = vec![
+        Series {
+            labels: labels("a"),
+            points: vec![(1, 5.0), (2, 1.0), (3, 3.0), (4, 3.0), (5, 2.0)],
+        },
+        Series {
+            labels: labels("b"),
+            points: vec![(2, 10.0), (4, 20.0)],
+        },
+    ];
+    let mut spec = small_spec();
+    spec.metrics[0].name = "m".into();
+    spec.queries[0].promql = "quantile_over_time(0.5, m[4ms])".into();
+    let arm = Arm {
+        max_error: None,
+        failure_probability: 0.01,
+        raw_data_retained: true,
+        ignore_guarantees: false,
+    };
+    let truth = QueryTruth::of(&workload(&spec, &spec.queries[0], &arm).unwrap())
+        .unwrap()
+        .expect("a quantile over a plain selector has a computed truth");
+    let cells = truth
+        .score(&series, &[5], &[(5, labels("a"), 1.0)])
+        .unwrap();
+    assert_eq!(cells.len(), 2);
+    let (_, a, scores) = &cells[0];
+    assert_eq!(a.get("k").map(String::as_str), Some("a"));
+    assert_eq!(scores.as_ref().unwrap()["rank_err_q0.5"], 0.25);
+    assert!(cells[1].2.is_none());
 }

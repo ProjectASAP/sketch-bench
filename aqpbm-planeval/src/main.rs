@@ -1,13 +1,15 @@
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
+use aqpbm_core::accuracy::scalar_error;
 use clap::Parser;
 use serde_json::{json, Value};
 
-use aqpbm_planeval::data::{generate, Series};
-use aqpbm_planeval::plan::{plan, summary, Arm};
+use aqpbm_planeval::accuracy::{keyed, without_name, AnswerAt, Labels, QueryTruth, Scores};
+use aqpbm_planeval::data::generate;
+use aqpbm_planeval::plan::{plan, summary, workload, Arm};
 use aqpbm_planeval::run::Driver;
 use aqpbm_planeval::spec::Spec;
 
@@ -47,31 +49,41 @@ struct Args {
     )]
     check_reference: bool,
 
+    #[arg(
+        long,
+        help = "Output of the exact run of the same spec; each answer is then also scored against the exact plan's answer"
+    )]
+    exact: Option<PathBuf>,
+
     #[arg(long)]
     out: PathBuf,
 }
 
-fn rank_in_window(
-    series: &[Series],
-    labels: &BTreeMap<String, String>,
-    start_exclusive: i64,
-    end_inclusive: i64,
-    value: f64,
-) -> Result<(f64, f64)> {
-    let unnamed = |l: &BTreeMap<String, String>| {
-        l.iter()
-            .filter(|(k, _)| k.as_str() != "__name__")
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect::<BTreeMap<_, _>>()
-    };
-    let wanted = unnamed(labels);
-    let mut matched = series.iter().filter(|s| unnamed(&s.labels) == wanted);
-    let (Some(found), None) = (matched.next(), matched.next()) else {
-        bail!("no single series has the answer's labels {labels:?}");
-    };
-    found
-        .rank_of(start_exclusive, end_inclusive, value)
-        .with_context(|| format!("series {labels:?} has no sample in the window"))
+fn exact_answers(path: &Path) -> Result<BTreeMap<String, Vec<AnswerAt>>> {
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let document: Value =
+        serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    let mut out = BTreeMap::new();
+    for query in document["queries"]
+        .as_array()
+        .with_context(|| format!("{} has no queries", path.display()))?
+    {
+        let id = query["id"]
+            .as_str()
+            .with_context(|| format!("a query in {} has no id", path.display()))?;
+        let mut answers = Vec::new();
+        for answer in query["answers"].as_array().into_iter().flatten() {
+            let (Some(time), Some(value)) = (answer["time"].as_i64(), answer["value"].as_f64())
+            else {
+                continue;
+            };
+            let labels: Labels = serde_json::from_value(answer["series"].clone())?;
+            answers.push((time, labels, value));
+        }
+        out.insert(id.to_string(), answers);
+    }
+    Ok(out)
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -84,6 +96,7 @@ async fn main() -> Result<()> {
         raw_data_retained: !args.no_raw,
         ignore_guarantees: args.ignore_guarantees,
     };
+    let exact = args.exact.as_deref().map(exact_answers).transpose()?;
     let generated = Instant::now();
     let series = generate(&spec)?;
     let samples: usize = series.iter().map(|s| s.points.len()).sum();
@@ -112,9 +125,8 @@ async fn main() -> Result<()> {
         let mut driver = Driver::new(planned.plan, args.check_reference)
             .with_context(|| format!("installing the plan of {}", query.id))?;
         let started = Instant::now();
-        let mut answers: Vec<Value> = Vec::new();
+        let mut answered: Vec<AnswerAt> = Vec::new();
         let mut costs: Vec<Value> = Vec::new();
-        let ranked = query.accuracy_metric.as_deref() == Some("rank");
         let mut disagreements = 0usize;
         let mut views_refreshed = 0usize;
         let times = spec.evaluation_times(query);
@@ -138,18 +150,55 @@ async fn main() -> Result<()> {
                 "samples_read_at_query": cost.samples_read_at_query,
                 "state_bytes": cost.state_bytes,
             }));
-            for (labels, value) in evaluation.answers {
-                let mut answer = json!({"time": t, "series": labels, "value": value});
-                if ranked {
-                    let (below, at_most) =
-                        rank_in_window(&series, &labels, t - query.window_ms, t, value)
-                            .with_context(|| format!("{} at {t}", query.id))?;
-                    answer["rank"] = json!([below, at_most]);
-                }
-                answers.push(answer);
-            }
+            answered.extend(
+                evaluation
+                    .answers
+                    .into_iter()
+                    .map(|(labels, value)| (t, labels, value)),
+            );
         }
         let elapsed = started.elapsed().as_secs_f64();
+        let truth = QueryTruth::of(&workload(&spec, query, &arm)?)?;
+        let computed_truth = truth
+            .as_ref()
+            .map(|truth| truth.score(&series, &times, &answered))
+            .transpose()
+            .with_context(|| format!("scoring {} against its computed truth", query.id))?;
+        let reference = exact
+            .as_ref()
+            .map(|exact| keyed(exact.get(&query.id).map_or(&[][..], |a| a.as_slice())));
+        let rank_errors: HashMap<(i64, Labels), Scores> = match (&truth, &reference) {
+            (Some(truth), Some(reference)) => truth
+                .reference_rank_errors(&series, &times, &answered, reference)
+                .with_context(|| format!("scoring {} against the exact plan", query.id))?
+                .into_iter()
+                .filter_map(|(t, labels, scores)| Some(((t, labels), scores?)))
+                .collect(),
+            _ => HashMap::new(),
+        };
+        let answers: Vec<Value> = answered
+            .iter()
+            .map(|(t, labels, value)| {
+                let mut answer = json!({"time": t, "series": labels, "value": value});
+                let key = (*t, without_name(labels));
+                if let Some(&exact_value) = reference.as_ref().and_then(|r| r.get(&key)) {
+                    let mut errors = scalar_error(exact_value, &[*value]);
+                    if let Some(rank_error) =
+                        rank_errors.get(&key).and_then(|s| s.get("rank_error"))
+                    {
+                        errors.insert("rank_error".into(), *rank_error);
+                    }
+                    answer["exact_plan"] = json!(errors);
+                }
+                answer
+            })
+            .collect();
+        let computed_truth: Option<Vec<Value>> = computed_truth.map(|cells| {
+            cells
+                .into_iter()
+                .map(|(t, labels, scores)| json!({"time": t, "series": labels, "scores": scores}))
+                .collect()
+        });
         eprintln!(
             "{}: {} evaluations in {:.1} s, {} view refreshes{}",
             query.id,
@@ -173,6 +222,7 @@ async fn main() -> Result<()> {
             "views_refreshed": views_refreshed,
             "reference_disagreements": args.check_reference.then_some(disagreements),
             "answers": answers,
+            "computed_truth": computed_truth,
             "costs": costs,
         }));
     }
