@@ -3,7 +3,7 @@ use std::path::Path;
 
 use aqpbm_planeval::accuracy::{Labels, QueryTruth};
 use aqpbm_planeval::data::{generate, Series};
-use aqpbm_planeval::plan::{plan, Arm};
+use aqpbm_planeval::plan::{plan, workload, Arm};
 use aqpbm_planeval::run::Driver;
 use aqpbm_planeval::spec::Spec;
 
@@ -136,7 +136,16 @@ fn a_quantile_answer_is_scored_by_rank_within_its_window_and_series() {
             points: vec![(2, 10.0), (4, 20.0)],
         },
     ];
-    let truth = QueryTruth::of("quantile_over_time(0.5, m[4ms])")
+    let mut spec = small_spec();
+    spec.metrics[0].name = "m".into();
+    spec.queries[0].promql = "quantile_over_time(0.5, m[4ms])".into();
+    let arm = Arm {
+        max_error: None,
+        failure_probability: 0.01,
+        raw_data_retained: true,
+        ignore_guarantees: false,
+    };
+    let truth = QueryTruth::of(&workload(&spec, &spec.queries[0], &arm).unwrap())
         .unwrap()
         .expect("a quantile over a plain selector has a computed truth");
     let cells = truth

@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 use aqpbm_planeval::accuracy::{keyed, without_name, AnswerAt, Labels, QueryTruth, Scores};
 use aqpbm_planeval::data::generate;
-use aqpbm_planeval::plan::{plan, summary, Arm};
+use aqpbm_planeval::plan::{plan, summary, workload, Arm};
 use aqpbm_planeval::run::Driver;
 use aqpbm_planeval::spec::Spec;
 
@@ -158,7 +158,7 @@ async fn main() -> Result<()> {
             );
         }
         let elapsed = started.elapsed().as_secs_f64();
-        let truth = QueryTruth::of(&query.promql)?;
+        let truth = QueryTruth::of(&workload(&spec, query, &arm)?)?;
         let computed_truth = truth
             .as_ref()
             .map(|truth| truth.score(&series, &times, &answered))
