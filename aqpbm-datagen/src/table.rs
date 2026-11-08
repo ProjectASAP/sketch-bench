@@ -346,6 +346,53 @@ pub struct GeneratedTable {
 }
 
 impl GeneratedTable {
+    pub fn new(column_title: Vec<String>, data: Vec<ColumnData>) -> Result<Self, DataGenError> {
+        let table = GeneratedTable {
+            column_num: data.len() as u32,
+            row_num: data.first().map_or(0, |column| column.len() as u64),
+            column_title,
+            data,
+        };
+        table.validate()?;
+        Ok(table)
+    }
+
+    pub fn column_index(&self, title: &str) -> Result<usize, DataGenError> {
+        self.column_title
+            .iter()
+            .position(|t| t == title)
+            .ok_or_else(|| {
+                DataGenError::BadParam(format!(
+                    "no column titled '{title}'; the table holds {:?}",
+                    self.column_title
+                ))
+            })
+    }
+
+    pub fn take_rows(&self, rows: &[usize]) -> GeneratedTable {
+        GeneratedTable {
+            column_num: self.column_num,
+            column_title: self.column_title.clone(),
+            row_num: rows.len() as u64,
+            data: self
+                .data
+                .iter()
+                .map(|column| match column {
+                    ColumnData::Int64(v) => ColumnData::Int64(rows.iter().map(|&r| v[r]).collect()),
+                    ColumnData::Unsigned64(v) => {
+                        ColumnData::Unsigned64(rows.iter().map(|&r| v[r]).collect())
+                    }
+                    ColumnData::Float64(v) => {
+                        ColumnData::Float64(rows.iter().map(|&r| v[r]).collect())
+                    }
+                    ColumnData::String(v) => {
+                        ColumnData::String(rows.iter().map(|&r| v[r].clone()).collect())
+                    }
+                })
+                .collect(),
+        }
+    }
+
     /// Inject the same deterministic interval-burst schedule into every column.
     /// Reusing the seed preserves row alignment for multi-column workloads.
     pub fn inject_bursts(&mut self, spec: BurstSpec) -> Result<(), DataGenError> {

@@ -246,12 +246,8 @@ impl QueryTruth {
         data.push(ColumnData::Float64(value));
         data.push(ColumnData::Int64(vec![1; rows]));
         Samples {
-            table: GeneratedTable {
-                column_num: data.len() as u32,
-                column_title,
-                row_num: rows as u64,
-                data,
-            },
+            table: GeneratedTable::new(column_title, data)
+                .expect("every column holds one entry per sample"),
             label_names,
         }
     }

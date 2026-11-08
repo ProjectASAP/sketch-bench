@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use aqpbm_core::benchmark_result::schema::{ExternalWorkload, WorkloadDescription};
 use aqpbm_datagen::{
-    ColumnData, ColumnSpec, DataDistribution, GeneratedTable, TableDescription, UniformParameter,
-    RULE_NONE,
+    ColumnData, ColumnSpec, DataDistribution, DataGenError, GeneratedTable, TableDescription,
+    UniformParameter, RULE_NONE,
 };
 use csv::StringRecord;
 use flate2::read::GzDecoder;
@@ -165,9 +165,7 @@ pub fn load(spec: &WorkloadSpec, data_root: &Path) -> Result<Option<LoadedWorklo
         );
     }
 
-    let (table, table_shape) = materialise(&records, spec);
-    table
-        .validate()
+    let (table, table_shape) = materialise(&records, spec)
         .map_err(|e| anyhow::anyhow!("materialised external workload is invalid: {e}"))?;
     let workload = WorkloadDescription::External(ExternalWorkload {
         source: source_name(&spec.source).to_string(),
@@ -222,7 +220,10 @@ fn mode_name(mode: InputMode) -> &'static str {
     }
 }
 
-fn materialise(records: &[RawRecord], spec: &WorkloadSpec) -> (GeneratedTable, TableDescription) {
+fn materialise(
+    records: &[RawRecord],
+    spec: &WorkloadSpec,
+) -> Result<(GeneratedTable, TableDescription), DataGenError> {
     let mut data = Vec::new();
     let mut labels = Vec::new();
     let mut specs = Vec::new();
@@ -241,12 +242,7 @@ fn materialise(records: &[RawRecord], spec: &WorkloadSpec) -> (GeneratedTable, T
         records.iter().map(|r| r.value).collect(),
     ));
     let row_num = records.len() as u64;
-    let table = GeneratedTable {
-        column_num: data.len() as u32,
-        column_title: labels.clone(),
-        data,
-        row_num,
-    };
+    let table = GeneratedTable::new(labels.clone(), data)?;
     let shape = TableDescription {
         column_num: specs.len() as u32,
         column_label: labels,
@@ -254,7 +250,7 @@ fn materialise(records: &[RawRecord], spec: &WorkloadSpec) -> (GeneratedTable, T
         column_connected: Vec::new(),
         row_num,
     };
-    (table, shape)
+    Ok((table, shape))
 }
 
 fn shape_column(data_type: &str) -> ColumnSpec {
