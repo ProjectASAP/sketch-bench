@@ -3936,6 +3936,7 @@ name = "sketch-bench"
 version = "0.1.0"
 dependencies = [
  "aqpbm-core",
+ "aqpbm-datagen",
  "asap_sketchlib 0.4.0 (git+https://github.com/ProjectASAP/asap_sketchlib?rev=a05b35ce14e4079eaa6acb29dd8c416bd1a2a3d1)",
  "datasketches",
  "polars",

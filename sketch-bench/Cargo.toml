@@ -14,6 +14,7 @@ heap-track = ["aqpbm-core/heap-track"]
 
 [dependencies]
 aqpbm-core.workspace = true
+aqpbm-datagen.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

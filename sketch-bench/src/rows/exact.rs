@@ -12,20 +12,19 @@ use aqpbm_core::accuracy::aggregate::{Aggregate, AggregateGT};
 
 fn aggregate_row<C: Cell, V: ColumnItem + ToF64 + Copy + 'static>(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
     aggregate: Aggregate,
 ) -> Result<Measurements, RunError> {
-    let value_column = value_column(description);
     scored_row(
         req,
-        description,
+        columns,
         table,
         want,
         AggregateGT {
-            group_columns: (0..value_column).collect(),
-            value_column,
+            group_columns: columns.labels.clone(),
+            value_column: columns.value,
             aggregate,
         },
         peel_grouped::<V>,
@@ -43,69 +42,69 @@ fn aggregate_row<C: Cell, V: ColumnItem + ToF64 + Copy + 'static>(
 
 fn exact_row<C: Cell>(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
     aggregate: Aggregate,
 ) -> Result<Measurements, RunError> {
     match req.width {
-        Dtype::I64 => aggregate_row::<C, i64>(req, description, table, want, aggregate),
-        Dtype::U64 => aggregate_row::<C, u64>(req, description, table, want, aggregate),
-        Dtype::F64 => aggregate_row::<C, f64>(req, description, table, want, aggregate),
+        Dtype::I64 => aggregate_row::<C, i64>(req, columns, table, want, aggregate),
+        Dtype::U64 => aggregate_row::<C, u64>(req, columns, table, want, aggregate),
+        Dtype::F64 => aggregate_row::<C, f64>(req, columns, table, want, aggregate),
         other => Err(no_build_at(req, other)),
     }
 }
 
 pub(crate) fn row_exact_sum(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    exact_row::<Sum>(req, description, table, want, Aggregate::Sum)
+    exact_row::<Sum>(req, columns, table, want, Aggregate::Sum)
 }
 
 pub(crate) fn row_exact_min(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    exact_row::<Min>(req, description, table, want, Aggregate::Min)
+    exact_row::<Min>(req, columns, table, want, Aggregate::Min)
 }
 
 pub(crate) fn row_exact_max(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    exact_row::<Max>(req, description, table, want, Aggregate::Max)
+    exact_row::<Max>(req, columns, table, want, Aggregate::Max)
 }
 
 pub(crate) fn row_exact_increase(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    exact_row::<Increase>(req, description, table, want, Aggregate::Increase)
+    exact_row::<Increase>(req, columns, table, want, Aggregate::Increase)
 }
 
 pub(crate) fn row_exact_delta_set(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
-    exact_row::<Present>(req, description, table, want, Aggregate::Presence)
+    exact_row::<Present>(req, columns, table, want, Aggregate::Presence)
 }
 
 // -------- more top-k: CountSketch + heap, UnivMon --------
 
 pub(crate) fn row_countsketch_heap_topk_fastpath_vector2d_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -113,7 +112,7 @@ pub(crate) fn row_countsketch_heap_topk_fastpath_vector2d_lib(
         ($t:ty) => {
             topk_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 crate::wrappers::cms_heap::sketchlib::answered_k(&req.params),
@@ -138,7 +137,7 @@ pub(crate) fn row_countsketch_heap_topk_fastpath_vector2d_lib(
 
 pub(crate) fn row_univmon_topk_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -146,7 +145,7 @@ pub(crate) fn row_univmon_topk_lib(
         ($t:ty) => {
             topk_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 crate::wrappers::cms_heap::sketchlib::answered_k(&req.params),

@@ -5,7 +5,7 @@ use crate::wrappers::dd::{oxide as ddo, sketchlib as ddl};
 
 pub(crate) fn row_dd_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -13,7 +13,7 @@ pub(crate) fn row_dd_lib(
         ($t:ty) => {
             relative_value_quantile_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 ddl::insert_dd_lib::<$t>,
@@ -38,7 +38,7 @@ pub(crate) fn row_dd_lib(
 
 pub(crate) fn row_dd_oxide(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -46,7 +46,7 @@ pub(crate) fn row_dd_oxide(
         ($t:ty) => {
             relative_value_quantile_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 ddo::insert_dd_oxide::<$t>,

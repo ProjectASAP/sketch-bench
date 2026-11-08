@@ -3,7 +3,7 @@ use crate::wrappers::uniform_sampling as us;
 
 pub(crate) fn row_uniform_sampling_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -11,7 +11,7 @@ pub(crate) fn row_uniform_sampling_lib(
         ($t:ty) => {
             quantile_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 us::insert_uniform_sampling_lib::<$t>,

@@ -5,7 +5,7 @@ use crate::wrappers::{
 
 pub(crate) fn row_space_saving_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -13,7 +13,7 @@ pub(crate) fn row_space_saving_lib(
         ($t:ty) => {
             frequency_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 ss::insert_space_saving_lib::<$t>,
@@ -38,7 +38,7 @@ pub(crate) fn row_space_saving_lib(
 
 pub(crate) fn row_space_saving_topk_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -46,7 +46,7 @@ pub(crate) fn row_space_saving_topk_lib(
         ($t:ty) => {
             topk_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 ss::answered_k_space_saving_lib(&req.params).map_err(cannot_build)?,
@@ -71,7 +71,7 @@ pub(crate) fn row_space_saving_topk_lib(
 
 pub(crate) fn row_count_min_space_saving_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -79,7 +79,7 @@ pub(crate) fn row_count_min_space_saving_lib(
         ($t:ty) => {
             frequency_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 cmss::insert_count_min_space_saving_lib::<$t>,
@@ -104,7 +104,7 @@ pub(crate) fn row_count_min_space_saving_lib(
 
 pub(crate) fn row_count_min_space_saving_topk_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -112,7 +112,7 @@ pub(crate) fn row_count_min_space_saving_topk_lib(
         ($t:ty) => {
             topk_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 cmss::answered_k_count_min_space_saving_lib(&req.params).map_err(cannot_build)?,
@@ -137,7 +137,7 @@ pub(crate) fn row_count_min_space_saving_topk_lib(
 
 pub(crate) fn row_count_sketch_space_saving_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -145,7 +145,7 @@ pub(crate) fn row_count_sketch_space_saving_lib(
         ($t:ty) => {
             frequency_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 csss::insert_count_sketch_space_saving_lib::<$t>,
@@ -170,7 +170,7 @@ pub(crate) fn row_count_sketch_space_saving_lib(
 
 pub(crate) fn row_count_sketch_space_saving_topk_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -178,7 +178,7 @@ pub(crate) fn row_count_sketch_space_saving_topk_lib(
         ($t:ty) => {
             topk_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 csss::answered_k_count_sketch_space_saving_lib(&req.params)

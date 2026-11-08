@@ -2,6 +2,7 @@
 //! answer to "can this run" follows alone. See `docs/sketch-bench.md` §Input.
 
 use crate::params::ParamSet;
+use aqpbm_datagen::KeyOffset;
 
 /// The statistic a row answers, as a *value* — one variant per statistic some
 /// [`GroundTruth`](aqpbm_core::GroundTruth) can score. Data, not a bound, so
@@ -137,4 +138,11 @@ pub struct Requirement {
     pub runs: usize,
     pub warmup_runs: usize,
     pub trial: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ColumnRoles {
+    pub labels: Vec<usize>,
+    pub value: usize,
+    pub value_key_offset: Option<KeyOffset>,
 }

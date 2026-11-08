@@ -8,7 +8,7 @@ use crate::wrappers::hydra_kll::{polars as hkp, sketchlib as hks};
 
 pub(crate) fn row_hydra_cms_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -16,7 +16,7 @@ pub(crate) fn row_hydra_cms_lib(
         ($t:ty) => {
             subpop_frequency_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 hs::insert_hydra_cms::<$t>,
@@ -41,7 +41,7 @@ pub(crate) fn row_hydra_cms_lib(
 
 pub(crate) fn row_hydra_cms_polars(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -49,7 +49,7 @@ pub(crate) fn row_hydra_cms_polars(
         ($t:ty) => {
             subpop_frequency_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 hp::insert_polars_subpop_frequency_cms::<$t>,
@@ -70,7 +70,7 @@ pub(crate) fn row_hydra_cms_polars(
 
 pub(crate) fn row_hydra_cs_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -78,7 +78,7 @@ pub(crate) fn row_hydra_cs_lib(
         ($t:ty) => {
             subpop_frequency_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 hcs::insert_hydra_cs::<$t>,
@@ -103,7 +103,7 @@ pub(crate) fn row_hydra_cs_lib(
 
 pub(crate) fn row_hydra_cs_polars(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -111,7 +111,7 @@ pub(crate) fn row_hydra_cs_polars(
         ($t:ty) => {
             subpop_frequency_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 hcp::insert_polars_subpop_frequency_cs::<$t>,
@@ -132,7 +132,7 @@ pub(crate) fn row_hydra_cs_polars(
 
 pub(crate) fn row_hydra_hll_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -140,7 +140,7 @@ pub(crate) fn row_hydra_hll_lib(
         ($t:ty) => {
             subpop_cardinality_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 hhs::insert_hydra_hll::<$t>,
@@ -165,7 +165,7 @@ pub(crate) fn row_hydra_hll_lib(
 
 pub(crate) fn row_hydra_hll_polars(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -173,7 +173,7 @@ pub(crate) fn row_hydra_hll_polars(
         ($t:ty) => {
             subpop_cardinality_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 hhp::insert_polars_subpop_cardinality::<$t>,
@@ -194,7 +194,7 @@ pub(crate) fn row_hydra_hll_polars(
 
 pub(crate) fn row_hydra_kll_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -202,7 +202,7 @@ pub(crate) fn row_hydra_kll_lib(
         ($t:ty) => {
             subpop_quantile_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 hks::insert_hydra_kll::<$t>,
@@ -227,7 +227,7 @@ pub(crate) fn row_hydra_kll_lib(
 
 pub(crate) fn row_hydra_kll_polars(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -235,7 +235,7 @@ pub(crate) fn row_hydra_kll_polars(
         ($t:ty) => {
             subpop_quantile_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 hkp::insert_polars_subpop_quantile::<$t>,
@@ -256,7 +256,7 @@ pub(crate) fn row_hydra_kll_polars(
 
 pub(crate) fn row_hydra_kll_cdf_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -264,7 +264,7 @@ pub(crate) fn row_hydra_kll_cdf_lib(
         ($t:ty) => {
             subpop_cdf_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 hks::insert_hydra_kll::<$t>,
@@ -289,7 +289,7 @@ pub(crate) fn row_hydra_kll_cdf_lib(
 
 pub(crate) fn row_hydra_kll_cdf_polars(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -297,7 +297,7 @@ pub(crate) fn row_hydra_kll_cdf_polars(
         ($t:ty) => {
             subpop_cdf_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 hkp::insert_polars_subpop_quantile::<$t>,

@@ -3,7 +3,7 @@ use crate::wrappers::hydra_univmon::{polars as hup, sketchlib as hus};
 
 pub(crate) fn row_hydra_univmon_cardinality_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -11,7 +11,7 @@ pub(crate) fn row_hydra_univmon_cardinality_lib(
         ($t:ty) => {
             subpop_cardinality_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 hus::insert_hydra_univmon::<$t>,
@@ -36,7 +36,7 @@ pub(crate) fn row_hydra_univmon_cardinality_lib(
 
 pub(crate) fn row_hydra_univmon_cardinality_polars(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -44,7 +44,7 @@ pub(crate) fn row_hydra_univmon_cardinality_polars(
         ($t:ty) => {
             subpop_cardinality_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 hup::insert_polars_subpop_cardinality_univmon::<$t>,
@@ -65,7 +65,7 @@ pub(crate) fn row_hydra_univmon_cardinality_polars(
 
 pub(crate) fn row_hydra_univmon_l1_norm_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -73,12 +73,12 @@ pub(crate) fn row_hydra_univmon_l1_norm_lib(
         ($t:ty) => {
             subpop_vector_row::<$t, _>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 SubpopL1NormGT {
-                    group_columns: group_columns(req, description)?,
-                    value_column: value_column(description),
+                    group_columns: group_columns(req, columns)?,
+                    value_column: columns.value,
                 },
                 hus::insert_hydra_univmon::<$t>,
                 hus::insert_step_hydra_univmon::<$t>,
@@ -102,7 +102,7 @@ pub(crate) fn row_hydra_univmon_l1_norm_lib(
 
 pub(crate) fn row_hydra_univmon_l1_norm_polars(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -110,12 +110,12 @@ pub(crate) fn row_hydra_univmon_l1_norm_polars(
         ($t:ty) => {
             subpop_vector_row::<$t, _>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 SubpopL1NormGT {
-                    group_columns: group_columns(req, description)?,
-                    value_column: value_column(description),
+                    group_columns: group_columns(req, columns)?,
+                    value_column: columns.value,
                 },
                 hup::insert_polars_subpop_l1_norm::<$t>,
                 hup::insert_step_polars_subpop_l1_norm::<$t>,
@@ -135,7 +135,7 @@ pub(crate) fn row_hydra_univmon_l1_norm_polars(
 
 pub(crate) fn row_hydra_univmon_l2_norm_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -143,12 +143,12 @@ pub(crate) fn row_hydra_univmon_l2_norm_lib(
         ($t:ty) => {
             subpop_vector_row::<$t, _>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 SubpopL2NormGT {
-                    group_columns: group_columns(req, description)?,
-                    value_column: value_column(description),
+                    group_columns: group_columns(req, columns)?,
+                    value_column: columns.value,
                 },
                 hus::insert_hydra_univmon::<$t>,
                 hus::insert_step_hydra_univmon::<$t>,
@@ -172,7 +172,7 @@ pub(crate) fn row_hydra_univmon_l2_norm_lib(
 
 pub(crate) fn row_hydra_univmon_l2_norm_polars(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -180,12 +180,12 @@ pub(crate) fn row_hydra_univmon_l2_norm_polars(
         ($t:ty) => {
             subpop_vector_row::<$t, _>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 SubpopL2NormGT {
-                    group_columns: group_columns(req, description)?,
-                    value_column: value_column(description),
+                    group_columns: group_columns(req, columns)?,
+                    value_column: columns.value,
                 },
                 hup::insert_polars_subpop_l2_norm::<$t>,
                 hup::insert_step_polars_subpop_l2_norm::<$t>,
@@ -205,7 +205,7 @@ pub(crate) fn row_hydra_univmon_l2_norm_polars(
 
 pub(crate) fn row_hydra_univmon_entropy_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -213,12 +213,12 @@ pub(crate) fn row_hydra_univmon_entropy_lib(
         ($t:ty) => {
             subpop_vector_row::<$t, _>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 SubpopEntropyGT {
-                    group_columns: group_columns(req, description)?,
-                    value_column: value_column(description),
+                    group_columns: group_columns(req, columns)?,
+                    value_column: columns.value,
                 },
                 hus::insert_hydra_univmon::<$t>,
                 hus::insert_step_hydra_univmon::<$t>,
@@ -242,7 +242,7 @@ pub(crate) fn row_hydra_univmon_entropy_lib(
 
 pub(crate) fn row_hydra_univmon_entropy_polars(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -250,12 +250,12 @@ pub(crate) fn row_hydra_univmon_entropy_polars(
         ($t:ty) => {
             subpop_vector_row::<$t, _>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 SubpopEntropyGT {
-                    group_columns: group_columns(req, description)?,
-                    value_column: value_column(description),
+                    group_columns: group_columns(req, columns)?,
+                    value_column: columns.value,
                 },
                 hup::insert_polars_subpop_entropy::<$t>,
                 hup::insert_step_polars_subpop_entropy::<$t>,
@@ -287,7 +287,7 @@ fn no_sum_at(req: &Requirement, got: Dtype) -> RunError {
 
 pub(crate) fn row_hydra_univmon_sum_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -295,12 +295,12 @@ pub(crate) fn row_hydra_univmon_sum_lib(
         ($t:ty) => {
             subpop_vector_row::<$t, _>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 SubpopSumGT {
-                    group_columns: group_columns(req, description)?,
-                    value_column: value_column(description),
+                    group_columns: group_columns(req, columns)?,
+                    value_column: columns.value,
                 },
                 hus::insert_hydra_univmon_sum::<$t>,
                 hus::insert_step_hydra_univmon_sum::<$t>,
@@ -323,7 +323,7 @@ pub(crate) fn row_hydra_univmon_sum_lib(
 
 pub(crate) fn row_hydra_univmon_sum_polars(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -331,12 +331,12 @@ pub(crate) fn row_hydra_univmon_sum_polars(
         ($t:ty) => {
             subpop_vector_row::<$t, _>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 SubpopSumGT {
-                    group_columns: group_columns(req, description)?,
-                    value_column: value_column(description),
+                    group_columns: group_columns(req, columns)?,
+                    value_column: columns.value,
                 },
                 hup::insert_polars_subpop_sum::<$t>,
                 hup::insert_step_polars_subpop_sum::<$t>,

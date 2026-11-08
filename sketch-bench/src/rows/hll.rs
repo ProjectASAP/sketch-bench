@@ -5,7 +5,7 @@ use crate::wrappers::hll::{datasketches as hd, oxide as ho, polars as hpo, sketc
 
 pub(crate) fn row_hll_oxide(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -13,7 +13,7 @@ pub(crate) fn row_hll_oxide(
         ($t:ty) => {
             cardinality_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 ho::insert_hll_oxide::<$t>,
@@ -38,7 +38,7 @@ pub(crate) fn row_hll_oxide(
 
 pub(crate) fn row_hll_datasketches(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -46,7 +46,7 @@ pub(crate) fn row_hll_datasketches(
         ($t:ty) => {
             cardinality_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 hd::insert_hll_datasketches::<$t>,
@@ -71,7 +71,7 @@ pub(crate) fn row_hll_datasketches(
 
 pub(crate) fn row_hll_polars(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -79,7 +79,7 @@ pub(crate) fn row_hll_polars(
         ($t:ty) => {
             cardinality_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 hpo::insert_polars_cardinality::<$t>,
@@ -100,7 +100,7 @@ pub(crate) fn row_hll_polars(
 
 pub(crate) fn row_hll_fastpath_parallel_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -108,7 +108,7 @@ pub(crate) fn row_hll_fastpath_parallel_lib(
         ($t:ty) => {
             timed_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 hl::insert_parallel_hll_fast_path::<$t>,
@@ -133,7 +133,7 @@ pub(crate) fn row_hll_fastpath_parallel_lib(
 /// is refused by name rather than run at 14 under its own label.
 pub(crate) fn row_hll_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -143,7 +143,7 @@ pub(crate) fn row_hll_lib(
         ($r:ty, $t:ty) => {
             cardinality_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 hl::insert_hll_lib::<$r, $t>,
@@ -178,7 +178,7 @@ pub(crate) fn row_hll_lib(
 
 pub(crate) fn row_hll_ertl_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -188,7 +188,7 @@ pub(crate) fn row_hll_ertl_lib(
         ($r:ty, $t:ty) => {
             cardinality_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 hl::insert_hll_lib_ertl::<$r, $t>,
@@ -225,7 +225,7 @@ pub(crate) fn row_hll_ertl_lib(
 /// estimate on the insert path and the library supplies no fold.
 pub(crate) fn row_hll_hip_lib(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -235,7 +235,7 @@ pub(crate) fn row_hll_hip_lib(
         ($r:ty, $t:ty) => {
             cardinality_row::<$t>(
                 req,
-                description,
+                columns,
                 table,
                 want,
                 hl::insert_hll_lib_hip::<$r, $t>,
