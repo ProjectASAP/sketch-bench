@@ -1,6 +1,6 @@
 //! Bounded loaders for representative external trace formats.
 //!
-//! Loading, decompression, validation, ordering, and window selection all
+//! Loading, decompression, validation, and window selection all
 //! happen here, so a consumer sees the same in-memory table shape as a
 //! synthetic run.
 
@@ -87,7 +87,6 @@ struct RawRecord {
     end_ns: i64,
     groups: Vec<String>,
     value: f64,
-    source_row: usize,
 }
 
 impl ExternalTableDescription {
@@ -222,13 +221,12 @@ fn load(spec: &ExternalTableDescription, data_root: &Path) -> Result<Option<Gene
 
     let (window_start_ns, window_end_ns) = window_ns(spec)?;
     let path = data_root.join(logical);
-    let mut records = match &spec.source {
+    let records = match &spec.source {
         ExternalSource::Boom => load_boom(spec, &path, window_start_ns, window_end_ns)?,
         ExternalSource::Google => load_google(spec, &path, window_start_ns, window_end_ns)?,
         ExternalSource::Alibaba => load_alibaba(spec, &path, window_start_ns, window_end_ns)?,
         ExternalSource::Custom => load_custom(spec, &path, window_start_ns, window_end_ns)?,
     };
-    records.sort_by_key(|r| (r.start_ns, r.source_row));
     if records.len() < spec.min_records {
         if records.is_empty() {
             return Ok(None);
@@ -368,7 +366,6 @@ fn load_alibaba(
                     .map(|i| field(&record, *i, row).map(str::to_string))
                     .collect::<Result<_>>()?,
                 value,
-                source_row: row,
             },
             window_start_ns,
             window_end_ns,
@@ -432,7 +429,6 @@ fn load_custom(
                     .map(|column| field(&record, *column, row).map(str::to_string))
                     .collect::<Result<_>>()?,
                 value,
-                source_row: row,
             },
             window_start_ns,
             window_end_ns,
@@ -491,7 +487,6 @@ fn load_google(
                     .map(|i| field(&record, *i, row).map(str::to_string))
                     .collect::<Result<_>>()?,
                 value,
-                source_row: row,
             },
             window_start_ns,
             window_end_ns,
@@ -616,7 +611,6 @@ fn load_boom(
                 end_ns: timestamp,
                 groups: Vec::new(),
                 value,
-                source_row: row,
             },
             window_start_ns,
             window_end_ns,
@@ -700,7 +694,6 @@ mod tests {
                 end_ns: 10,
                 groups: Vec::new(),
                 value: 1.0,
-                source_row: 0,
             },
             0,
             10,
@@ -718,7 +711,6 @@ mod tests {
                 end_ns: 15,
                 groups: Vec::new(),
                 value: 1.0,
-                source_row: 0,
             },
             0,
             10,
@@ -769,12 +761,12 @@ window: {{start: "0", end: "50"}}
     }
 
     #[test]
-    fn point_records_keep_their_start_time() {
+    fn point_records_keep_their_start_time_in_file_order() {
         let table = custom_table(false);
         assert_eq!(table.column_title, ["start_ns", "service", "latency"]);
         assert_eq!(
             table.column(table.column_index(START_NS).unwrap()).unwrap(),
-            &ColumnData::Int64(vec![10, 30])
+            &ColumnData::Int64(vec![30, 10])
         );
         assert!(table.column_index(END_NS).is_err());
     }
@@ -788,7 +780,7 @@ window: {{start: "0", end: "50"}}
         );
         assert_eq!(
             table.column(table.column_index(END_NS).unwrap()).unwrap(),
-            &ColumnData::Int64(vec![10, 40])
+            &ColumnData::Int64(vec![40, 10])
         );
     }
 

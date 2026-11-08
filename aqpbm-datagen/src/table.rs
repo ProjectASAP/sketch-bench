@@ -384,9 +384,11 @@ impl GeneratedTable {
                     picked_titles.push(title);
                     picked.push(column);
                 }
-                _ => return Err(DataGenError::BadParam(format!(
+                _ => {
+                    return Err(DataGenError::BadParam(format!(
                     "column {i} was selected, but the table holds {held} or it was selected twice"
-                ))),
+                )))
+                }
             }
         }
         GeneratedTable::new(picked_titles, picked)
