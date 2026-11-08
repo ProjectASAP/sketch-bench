@@ -312,7 +312,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("unknown --dtype: {dtype} (expected i64|u64|f64|string)"))?;
     let external_workload = match args.workload_spec.as_deref() {
         Some(path) => {
-            let mut spec = external::load_spec(Path::new(path))?;
+            let mut spec = aqpbm_datagen::ExternalTableDescription::from_path(Path::new(path))?;
             if let Some(start) = args.window_start.clone() {
                 spec.window.start = start;
                 spec.window.end = args.window_end.clone().expect("clap requires --window-end");

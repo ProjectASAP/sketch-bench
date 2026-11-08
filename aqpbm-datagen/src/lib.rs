@@ -6,6 +6,8 @@ pub mod burst;
 pub mod column;
 pub mod dist;
 pub mod error;
+#[cfg(feature = "import")]
+pub mod import;
 pub mod rule;
 pub mod table;
 pub mod value;
@@ -17,6 +19,8 @@ pub use dist::{
     ZipfParameter,
 };
 pub use error::DataGenError;
+#[cfg(feature = "import")]
+pub use import::{ExternalSource, ExternalTableDescription, InputMode, WindowSpec};
 pub use rule::{RULE_MASK_ALL, RULE_MONOTONIC_INCREASE, RULE_NONE};
 pub use table::{splitmix64, GeneratedTable, TableDescription};
 pub use value::{ColumnData, ColumnItem, StrCfg, StringOpts};

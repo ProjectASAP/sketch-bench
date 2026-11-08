@@ -110,14 +110,9 @@ dependencies = [
  "anyhow",
  "aqpbm-core",
  "aqpbm-datagen",
- "chrono",
  "clap",
- "csv",
- "flate2",
- "polars",
  "serde",
  "serde_json",
- "serde_norway",
  "sketch-bench",
  "tikv-jemallocator",
 ]
@@ -144,6 +139,11 @@ dependencies = [
 name = "aqpbm-datagen"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "chrono",
+ "csv",
+ "flate2",
+ "polars",
  "rand 0.9.4",
  "rand_distr 0.5.1",
  "rand_xoshiro",

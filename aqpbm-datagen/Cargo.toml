@@ -11,6 +11,7 @@ description = "Synthetic data generator for the AQPBM benchmarks: a table descri
 # `aqpbm-core` can describe the `workload` field of a report record.
 # Off by default: only the schema export needs it.
 schema = ["dep:schemars"]
+import = ["dep:anyhow", "dep:chrono", "dep:csv", "dep:flate2", "dep:polars"]
 
 [dependencies]
 serde.workspace = true
@@ -21,3 +22,8 @@ rand.workspace = true
 rand_distr.workspace = true
 rand_xoshiro.workspace = true
 thiserror.workspace = true
+anyhow = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
+csv = { workspace = true, optional = true }
+flate2 = { workspace = true, optional = true }
+polars = { workspace = true, optional = true }
