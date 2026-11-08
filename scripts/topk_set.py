@@ -42,10 +42,6 @@ def derive(query_rows, signal, query, key):
     overlaps, intruders, identical, exact_size, approx_size = [], 0, 0, 0, 0
     for t in times:
         exact, approx = sets["exact"][t], sets["approx"][t]
-        for member, count in exact.items():
-            if member in approx and count:
-                out.append(row(t, "low_level", run_id, {**labels, key: member}, "relative_error",
-                               abs(approx[member] - count) / count, "ratio"))
         overlap = len(exact.keys() & approx.keys())
         overlaps.append(overlap)
         exact_size += len(exact)

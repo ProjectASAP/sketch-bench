@@ -24,22 +24,6 @@ impl Series {
     pub fn up_to(&self, end_inclusive: i64) -> &[(i64, f64)] {
         &self.points[..self.points.partition_point(|&(t, _)| t <= end_inclusive)]
     }
-
-    pub fn rank_of(
-        &self,
-        start_exclusive: i64,
-        end_inclusive: i64,
-        value: f64,
-    ) -> Option<(f64, f64)> {
-        let points = self.between(start_exclusive, end_inclusive);
-        if points.is_empty() {
-            return None;
-        }
-        let below = points.iter().filter(|&&(_, v)| v < value).count();
-        let at_most = points.iter().filter(|&&(_, v)| v <= value).count();
-        let n = points.len() as f64;
-        Some((below as f64 / n, at_most as f64 / n))
-    }
 }
 
 pub fn between(series: &[Series], start_exclusive: i64, end_inclusive: i64) -> Vec<Slice<'_>> {

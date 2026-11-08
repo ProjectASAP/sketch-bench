@@ -86,11 +86,6 @@ class DeriveTest(unittest.TestCase):
         states = {r["labels"]["arm"]: r["value"] for r in out if r["metric"] == "alert"}
         self.assertEqual(states, {"exact": "ok", "approx": "firing"})
 
-    def test_zero_exact_value_has_no_relative_error(self):
-        out = derive(query_rows([0.0, 4.0], [1.0, 5.0]), {"q": THRESHOLD})
-        errors = [(r["time"], r["value"]) for r in out if r["kind"] == "low_level"]
-        self.assertEqual(errors, [(1000, 0.25)])
-
     def test_misaligned_arms_rejected(self):
         rows = query_rows([1.0, 2.0], [1.0, 2.0])
         with self.assertRaises(ValueError):

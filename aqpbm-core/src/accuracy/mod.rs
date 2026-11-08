@@ -21,6 +21,7 @@ pub mod membership;
 pub mod quantile;
 pub mod subpopulation;
 pub mod topk;
+pub mod windowed;
 
 /// The key an exact counter tallies a value under.
 ///
@@ -186,7 +187,7 @@ where
     Ok((probes, score, per_group))
 }
 
-pub(crate) fn scalar_error(truth: f64, answers: &[f64]) -> BTreeMap<String, f64> {
+pub fn scalar_error(truth: f64, answers: &[f64]) -> BTreeMap<String, f64> {
     let est = answers.first().copied().unwrap_or(0.0);
     let abs_err = (est - truth).abs();
     let rel_err = if truth > 0.0 { abs_err / truth } else { 0.0 };

@@ -37,8 +37,6 @@ class DeriveTest(unittest.TestCase):
         self.assertEqual((capped[(1, "b", "exact")], capped[(1, "b", "approx")]), (NOT_CAPPED, CAPPED))
         self.assertEqual((capped[(1, "c", "exact")], capped[(1, "c", "approx")]), (CAPPED, NOT_CAPPED))
         self.assertEqual((capped[(2, "c", "exact")], capped[(2, "c", "approx")]), (CAPPED, CAPPED))
-        errors = [r["value"] for r in rows if r["metric"] == "relative_error"]
-        self.assertEqual(len(errors), 5)
 
     def test_use_case_document_example(self):
         exact = [{"z": 1}] * 2 + [{"x": 5, "z": 1}] * 6

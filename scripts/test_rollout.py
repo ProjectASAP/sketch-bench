@@ -119,7 +119,6 @@ class DeriveTest(unittest.TestCase):
                                     "argo_rollouts": "true_positive", "cloudwatch": "true_negative"})
         delays = {r["labels"]["signal"]: r["value"] for r in rows if r["metric"] == "decision_delay"}
         self.assertEqual(delays, {"flagger": 10, "argo_rollouts": 10})
-        self.assertEqual(sum(r["metric"] == "relative_error" for r in rows), 150)
         self.assertEqual(sum(r["metric"] == "ratio" for r in rows), 100)
 
 

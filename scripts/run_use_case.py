@@ -159,22 +159,19 @@ def unnamed(series):
     return {k: v for k, v in series.items() if k != "__name__"}
 
 
-def rank_gap(exact, approx):
-    return max(0.0, approx[0] - exact[1], exact[0] - approx[1])
+def exact_plan_errors(run_id, use_case, signal, approx_query, error, metric, unit):
+    labels = {"use_case": use_case, "signal": signal, "query": approx_query["id"]}
+    return [row(a["time"], "low_level", run_id, {**labels, **unnamed(a["series"])}, metric,
+                a["exact_plan"][error], unit)
+            for a in approx_query["answers"] if error in a.get("exact_plan", {})]
 
 
-def rank_errors(run_id, use_case, signal, exact_query, approx_query):
-    exact = {(a["time"], json.dumps(unnamed(a["series"]), sort_keys=True)): a for a in exact_query["answers"]}
-    labels = {"use_case": use_case, "signal": signal, "query": exact_query["id"]}
-    rows = []
-    for a in approx_query["answers"]:
-        if "rank" not in a:
-            continue
-        series = unnamed(a["series"])
-        e = exact[(a["time"], json.dumps(series, sort_keys=True))]
-        rows.append(row(a["time"], "low_level", run_id, {**labels, **series}, "rank_error",
-                        rank_gap(e["rank"], a["rank"]), "rank"))
-    return rows
+def rank_errors(run_id, use_case, signal, approx_query):
+    return exact_plan_errors(run_id, use_case, signal, approx_query, "rank_error", "rank_error", "rank")
+
+
+def relative_errors(run_id, use_case, signal, approx_query):
+    return exact_plan_errors(run_id, use_case, signal, approx_query, "relative_error", "relative_error", "ratio")
 
 
 def query_costs(run_id, use_case, signal, exact_query, approx_query):
@@ -210,7 +207,7 @@ def costs_of(query):
 
 def stage1(arm, exact_query, approx_query, derived):
     query = exact_query["id"]
-    ranked = any("rank" in a for a in approx_query["answers"])
+    ranked = any("rank_error" in a.get("exact_plan", {}) for a in approx_query["answers"])
     metric = "rank_error" if ranked else "relative_error"
     errors = [r["value"] for r in derived
               if r["kind"] == "low_level" and r["metric"] == metric and r["labels"]["query"] == query]
@@ -320,13 +317,14 @@ def write_arm(data, case, prefix, arm, exact, approx, trial=1):
     run_id = f"{prefix}-{arm}" if trial == 1 else f"{prefix}-{arm}-trial{trial}"
     use_case = exact["use_case"]
     exact_by_id = {q["id"]: q for q in exact["queries"]}
-    rows, errors, costs, planned, plans, unsupported = [], [], [], [], {}, {}
+    rows, errors, relative, costs, planned, plans, unsupported = [], [], [], [], [], {}, {}
     for q in approx["queries"]:
         if "unsupported" in q:
             unsupported[q["id"]] = short_reason(q["unsupported"])
             continue
         rows += query_rows(run_id, use_case, case["signal"](q["id"]), exact_by_id[q["id"]], q)
-        errors += rank_errors(run_id, use_case, case["signal"](q["id"]), exact_by_id[q["id"]], q)
+        errors += rank_errors(run_id, use_case, case["signal"](q["id"]), q)
+        relative += relative_errors(run_id, use_case, case["signal"](q["id"]), q)
         costs += query_costs(run_id, use_case, case["signal"](q["id"]), exact_by_id[q["id"]], q)
         planned.append(q)
         plans[q["id"]] = describe_plan(q["plan"])
@@ -344,7 +342,7 @@ def write_arm(data, case, prefix, arm, exact, approx, trial=1):
         "dashboard": case["dashboard"],
         "signals": {q["id"]: case.get("signals", case["signal"])(q["id"]) for q in exact["queries"]},
     }
-    derived = case["derive"](rows, planned) + errors
+    derived = case["derive"](rows, planned) + relative + errors
     details["max_relative_error"] = max_relative_errors(derived)
     details["sketch_bounds"] = [r for q in planned for r in sketch_bounds(q)]
     details["fidelity"] = headlines(derived)
@@ -374,7 +372,8 @@ def main(argv=None):
         if arm not in case["arms"]:
             parser.error(f"arm {arm} is not one of {case['arms']}")
     os.makedirs(args.raw_out, exist_ok=True)
-    exact = run_binary(args.binary, spec, os.path.join(args.raw_out, f"{prefix}-exact.json"), [])
+    exact_out = os.path.join(args.raw_out, f"{prefix}-exact.json")
+    exact = run_binary(args.binary, spec, exact_out, [])
     for q in exact["queries"]:
         if "unsupported" in q:
             sys.exit(f"the exact plan of {q['id']} is unsupported: {q['unsupported']}")
@@ -382,7 +381,7 @@ def main(argv=None):
         for trial in range(1, args.trials + 1):
             name = arm if trial == 1 else f"{arm}-trial{trial}"
             approx = run_binary(args.binary, spec, os.path.join(args.raw_out, f"{prefix}-{name}.json"),
-                                arm_flags(arm))
+                                arm_flags(arm) + ["--exact", exact_out])
             write_arm(args.data, case, prefix, arm, exact, approx, trial)
 
 if __name__ == "__main__":
