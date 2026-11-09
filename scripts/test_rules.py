@@ -96,6 +96,13 @@ class DeriveTest(unittest.TestCase):
 
 
 class DdosTest(unittest.TestCase):
+    def test_fastnetmon_bans_until_the_attack_ends(self):
+        rule = ddos_rules.RULES["fastnetmon"]
+        packets = [200000] * 400 + [5000] * 10
+        held = rule["hold"](rule["condition"]({"packets_5s": packets}))
+        self.assertEqual(held[:400], [True] * 400)
+        self.assertEqual(held[-10:], [False] * 10)
+
     def test_any_threshold(self):
         v = {"entropy_10s": [9.0, 1.0, 1.0], "distinct_10s": [1, 3001, 1], "distinct_5s": [1, 1, 1]}
         self.assertEqual(ddos_rules.any_threshold(v), [True, True, False])

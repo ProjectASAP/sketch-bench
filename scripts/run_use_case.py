@@ -92,6 +92,7 @@ USE_CASES = {
         "spec": "uc1_syn_flood.json",
         "arms": ["raw-eps0.05", "noraw-eps0.1", "noraw-eps0.05", "noraw-eps0.01",
                  "noraw-ignore-eps0.1", "noraw-ignore-eps0.05", "noraw-ignore-eps0.01"],
+        "planeval_flags": ["--executor-max-bytes", str(2 << 30)],
         "signal": lambda query: query,
         "signals": lambda query: [query] + rule_signals(ddos_rules.RULES)(query),
         "rules": ddos_rules.RULES,

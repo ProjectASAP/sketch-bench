@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 
-from rules import above, above_band, above_mean_times, cusum_above, either, for_consecutive, x_of_last_y
+from rules import above, above_band, above_mean_times, cusum_above, either, for_consecutive, latch, x_of_last_y
 
 THRESHOLDS = {"entropy_10s": 8.5, "distinct_10s": 3000, "distinct_5s": 1700}
 RED_HAT_EVALUATIONS = 3
 DATADOG_HISTORY, DATADOG_SIGMAS = 60, 3
 KENTIK_HISTORY, KENTIK_FACTOR, KENTIK_TIMES, KENTIK_WINDOW = 60, 2.0, 3, 6
 CUSUM_TRAINING, CUSUM_K, CUSUM_H = 50, 0.5, 5
+EVALUATION_SECONDS = 5
+FASTNETMON_PPS, FASTNETMON_BAN_SECONDS = 20000, 1900
+RED_HAT_FLOWS_PER_SECOND = 300
 
 
 def server(labels):
@@ -32,8 +35,16 @@ def netflow_logic(v):
     return cusum_above(v["entropy_10s"], CUSUM_TRAINING, CUSUM_K, CUSUM_H)
 
 
+def fastnetmon(v):
+    return above(v["packets_5s"], FASTNETMON_PPS * 5)
+
+
+def red_hat(v):
+    return above(v["distinct_1m"], RED_HAT_FLOWS_PER_SECOND * 60)
+
+
 RULES = {
-    "red_hat_for_15s": {
+    "promsketch_for_15s": {
         "queries": tuple(THRESHOLDS), "condition": any_threshold, "entity": server,
         "hold": for_consecutive(RED_HAT_EVALUATIONS),
         "description": "Any of the PromSketch thresholds (entropy_10s > 8.5, distinct_10s > 3,000, "
@@ -52,4 +63,14 @@ RULES = {
         "description": "One-sided CUSUM on source IP entropy: mean and standard deviation from the first "
                        "50 evaluations, slack 0.5 and alarm at 5 standard deviations (NetFlow Logic patent; "
                        "parameters ours)"},
+    "fastnetmon": {
+        "queries": ("packets_5s",), "condition": fastnetmon, "entity": server,
+        "hold": latch(FASTNETMON_BAN_SECONDS // EVALUATION_SECONDS, extend=False, while_held=True),
+        "description": "More than 20,000 packets per second averaged over 5 s; ban for 1,900 s, and until "
+                       "the attack ends (FastNetMon defaults with unban_only_if_attack_finished)"},
+    "red_hat": {
+        "queries": ("distinct_1m",), "condition": red_hat, "entity": server,
+        "hold": for_consecutive(RED_HAT_EVALUATIONS),
+        "description": "More than 300 SYN-only flows per second over 1 minute for 15 s, counting each source "
+                       "address as one flow (Red Hat Network Observability; flows as distinct sources ours)"},
 }

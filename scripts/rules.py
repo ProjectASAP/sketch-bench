@@ -163,14 +163,17 @@ def x_of_last_y(x, y):
 def latch(evaluations, extend=True, while_held=False):
     """Active for `evaluations` after the condition holds.
 
-    extend: a new hit restarts the time. while_held: also active while the condition still holds.
+    extend: a hit while active restarts the time. while_held: the state also outlasts its time while the
+    condition still holds, and ends at the first evaluation after that where it does not.
     """
     def hold(flags):
-        out, until = [], -1
+        out, until, active = [], 0, False
         for i, f in enumerate(flags):
-            if f and (extend or i >= until):
-                until = i + evaluations
-            out.append(i < until or (while_held and f))
+            if active and i >= until and not (while_held and f):
+                active = False
+            if f and (extend or not active):
+                until, active = i + evaluations, True
+            out.append(active)
         return out
     return hold
 

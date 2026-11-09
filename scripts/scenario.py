@@ -20,36 +20,42 @@ ACTIONS = {
 def change_text(change):
     if "scale" in change:
         return f"x{change['scale']['factor']:g}"
+    if "rate" in change:
+        return f"rate x{change['rate']['factor']:g}"
     return f"{change['mix']['share']:.0%} mix"
 
 
 def incidents(spec, entity_of):
-    """Every injected phase that does not span the whole run, with the entities it touches.
+    """Every injected change that does not span the whole run, with the entities it touches.
 
-    entity_of(labels) names a series' entity; None means the use case has no entities.
-    A metric whose series come from values names its entities by the values the phase mixes in.
+    Phases of one series group over the same span are one incident. entity_of(labels) names a series'
+    entity; None means the use case has no entities. A metric whose series come from values names its
+    entities by the values its phases mix in.
     """
     out = []
     for metric in spec["metrics"]:
         for group in metric["series"]:
+            spans = {}
             for phase in group.get("phases", []):
                 if phase["start_offset_ms"] <= 0 and phase["end_offset_ms"] >= spec["duration_ms"]:
                     continue
-                name = (f"{metric['name']} {change_text(phase['change'])} "
-                        f"{phase['start_offset_ms'] // 60000}-{phase['end_offset_ms'] // 60000} min")
-                spans = []
+                key = (phase["start_offset_ms"], phase["end_offset_ms"], phase.get("stagger_ms", 0))
+                spans.setdefault(key, []).append(phase["change"])
+            for (start, end, stagger), changes in spans.items():
+                name = (f"{metric['name']} {' + '.join(change_text(c) for c in changes)} "
+                        f"{start // 60000}-{end // 60000} min")
                 if metric.get("label_from_value"):
-                    mixed = phase["change"].get("mix", {}).get("distribution", {})
-                    values = range(int(mixed.get("lower_bound", 0)), int(mixed.get("upper_bound", 0)))
-                    spans = [(str(v), 0) for v in values]
+                    mixed = [c["mix"]["distribution"] for c in changes if "mix" in c]
+                    entities = [(str(v), 0) for d in mixed
+                                for v in range(int(d.get("lower_bound", 0)), int(d.get("upper_bound", 0)))]
                 else:
+                    entities = []
                     for i in range(group.get("count", 1)):
                         labels = {k: v.replace("{i}", str(i)) for k, v in group["labels"].items()}
-                        spans.append((entity_of(labels) if entity_of else None, i * phase.get("stagger_ms", 0)))
-                for entity, shift in spans:
-                    out.append({"name": name, "entity": entity,
-                                "start": spec["start_ms"] + phase["start_offset_ms"] + shift,
-                                "end": spec["start_ms"] + phase["end_offset_ms"] + shift})
+                        entities.append((entity_of(labels) if entity_of else None, i * stagger))
+                for entity, shift in entities:
+                    out.append({"name": name, "entity": entity, "start": spec["start_ms"] + start + shift,
+                                "end": spec["start_ms"] + end + shift})
     return out
 
 
