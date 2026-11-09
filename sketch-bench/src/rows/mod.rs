@@ -5,7 +5,7 @@
 use std::marker::PhantomData;
 use std::rc::Rc;
 
-use crate::request::{Dtype, Requirement};
+use crate::request::{ColumnRoles, Dtype, Requirement};
 use crate::wrappers::{
     interleave, BuildError, Folds, InsertBody, InsertStepBody, MergeSplit, ParallelInsertBody,
     PrepareBody, QueryBody, QueryPass, StepPass,
@@ -36,13 +36,15 @@ use aqpbm_core::measure::{
     record_calls, runs_for, Measurement, Pass as CorePass, Report, RunOutcome, MIN_MERGE_SHARDS,
 };
 use aqpbm_core::metrics::{Metric, Operation};
-use aqpbm_core::{ColumnItem, GeneratedTable, TableDescription};
+use aqpbm_core::{ColumnItem, GeneratedTable, KeyOffset};
 
 const KEYED_KEY_COLUMN: usize = 0;
 
-fn value_column(description: &TableDescription) -> usize {
-    description.column_spec.len().saturating_sub(1)
+pub struct ValueColumn {
+    pub index: usize,
+    pub key_offset: Option<KeyOffset>,
 }
+
 /// One invocation's worth of work: one closure per measurement, in the order
 /// they were asked for. The provenance is not here — the frontend generated the
 /// data and already holds the description that names it.
@@ -52,19 +54,19 @@ pub type Measurements = Vec<((Operation, Metric), Measurement)>;
 /// request and the data, handing back the closures.
 pub type RowBinding = fn(
     &Requirement,
-    &TableDescription,
+    &ValueColumn,
     GeneratedTable,
     &[(Operation, Metric)],
 ) -> Result<Measurements, RunError>;
 
-type Materialise<I> = fn(&TableDescription, GeneratedTable) -> Result<Rc<Vec<I>>, RunError>;
+type Materialise<I> = fn(&ValueColumn, GeneratedTable) -> Result<Rc<Vec<I>>, RunError>;
 
 /// Bind a row to its wrapper and hand back the closures. The registry declares
 /// the pair; [`binding`] is what names the code, so a pair the registry lists
 /// and this table does not is a disagreement, reported as one.
 pub fn measurements(
     req: &Requirement,
-    description: &TableDescription,
+    columns: &ColumnRoles,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -80,7 +82,14 @@ pub fn measurements(
             req.variant, req.library
         ))
     })?;
-    row(req, description, table, want)
+    let mut order = columns.labels.clone();
+    order.push(columns.value);
+    let table = table.select(&order)?;
+    let value_column = ValueColumn {
+        index: columns.labels.len(),
+        key_offset: columns.value_key_offset.clone(),
+    };
+    row(req, &value_column, table, want)
 }
 
 /// The pair a registry entry names, bound to the code that runs it.

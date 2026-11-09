@@ -4,7 +4,7 @@ use crate::wrappers::{univmon_q as uq, univmon_two_tier as utt};
 
 pub(crate) fn row_univmon_cardinality_lib(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -12,10 +12,10 @@ pub(crate) fn row_univmon_cardinality_lib(
         ($k:ty) => {
             keyed_row::<$k, _>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
-                KeyedCardinalityGT::<$k>::over_columns(KEYED_KEY_COLUMN, value_column(description)),
+                KeyedCardinalityGT::<$k>::over_columns(KEYED_KEY_COLUMN, value_column.index),
                 ul::insert_univmon_lib::<$k>,
                 ul::insert_step_univmon_lib::<$k>,
                 ul::query_univmon_lib_cardinality::<$k>,
@@ -38,7 +38,7 @@ pub(crate) fn row_univmon_cardinality_lib(
 
 pub(crate) fn row_univmon_l1_norm_lib(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -46,10 +46,10 @@ pub(crate) fn row_univmon_l1_norm_lib(
         ($k:ty) => {
             keyed_row::<$k, _>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
-                KeyedL1NormGT::<$k>::over_columns(KEYED_KEY_COLUMN, value_column(description)),
+                KeyedL1NormGT::<$k>::over_columns(KEYED_KEY_COLUMN, value_column.index),
                 ul::insert_univmon_lib::<$k>,
                 ul::insert_step_univmon_lib::<$k>,
                 ul::query_univmon_lib_l1_norm::<$k>,
@@ -72,7 +72,7 @@ pub(crate) fn row_univmon_l1_norm_lib(
 
 pub(crate) fn row_univmon_l1_norm_oxide(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -80,10 +80,10 @@ pub(crate) fn row_univmon_l1_norm_oxide(
         ($k:ty) => {
             keyed_row::<$k, _>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
-                KeyedL1NormGT::<$k>::over_columns(KEYED_KEY_COLUMN, value_column(description)),
+                KeyedL1NormGT::<$k>::over_columns(KEYED_KEY_COLUMN, value_column.index),
                 uo::insert_univmon_oxide::<$k>,
                 uo::insert_step_univmon_oxide::<$k>,
                 uo::query_univmon_oxide_l1_norm::<$k>,
@@ -106,7 +106,7 @@ pub(crate) fn row_univmon_l1_norm_oxide(
 
 pub(crate) fn row_univmon_l2_norm_lib(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -114,10 +114,10 @@ pub(crate) fn row_univmon_l2_norm_lib(
         ($k:ty) => {
             keyed_row::<$k, _>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
-                KeyedL2NormGT::<$k>::over_columns(KEYED_KEY_COLUMN, value_column(description)),
+                KeyedL2NormGT::<$k>::over_columns(KEYED_KEY_COLUMN, value_column.index),
                 ul::insert_univmon_lib::<$k>,
                 ul::insert_step_univmon_lib::<$k>,
                 ul::query_univmon_lib_l2_norm::<$k>,
@@ -140,7 +140,7 @@ pub(crate) fn row_univmon_l2_norm_lib(
 
 pub(crate) fn row_univmon_l2_norm_oxide(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -148,10 +148,10 @@ pub(crate) fn row_univmon_l2_norm_oxide(
         ($k:ty) => {
             keyed_row::<$k, _>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
-                KeyedL2NormGT::<$k>::over_columns(KEYED_KEY_COLUMN, value_column(description)),
+                KeyedL2NormGT::<$k>::over_columns(KEYED_KEY_COLUMN, value_column.index),
                 uo::insert_univmon_oxide::<$k>,
                 uo::insert_step_univmon_oxide::<$k>,
                 uo::query_univmon_oxide_l2_norm::<$k>,
@@ -174,7 +174,7 @@ pub(crate) fn row_univmon_l2_norm_oxide(
 
 pub(crate) fn row_univmon_entropy_lib(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -182,10 +182,10 @@ pub(crate) fn row_univmon_entropy_lib(
         ($k:ty) => {
             keyed_row::<$k, _>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
-                KeyedEntropyGT::<$k>::over_columns(KEYED_KEY_COLUMN, value_column(description)),
+                KeyedEntropyGT::<$k>::over_columns(KEYED_KEY_COLUMN, value_column.index),
                 ul::insert_univmon_lib::<$k>,
                 ul::insert_step_univmon_lib::<$k>,
                 ul::query_univmon_lib_entropy::<$k>,
@@ -208,7 +208,7 @@ pub(crate) fn row_univmon_entropy_lib(
 
 pub(crate) fn row_univmon_entropy_oxide(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -216,10 +216,10 @@ pub(crate) fn row_univmon_entropy_oxide(
         ($k:ty) => {
             keyed_row::<$k, _>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
-                KeyedEntropyGT::<$k>::over_columns(KEYED_KEY_COLUMN, value_column(description)),
+                KeyedEntropyGT::<$k>::over_columns(KEYED_KEY_COLUMN, value_column.index),
                 uo::insert_univmon_oxide::<$k>,
                 uo::insert_step_univmon_oxide::<$k>,
                 uo::query_univmon_oxide_entropy::<$k>,
@@ -251,7 +251,7 @@ fn f64_only(req: &Requirement, got: Dtype) -> RunError {
 
 pub(crate) fn row_univmon_two_tier_cardinality_lib(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -259,10 +259,10 @@ pub(crate) fn row_univmon_two_tier_cardinality_lib(
         ($t:ty) => {
             keyed_row::<$t, _>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
-                KeyedCardinalityGT::<$t>::over_columns(KEYED_KEY_COLUMN, value_column(description)),
+                KeyedCardinalityGT::<$t>::over_columns(KEYED_KEY_COLUMN, value_column.index),
                 utt::insert_univmon_two_tier_lib::<$t>,
                 utt::insert_step_univmon_two_tier_lib::<$t>,
                 utt::query_univmon_two_tier_lib_cardinality::<$t>,
@@ -285,7 +285,7 @@ pub(crate) fn row_univmon_two_tier_cardinality_lib(
 
 pub(crate) fn row_univmon_two_tier_l1_norm_lib(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -293,10 +293,10 @@ pub(crate) fn row_univmon_two_tier_l1_norm_lib(
         ($t:ty) => {
             keyed_row::<$t, _>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
-                KeyedL1NormGT::<$t>::over_columns(KEYED_KEY_COLUMN, value_column(description)),
+                KeyedL1NormGT::<$t>::over_columns(KEYED_KEY_COLUMN, value_column.index),
                 utt::insert_univmon_two_tier_lib::<$t>,
                 utt::insert_step_univmon_two_tier_lib::<$t>,
                 utt::query_univmon_two_tier_lib_l1_norm::<$t>,
@@ -319,7 +319,7 @@ pub(crate) fn row_univmon_two_tier_l1_norm_lib(
 
 pub(crate) fn row_univmon_two_tier_l2_norm_lib(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -327,10 +327,10 @@ pub(crate) fn row_univmon_two_tier_l2_norm_lib(
         ($t:ty) => {
             keyed_row::<$t, _>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
-                KeyedL2NormGT::<$t>::over_columns(KEYED_KEY_COLUMN, value_column(description)),
+                KeyedL2NormGT::<$t>::over_columns(KEYED_KEY_COLUMN, value_column.index),
                 utt::insert_univmon_two_tier_lib::<$t>,
                 utt::insert_step_univmon_two_tier_lib::<$t>,
                 utt::query_univmon_two_tier_lib_l2_norm::<$t>,
@@ -353,7 +353,7 @@ pub(crate) fn row_univmon_two_tier_l2_norm_lib(
 
 pub(crate) fn row_univmon_two_tier_entropy_lib(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -361,10 +361,10 @@ pub(crate) fn row_univmon_two_tier_entropy_lib(
         ($t:ty) => {
             keyed_row::<$t, _>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
-                KeyedEntropyGT::<$t>::over_columns(KEYED_KEY_COLUMN, value_column(description)),
+                KeyedEntropyGT::<$t>::over_columns(KEYED_KEY_COLUMN, value_column.index),
                 utt::insert_univmon_two_tier_lib::<$t>,
                 utt::insert_step_univmon_two_tier_lib::<$t>,
                 utt::query_univmon_two_tier_lib_entropy::<$t>,
@@ -387,7 +387,7 @@ pub(crate) fn row_univmon_two_tier_entropy_lib(
 
 pub(crate) fn row_univmon_q_quantile_lib(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -395,7 +395,7 @@ pub(crate) fn row_univmon_q_quantile_lib(
         ($t:ty) => {
             quantile_row::<$t>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
                 uq::insert_univmon_q_lib::<$t>,
@@ -420,7 +420,7 @@ pub(crate) fn row_univmon_q_quantile_lib(
 
 pub(crate) fn row_univmon_q_cardinality_lib(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -428,7 +428,7 @@ pub(crate) fn row_univmon_q_cardinality_lib(
         ($t:ty) => {
             cardinality_row::<$t>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
                 uq::insert_univmon_q_lib::<$t>,
@@ -451,7 +451,7 @@ pub(crate) fn row_univmon_q_cardinality_lib(
 
 pub(crate) fn row_univmon_q_frequency_lib(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -459,7 +459,7 @@ pub(crate) fn row_univmon_q_frequency_lib(
         ($t:ty) => {
             frequency_row::<$t>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
                 uq::insert_univmon_q_lib::<$t>,
@@ -482,7 +482,7 @@ pub(crate) fn row_univmon_q_frequency_lib(
 
 pub(crate) fn row_univmon_q_topk_lib(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -490,7 +490,7 @@ pub(crate) fn row_univmon_q_topk_lib(
         ($t:ty) => {
             topk_row::<$t>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
                 uq::answered_k_univmon_q_lib(&req.params).map_err(cannot_build)?,

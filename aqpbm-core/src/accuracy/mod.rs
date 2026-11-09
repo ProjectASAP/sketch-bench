@@ -271,10 +271,6 @@ where
 
 #[cfg(test)]
 pub(crate) fn table_of(titles: &[&str], data: Vec<ColumnData>) -> GeneratedTable {
-    GeneratedTable {
-        column_num: data.len() as u32,
-        column_title: titles.iter().map(|t| (*t).to_string()).collect(),
-        row_num: data.first().map(|c| c.len()).unwrap_or(0) as u64,
-        data,
-    }
+    GeneratedTable::new(titles.iter().map(|t| (*t).to_string()).collect(), data)
+        .expect("the test's columns are one length")
 }

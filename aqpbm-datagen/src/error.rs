@@ -16,4 +16,6 @@ pub enum DataGenError {
         held: &'static str,
         wanted: &'static str,
     },
+    #[error("import: {0}")]
+    Import(String),
 }

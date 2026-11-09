@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use aqpbm_datagen::{ColumnData, DataGenError, GeneratedTable};
+use aqpbm_datagen::{DataGenError, GeneratedTable};
 
 use super::GroundTruth;
 
@@ -49,7 +49,7 @@ impl<G: GroundTruth> Windowed<G> {
                 if from >= to {
                     continue;
                 }
-                let window = rows_of(table, &rows[from..to]);
+                let window = table.take_rows(&rows[from..to]);
                 let truth = self.ground_truth.truth(&window)?;
                 let probes = self.ground_truth.probes(&truth);
                 let scores = answer(end, &group, &probes)
@@ -65,33 +65,12 @@ impl<G: GroundTruth> Windowed<G> {
     }
 }
 
-fn rows_of(table: &GeneratedTable, rows: &[usize]) -> GeneratedTable {
-    GeneratedTable {
-        column_num: table.column_num,
-        column_title: table.column_title.clone(),
-        row_num: rows.len() as u64,
-        data: table
-            .data
-            .iter()
-            .map(|column| gather(column, rows))
-            .collect(),
-    }
-}
-
-fn gather(column: &ColumnData, rows: &[usize]) -> ColumnData {
-    match column {
-        ColumnData::Int64(v) => ColumnData::Int64(rows.iter().map(|&r| v[r]).collect()),
-        ColumnData::Unsigned64(v) => ColumnData::Unsigned64(rows.iter().map(|&r| v[r]).collect()),
-        ColumnData::Float64(v) => ColumnData::Float64(rows.iter().map(|&r| v[r]).collect()),
-        ColumnData::String(v) => ColumnData::String(rows.iter().map(|&r| v[r].clone()).collect()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::accuracy::cardinality::CardinalityGT;
     use crate::accuracy::table_of;
+    use aqpbm_datagen::ColumnData;
 
     fn table() -> GeneratedTable {
         table_of(

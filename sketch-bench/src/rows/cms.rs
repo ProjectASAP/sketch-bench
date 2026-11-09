@@ -5,7 +5,7 @@ use crate::wrappers::cms::{datasketches as cd, oxide as co, polars as cp, sketch
 
 pub(crate) fn row_cms_oxide(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -13,7 +13,7 @@ pub(crate) fn row_cms_oxide(
         ($t:ty) => {
             frequency_row::<$t>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
                 co::insert_cms_oxide::<$t>,
@@ -38,7 +38,7 @@ pub(crate) fn row_cms_oxide(
 
 pub(crate) fn row_cms_datasketches(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -46,7 +46,7 @@ pub(crate) fn row_cms_datasketches(
         ($t:ty) => {
             frequency_row::<$t>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
                 cd::insert_cms_datasketches::<$t>,
@@ -71,7 +71,7 @@ pub(crate) fn row_cms_datasketches(
 
 pub(crate) fn row_cms_polars(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -79,7 +79,7 @@ pub(crate) fn row_cms_polars(
         ($t:ty) => {
             frequency_row::<$t>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
                 cp::insert_polars_frequency_cms::<$t>,
@@ -100,7 +100,7 @@ pub(crate) fn row_cms_polars(
 
 pub(crate) fn row_cms_fastpath_vector2d_lib(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -108,7 +108,7 @@ pub(crate) fn row_cms_fastpath_vector2d_lib(
         ($t:ty) => {
             frequency_row::<$t>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
                 cl::insert_cms_lib_vector2d_fast::<$t>,
@@ -133,7 +133,7 @@ pub(crate) fn row_cms_fastpath_vector2d_lib(
 
 pub(crate) fn row_cms_regularpath_vector2d_lib(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -141,7 +141,7 @@ pub(crate) fn row_cms_regularpath_vector2d_lib(
         ($t:ty) => {
             frequency_row::<$t>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
                 cl::insert_cms_lib_vector2d_regular::<$t>,

@@ -3,7 +3,7 @@ use crate::wrappers::kmv as km;
 
 pub(crate) fn row_kmv_lib(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -11,7 +11,7 @@ pub(crate) fn row_kmv_lib(
         ($t:ty) => {
             cardinality_row::<$t>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
                 km::insert_kmv_lib::<$t>,

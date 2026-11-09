@@ -346,6 +346,66 @@ pub struct GeneratedTable {
 }
 
 impl GeneratedTable {
+    pub fn new(column_title: Vec<String>, data: Vec<ColumnData>) -> Result<Self, DataGenError> {
+        let table = GeneratedTable {
+            column_num: data.len() as u32,
+            row_num: data.first().map_or(0, |column| column.len() as u64),
+            column_title,
+            data,
+        };
+        table.validate()?;
+        Ok(table)
+    }
+
+    pub fn select(self, columns: &[usize]) -> Result<GeneratedTable, DataGenError> {
+        let held = self.data.len();
+        let mut titles: Vec<Option<String>> = self.column_title.into_iter().map(Some).collect();
+        let mut data: Vec<Option<ColumnData>> = self.data.into_iter().map(Some).collect();
+        let mut picked_titles = Vec::with_capacity(columns.len());
+        let mut picked = Vec::with_capacity(columns.len());
+        for &i in columns {
+            match (
+                titles.get_mut(i).and_then(Option::take),
+                data.get_mut(i).and_then(Option::take),
+            ) {
+                (Some(title), Some(column)) => {
+                    picked_titles.push(title);
+                    picked.push(column);
+                }
+                _ => {
+                    return Err(DataGenError::BadParam(format!(
+                    "column {i} was selected, but the table holds {held} or it was selected twice"
+                )))
+                }
+            }
+        }
+        GeneratedTable::new(picked_titles, picked)
+    }
+
+    pub fn take_rows(&self, rows: &[usize]) -> GeneratedTable {
+        GeneratedTable {
+            column_num: self.column_num,
+            column_title: self.column_title.clone(),
+            row_num: rows.len() as u64,
+            data: self
+                .data
+                .iter()
+                .map(|column| match column {
+                    ColumnData::Int64(v) => ColumnData::Int64(rows.iter().map(|&r| v[r]).collect()),
+                    ColumnData::Unsigned64(v) => {
+                        ColumnData::Unsigned64(rows.iter().map(|&r| v[r]).collect())
+                    }
+                    ColumnData::Float64(v) => {
+                        ColumnData::Float64(rows.iter().map(|&r| v[r]).collect())
+                    }
+                    ColumnData::String(v) => {
+                        ColumnData::String(rows.iter().map(|&r| v[r].clone()).collect())
+                    }
+                })
+                .collect(),
+        }
+    }
+
     /// Inject the same deterministic interval-burst schedule into every column.
     /// Reusing the seed preserves row alignment for multi-column workloads.
     pub fn inject_bursts(&mut self, spec: BurstSpec) -> Result<(), DataGenError> {

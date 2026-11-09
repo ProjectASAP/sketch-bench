@@ -6,10 +6,10 @@ use super::*;
 /// the row's own width. The stream is moved into an `Rc` rather than copied:
 /// every measurement of this row reads the same one.
 pub(super) fn peel<T: ColumnItem>(
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
 ) -> Result<Rc<Vec<T>>, RunError> {
-    let column = table.into_column(value_column(description))?;
+    let column = table.into_column(value_column.index)?;
     Ok(Rc::new(T::from_column(column)?))
 }
 
@@ -18,10 +18,10 @@ pub(super) fn peel<T: ColumnItem>(
 /// than on the insert path, so a wrapper feeding a library that takes `"a;b"`
 /// pays nothing for it per item.
 pub(super) fn peel_labeled<V: ColumnItem>(
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
 ) -> Result<Rc<Vec<(String, V)>>, RunError> {
-    let (labels, values) = label_columns::<V>(description, table)?;
+    let (labels, values) = label_columns::<V>(value_column, table)?;
     let mut items = Vec::with_capacity(values.len());
     for (row, value) in values.into_iter().enumerate() {
         let mut key = String::new();
@@ -40,10 +40,10 @@ pub(super) fn peel_labeled<V: ColumnItem>(
 /// The same records with the label values kept apart, as ASAPQuery's
 /// `KeyByLabelValues` holds them.
 pub(super) fn peel_grouped<V: ColumnItem>(
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
 ) -> Result<Rc<Vec<(Vec<String>, V)>>, RunError> {
-    let (labels, values) = label_columns::<V>(description, table)?;
+    let (labels, values) = label_columns::<V>(value_column, table)?;
     let items = values
         .into_iter()
         .enumerate()
@@ -55,15 +55,15 @@ pub(super) fn peel_grouped<V: ColumnItem>(
 /// The label columns, and the value column at the row's width.
 #[allow(clippy::type_complexity)]
 fn label_columns<V: ColumnItem>(
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
 ) -> Result<(Vec<Vec<String>>, Vec<V>), RunError> {
-    let value_column = value_column(description);
+    let value_column = value_column.index;
     if value_column == 0 {
         return Err(RunError::Sketch(format!(
             "this row ingests labelled records, so it needs at least one label \
-             column before the value column; the description has {} column(s)",
-            description.column_spec.len(),
+             column before the value column; the table has {} column(s)",
+            table.column_num,
         )));
     }
     let titles = table.column_title.clone();
@@ -99,15 +99,15 @@ fn label_columns<V: ColumnItem>(
 }
 
 pub(super) fn peel_keyed<K: ColumnItem>(
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
 ) -> Result<Rc<Vec<(K, i64)>>, RunError> {
-    let value_column = value_column(description);
+    let value_column = value_column.index;
     if value_column == 0 {
         return Err(RunError::Sketch(format!(
             "this row ingests keyed records, so it needs a key column before the \
-             value column; the description has {} column(s)",
-            description.column_spec.len(),
+             value column; the table has {} column(s)",
+            table.column_num,
         )));
     }
     let titles = table.column_title.clone();

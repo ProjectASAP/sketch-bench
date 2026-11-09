@@ -5,7 +5,7 @@ use crate::wrappers::cs::{oxide as so, polars as sp, sketchlib as sl};
 
 pub(crate) fn row_countsketch_oxide(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -13,7 +13,7 @@ pub(crate) fn row_countsketch_oxide(
         ($t:ty) => {
             frequency_row::<$t>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
                 so::insert_cs_oxide,
@@ -38,7 +38,7 @@ pub(crate) fn row_countsketch_oxide(
 
 pub(crate) fn row_countsketch_polars(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -46,7 +46,7 @@ pub(crate) fn row_countsketch_polars(
         ($t:ty) => {
             frequency_row::<$t>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
                 sp::insert_polars_frequency_cs,
@@ -67,7 +67,7 @@ pub(crate) fn row_countsketch_polars(
 
 pub(crate) fn row_countsketch_fastpath_vector2d_lib(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -75,7 +75,7 @@ pub(crate) fn row_countsketch_fastpath_vector2d_lib(
         ($t:ty) => {
             frequency_row::<$t>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
                 sl::insert_cs_lib_vector2d_fast,
@@ -100,7 +100,7 @@ pub(crate) fn row_countsketch_fastpath_vector2d_lib(
 
 pub(crate) fn row_countsketch_regularpath_vector2d_lib(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -108,7 +108,7 @@ pub(crate) fn row_countsketch_regularpath_vector2d_lib(
         ($t:ty) => {
             frequency_row::<$t>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
                 sl::insert_cs_lib_vector2d_regular,
@@ -133,7 +133,7 @@ pub(crate) fn row_countsketch_regularpath_vector2d_lib(
 
 pub(crate) fn row_countsketch_fastpath_fixedmatrix_32k_parallel_lib(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -141,7 +141,7 @@ pub(crate) fn row_countsketch_fastpath_fixedmatrix_32k_parallel_lib(
         ($t:ty) => {
             timed_row::<$t>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
                 sl::insert_parallel_cs_fast_path::<$t>,

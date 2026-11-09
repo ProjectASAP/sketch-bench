@@ -12,7 +12,7 @@ fn i64_only(req: &Requirement, got: Dtype) -> RunError {
 
 pub(crate) fn row_nitro_count_min_lib(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -20,7 +20,7 @@ pub(crate) fn row_nitro_count_min_lib(
         ($t:ty) => {
             frequency_row(
                 req,
-                description,
+                value_column,
                 table,
                 want,
                 ncm::insert_nitro_count_min_lib,
@@ -43,7 +43,7 @@ pub(crate) fn row_nitro_count_min_lib(
 
 pub(crate) fn row_nitro_count_sketch_lib(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -51,7 +51,7 @@ pub(crate) fn row_nitro_count_sketch_lib(
         ($t:ty) => {
             frequency_row(
                 req,
-                description,
+                value_column,
                 table,
                 want,
                 ncs::insert_nitro_count_sketch_lib,

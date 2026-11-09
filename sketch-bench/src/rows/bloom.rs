@@ -3,7 +3,7 @@ use crate::wrappers::bloom as bl;
 
 pub(crate) fn row_bloom_lib(
     req: &Requirement,
-    description: &TableDescription,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -11,7 +11,7 @@ pub(crate) fn row_bloom_lib(
         ($t:ty) => {
             membership_row::<$t>(
                 req,
-                description,
+                value_column,
                 table,
                 want,
                 bl::insert_bloom_lib::<$t>,

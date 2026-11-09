@@ -50,7 +50,7 @@ use report_sink::ReportSink;
 // them — is sketch-domain knowledge and lives in `sketch-bench`. The CLI does
 // not know the set; it asks.
 use sketch_bench::registry;
-use sketch_bench::request::Requirement;
+use sketch_bench::request::{ColumnRoles, Requirement};
 
 /// What is measured. No default and no `all`: a request names the measurements
 /// it wants, and a shorthand that swept every operation against every metric
@@ -312,10 +312,12 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("unknown --dtype: {dtype} (expected i64|u64|f64|string)"))?;
     let external_workload = match args.workload_spec.as_deref() {
         Some(path) => {
-            let mut spec = external::load_spec(Path::new(path))?;
+            let mut spec = aqpbm_datagen::ExternalTableDescription::from_path(Path::new(path))?;
             if let Some(start) = args.window_start.clone() {
-                spec.window.start = start;
-                spec.window.end = args.window_end.clone().expect("clap requires --window-end");
+                spec.window = Some(aqpbm_datagen::WindowSpec {
+                    start,
+                    end: args.window_end.clone().expect("clap requires --window-end"),
+                });
             }
             let loaded = external::load(&spec, Path::new(&args.data_root))?;
             if loaded.is_none() {
@@ -431,7 +433,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     let algorithm =
         registry::algorithm_of(&variant).expect("check proved the variant is registered");
     let mut sink = ReportSink::open(args.report.as_deref())?;
-    let mut run_trial = |dataset: TableDescription,
+    let mut run_trial = |columns: ColumnRoles,
                          table: GeneratedTable,
                          workload: WorkloadDescription,
                          trial_params: &ParamSet,
@@ -445,7 +447,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
 
         // The closures, built at the row's own item type over the data just made.
         // Construction failures land here, before anything is timed.
-        let prepared = sketch_bench::rows::measurements(&req, &dataset, table, &want)
+        let prepared = sketch_bench::rows::measurements(&req, &columns, table, &want)
             .map_err(|e| anyhow::anyhow!("{variant}/{library} cannot run: {e}"))?;
 
         // One instruction at a time. Core is handed a closure and a run count and
@@ -518,13 +520,7 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
     };
 
     if let Some(loaded) = external_workload {
-        return run_trial(
-            loaded.table_shape,
-            loaded.table,
-            loaded.workload,
-            &params,
-            0,
-        );
+        return run_trial(loaded.columns, loaded.table, loaded.workload, &params, 0);
     }
     let base_description = base_description.expect("synthetic workload spec");
     let key_columns = trials::key_columns(row.comparator, &base_description);
@@ -562,7 +558,13 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         };
         trial_data()
             .and_then(|(dataset, table, workload)| {
-                run_trial(dataset, table, workload, &trial_params, trial)
+                run_trial(
+                    column_roles(&dataset),
+                    table,
+                    workload,
+                    &trial_params,
+                    trial,
+                )
             })
             .map_err(|e| match trial_record {
                 Some(mode) => e.context(format!(
@@ -573,6 +575,18 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
             })?;
     }
     Ok(())
+}
+
+fn column_roles(description: &TableDescription) -> ColumnRoles {
+    let value = description.column_spec.len().saturating_sub(1);
+    ColumnRoles {
+        labels: (0..value).collect(),
+        value,
+        value_key_offset: description
+            .column_spec
+            .get(value)
+            .and_then(|spec| spec.key_offset.clone()),
+    }
 }
 
 fn generate_with_bursts(
