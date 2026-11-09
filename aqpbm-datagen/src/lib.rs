@@ -20,9 +20,7 @@ pub use dist::{
 };
 pub use error::DataGenError;
 #[cfg(feature = "import")]
-pub use import::{
-    ExternalSource, ExternalTableDescription, InputMode, WindowSpec, END_NS, START_NS,
-};
+pub use import::{ExternalSource, ExternalTableDescription, InputMode, WindowSpec};
 pub use rule::{RULE_MASK_ALL, RULE_MONOTONIC_INCREASE, RULE_NONE};
 pub use table::{splitmix64, GeneratedTable, TableDescription};
 pub use value::{ColumnData, ColumnItem, StrCfg, StringOpts};

@@ -35,13 +35,10 @@ pub fn load(spec: &ExternalTableDescription, data_root: &Path) -> Result<Option<
         source_timestamp_unit: spec.source_timestamp_unit(),
         timestamp_unit: "nanoseconds".to_string(),
     });
+    let value = table.column_num as usize - 1;
     let columns = ColumnRoles {
-        labels: spec
-            .group_columns
-            .iter()
-            .map(|title| table.column_index(title))
-            .collect::<Result<_, _>>()?,
-        value: table.column_index(&spec.value_column)?,
+        labels: (value - spec.group_columns.len()..value).collect(),
+        value,
         value_key_offset: None,
     };
     Ok(Some(LoadedWorkload {

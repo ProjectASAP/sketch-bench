@@ -21,10 +21,6 @@ use crate::value::ColumnData;
 
 const NANOS_PER_SECOND: i64 = 1_000_000_000;
 
-pub const START_NS: &str = "start_ns";
-
-pub const END_NS: &str = "end_ns";
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ExternalSource {
@@ -149,11 +145,16 @@ impl ExternalTableDescription {
         }
     }
 
-    fn has_intervals(&self) -> bool {
-        match self.source {
-            ExternalSource::Google => true,
-            ExternalSource::Custom => self.end_timestamp_column.is_some(),
-            ExternalSource::Boom | ExternalSource::Alibaba => false,
+    pub fn time_columns(&self) -> Vec<String> {
+        match &self.source {
+            ExternalSource::Boom | ExternalSource::Alibaba => vec!["timestamp".to_string()],
+            ExternalSource::Google => vec!["start_time".to_string(), "end_time".to_string()],
+            ExternalSource::Custom => self
+                .timestamp_column
+                .iter()
+                .chain(&self.end_timestamp_column)
+                .cloned()
+                .collect(),
         }
     }
 
@@ -220,14 +221,6 @@ fn load(spec: &ExternalTableDescription, data_root: &Path) -> Result<Option<Gene
     if matches!(spec.source, ExternalSource::Custom) && spec.timestamp_column.is_none() {
         bail!("custom workloads require timestamp_column");
     }
-    if let Some(name) = spec
-        .group_columns
-        .iter()
-        .chain([&spec.value_column])
-        .find(|name| [START_NS, END_NS].contains(&name.as_str()))
-    {
-        bail!("column '{name}' clashes with the loaded table's time column of the same name");
-    }
 
     let window = window_ns(spec)?;
     let path = data_root.join(logical);
@@ -255,12 +248,11 @@ fn load(spec: &ExternalTableDescription, data_root: &Path) -> Result<Option<Gene
 }
 
 fn materialise(records: &[RawRecord], spec: &ExternalTableDescription) -> Result<GeneratedTable> {
-    let mut labels = vec![START_NS.to_string()];
+    let mut labels = spec.time_columns();
     let mut data = vec![ColumnData::Int64(
         records.iter().map(|r| r.start_ns).collect(),
     )];
-    if spec.has_intervals() {
-        labels.push(END_NS.to_string());
+    if labels.len() > 1 {
         data.push(ColumnData::Int64(
             records.iter().map(|r| r.end_ns).collect(),
         ));
@@ -761,7 +753,7 @@ value_column: latency
     }
 
     fn start_times(table: &GeneratedTable) -> &ColumnData {
-        table.column(table.column_index(START_NS).unwrap()).unwrap()
+        table.column(table.column_index("ts").unwrap()).unwrap()
     }
 
     const WINDOW: &str = r#"window: {start: "0", end: "50"}"#;
@@ -769,9 +761,8 @@ value_column: latency
     #[test]
     fn point_records_are_sorted_by_start_time_by_default() {
         let table = custom_table("sorted", WINDOW);
-        assert_eq!(table.column_title, ["start_ns", "service", "latency"]);
+        assert_eq!(table.column_title, ["ts", "service", "latency"]);
         assert_eq!(start_times(&table), &ColumnData::Int64(vec![10, 30]));
-        assert!(table.column_index(END_NS).is_err());
     }
 
     #[test]
@@ -795,12 +786,9 @@ value_column: latency
             "intervals",
             &format!("{WINDOW}\nend_timestamp_column: end_ts"),
         );
+        assert_eq!(table.column_title, ["ts", "end_ts", "service", "latency"]);
         assert_eq!(
-            table.column_title,
-            ["start_ns", "end_ns", "service", "latency"]
-        );
-        assert_eq!(
-            table.column(table.column_index(END_NS).unwrap()).unwrap(),
+            table.column(table.column_index("end_ts").unwrap()).unwrap(),
             &ColumnData::Int64(vec![10, 40])
         );
     }
