@@ -3,7 +3,7 @@
 import math
 
 from approx_rows import row
-from bounds import PLAIN, all_of, any_of, ge, gt, lt, point, settle
+from bounds import PLAIN, all_of, any_of, ge, gt, judge, lt, point
 from membership import membership_fidelity
 
 APP = "rule"
@@ -156,11 +156,19 @@ def derive(query_rows, rules, policy=PLAIN, widen=None):
 
 def rule_rows(run_id, name, rule, query_rows, policy=PLAIN, widen=None):
     use_case, times, values = collect(query_rows, rule["queries"], rule.get("entity", all_labels), widen)
-    checks = {arm: {entity: rule["condition"](by_query) for entity, by_query in by_entity.items()}
-              for arm, by_entity in values.items()}
+    queries = rule["queries"]
+
+    def check(*lists):
+        return rule["condition"](dict(zip(queries, lists)))
+
+    checks = {"exact": {entity: rule["condition"](by_query) for entity, by_query in values["exact"].items()},
+              "approx": {}}
     unsure = 0
-    for entity, approx in checks["approx"].items():
-        checks["approx"][entity], open_ = settle(approx, checks["exact"].get(entity, [False] * len(times)), policy)
+    missing = {q: [None] * len(times) for q in queries}
+    for entity, by_query in values["approx"].items():
+        exact = values["exact"].get(entity, missing)
+        checks["approx"][entity], open_ = judge(check, [by_query[q] for q in queries], [exact[q] for q in queries],
+                                                policy)
         unsure += open_
     hold = rule.get("hold", as_is)
     on = {arm: {entity: hold(flags) for entity, flags in by_entity.items()} for arm, by_entity in checks.items()}

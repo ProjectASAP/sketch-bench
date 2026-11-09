@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from approx_rows import row
-from bounds import PLAIN, any_of, gt, lt, point, ratio, settle, widen_values
+from bounds import PLAIN, any_of, gt, judge, lt, point, ratio, widen_values
 from threshold_alert import EVENT_LABELS, NOTHING, annotations, cells_of, delay_summary, episodes_of, series
 
 APP = "rollout_controller"
@@ -153,8 +153,9 @@ def derive(query_rows, rules=RULES, policy=PLAIN, widen=None):
 def rule_rows(run_id, app, rule, times, values, policy=PLAIN):
     every = rule["every"]
     checked = times[::every]
-    failed = {arm: rule["check"](*[values[arm][q] for q in rule["queries"]])[::every] for arm in values}
-    failed["approx"], unsure = settle(failed["approx"], failed["exact"], policy)
+    args = {arm: [values[arm][q][::every] for q in rule["queries"]] for arm in values}
+    failed = {"exact": rule["check"](*args["exact"])}
+    failed["approx"], unsure = judge(rule["check"], args["approx"], args["exact"], policy)
     found = rollouts(failed["exact"], failed["approx"], rule["checks"], rule["decide"])
     decided = found["rollouts"]
     acted = {arm: actions(len(checked), decided, arm) for arm in values}

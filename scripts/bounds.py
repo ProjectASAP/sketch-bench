@@ -95,6 +95,28 @@ def settle(checks, exact_checks, policy, default=False):
     return out, unsure
 
 
+def judge(check, approx_args, exact_args, policy, default=False):
+    """Run check(*approx_args) and decide its unsure results by the policy.
+
+    Under RERUN an unsure evaluation reruns the check's queries with the exact plan: its values become the
+    exact ones and the check runs again, so a check that keeps history sees the rerun answers.
+    Returns the checks and how many evaluations were unsure.
+    """
+    if policy != RERUN:
+        return settle(check(*approx_args), check(*exact_args), policy, default)
+    values = [list(v) for v in approx_args]
+    rerun = set()
+    while True:
+        out = check(*values)
+        open_ = [i for i, c in enumerate(out) if c is None]
+        if not open_:
+            return out, len(rerun)
+        for i in open_:
+            rerun.add(i)
+            for v, e in zip(values, exact_args):
+                v[i] = e[i]
+
+
 def series_key(labels):
     return tuple(sorted((k, v) for k, v in labels.items() if k not in NOT_SERIES and k != "__name__"))
 
