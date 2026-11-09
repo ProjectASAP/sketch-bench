@@ -30,13 +30,13 @@ RULES = {
                        "while it stays over (AWS WAF rate-based rule, the AWS blog's limit)"},
     "cloud_armor": {
         "queries": ("top10_clients_1m",), "condition": cloud_armor, "entity": client,
-        "hold": latch(CLOUD_ARMOR_BAN_MINUTES, while_held=True),
+        "hold": latch(CLOUD_ARMOR_BAN_MINUTES),
         "description": "A client among the top 10 over 1 minute with more than 500 requests is banned for the "
                        "rest of the interval plus 600 s (Google Cloud Armor default policy's 500 per 60 s; "
                        "ban_duration_sec ours)"},
     "fastly": {
         "queries": ("top10_clients_1m",), "condition": fastly, "entity": client,
-        "hold": latch(FASTLY_PENALTY_MINUTES, while_held=True),
+        "hold": latch(FASTLY_PENALTY_MINUTES),
         "description": "A client among the top 10 over 1 minute above 20 requests per second goes into the "
                        "penalty box for at least 2 minutes (Fastly; the rate ours, over 1 minute instead of "
                        "10 s)"},

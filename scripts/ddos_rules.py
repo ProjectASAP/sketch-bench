@@ -3,11 +3,12 @@
 from rules import above, above_band, above_mean_times, cusum_above, either, for_consecutive, latch, x_of_last_y
 
 THRESHOLDS = {"entropy_10s": 8.5, "distinct_10s": 3000, "distinct_5s": 1700}
-RED_HAT_EVALUATIONS = 3
 DATADOG_HISTORY, DATADOG_SIGMAS = 60, 3
 KENTIK_HISTORY, KENTIK_FACTOR, KENTIK_TIMES, KENTIK_WINDOW = 60, 2.0, 3, 6
 CUSUM_TRAINING, CUSUM_K, CUSUM_H = 50, 0.5, 5
 EVALUATION_SECONDS = 5
+FOR_SECONDS = 15
+RED_HAT_EVALUATIONS = FOR_SECONDS // EVALUATION_SECONDS + 1
 FASTNETMON_PPS, FASTNETMON_BAN_SECONDS = 20000, 1900
 RED_HAT_FLOWS_PER_SECOND = 300
 
@@ -48,7 +49,8 @@ RULES = {
         "queries": tuple(THRESHOLDS), "condition": any_threshold, "entity": server,
         "hold": for_consecutive(RED_HAT_EVALUATIONS),
         "description": "Any of the PromSketch thresholds (entropy_10s > 8.5, distinct_10s > 3,000, "
-                       "distinct_5s > 1,700) holds for 15 s, 3 evaluations in a row (Red Hat for: 15s)"},
+                       "distinct_5s > 1,700) holds for 15 s: firing at the 4th evaluation in a row, as "
+                       "Prometheus does with for: 15s at a 5 s interval (Red Hat)"},
     "datadog": {
         "queries": ("distinct_10s",), "condition": datadog, "entity": server,
         "description": "Distinct source IPs over 10 s above the mean plus 3 standard deviations of the previous "
@@ -72,5 +74,6 @@ RULES = {
         "queries": ("distinct_1m",), "condition": red_hat, "entity": server,
         "hold": for_consecutive(RED_HAT_EVALUATIONS),
         "description": "More than 300 SYN-only flows per second over 1 minute for 15 s, counting each source "
-                       "address as one flow (Red Hat Network Observability; flows as distinct sources ours)"},
+                       "address as one flow; firing at the 4th evaluation in a row (Red Hat Network "
+                       "Observability; flows as distinct sources ours)"},
 }
