@@ -449,7 +449,8 @@ def write_arm(data, case, prefix, arm, exact, approx, trial=1, policy=bounds.PLA
         details["bounded_queries"] = widen.bounded_queries()
     derived = case["derive"](rows, planned, policy, widen) + relative + errors
     if spec is not None:
-        scored_rows, scored = scenario.derive(run_id, spec, case.get("scenario_entity"), derived)
+        scored_rows, scored = scenario.derive(run_id, spec, case.get("scenario_entity"), derived,
+                                              case.get("signals", case["signal"]))
         derived += scored_rows
         details["scenario"] = scored
     details["max_relative_error"] = max_relative_errors(derived)

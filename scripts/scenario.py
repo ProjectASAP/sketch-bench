@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import re
+
 import decision
 import rollout
 import rules
@@ -54,7 +56,8 @@ def incidents(spec, entity_of):
                         labels = {k: v.replace("{i}", str(i)) for k, v in group["labels"].items()}
                         entities.append((entity_of(labels) if entity_of else None, i * stagger))
                 for entity, shift in entities:
-                    out.append({"name": name, "entity": entity, "start": spec["start_ms"] + start + shift,
+                    out.append({"name": name, "metric": metric["name"], "entity": entity,
+                                "start": spec["start_ms"] + start + shift,
                                 "end": spec["start_ms"] + end + shift})
     return out
 
@@ -84,33 +87,58 @@ def covers(incident, time, entity, grace):
 
 
 def score(found, grace, acted):
-    """Which incidents an arm's actions caught, after how long, and how many actions no incident explains."""
+    """Which incidents an arm's actions caught, after how long, and how many actions no incident explains.
+
+    An incident is caught when any of its entities is acted on; parts_caught counts its entities one by one.
+    """
     by_name = {}
     for incident in found:
         by_name.setdefault(incident["name"], []).append(incident)
-    caught, delays = 0, []
-    for name, parts in by_name.items():
-        hits = [t - part["start"] for part in parts for t, e in acted if covers(part, t, e, grace)]
+    caught, parts_caught, delays = 0, 0, []
+    for parts in by_name.values():
+        hits = []
+        for part in parts:
+            part_hits = [t - part["start"] for t, e in acted if covers(part, t, e, grace)]
+            parts_caught += bool(part_hits)
+            hits += part_hits
         if hits:
             caught += 1
             delays.append(min(hits))
     outside = sum(1 for t, e in acted if not any(covers(i, t, e, grace) for i in found))
-    out = {"incidents": len(by_name), "caught": caught, "actions_outside": outside}
+    out = {"incidents": len(by_name), "caught": caught, "parts": len(found), "parts_caught": parts_caught,
+           "actions_outside": outside}
     if delays:
         out["mean_detection_seconds"] = sum(delays) / len(delays) / 1000
     return out
 
 
-def derive(run_id, spec, entity_of, derived):
+def reads(spec, signals_of):
+    """signal -> (metrics its queries read, its longest query window)."""
+    out = {}
+    for q in spec["queries"]:
+        metrics = {m["name"] for m in spec["metrics"] if re.search(rf"\b{re.escape(m['name'])}\b", q["promql"])}
+        signals = signals_of(q["id"])
+        for signal in [signals] if isinstance(signals, str) else signals:
+            read, window = out.get(signal, (set(), 0))
+            out[signal] = (read | metrics, max(window, q["window_ms"]))
+    return out
+
+
+def derive(run_id, spec, entity_of, derived, signals_of):
+    """Score each signal against the incidents on the metrics it reads, with its longest window as grace."""
     found = incidents(spec, entity_of)
     if not found:
         return [], {}
-    grace = max(q["window_ms"] for q in spec["queries"])
+    read = reads(spec, signals_of)
     end = max(r["time"] for r in derived)
     rows, summary = [], {}
     for (app, signal), by_arm in sorted(actions(derived).items()):
+        metrics, grace = read.get(signal, (set(), 0))
+        relevant = [i for i in found if i["metric"] in metrics]
+        if not relevant:
+            continue
         for arm, acted in by_arm.items():
-            scored = score(found, grace, acted)
+            scored = score(relevant, grace, acted)
             summary.setdefault(signal, {})[arm] = scored
             labels = {"use_case": spec["use_case"], "app": app, "signal": signal, "arm": arm}
             rows += [row(end, "fidelity_summary", run_id, labels, f"scenario_{metric}", value,
