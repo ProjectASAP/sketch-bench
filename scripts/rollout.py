@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from approx_rows import row
+from bounds import PLAIN, any_of, gt, lt, point, ratio, settle, widen_values
 from threshold_alert import EVENT_LABELS, NOTHING, annotations, cells_of, delay_summary, episodes_of, series
 
 APP = "rollout_controller"
@@ -14,19 +15,20 @@ CLOUDWATCH_CHECKS, BREACHING_POINTS, EVALUATED_POINTS = 10, 4, 5
 
 
 def slower(p99_canary, p99_stable):
-    return [c / s > TOLERANCE for c, s in zip(p99_canary, p99_stable)]
+    return [gt(ratio(c, s), TOLERANCE) for c, s in zip(p99_canary, p99_stable)]
 
 
 def flagger_failed(p99_canary, success_rate_canary):
-    return [p > MAX_P99 or s < FLAGGER_MIN_SUCCESS_RATE for p, s in zip(p99_canary, success_rate_canary)]
+    return [any_of(gt(p, MAX_P99), lt(s, FLAGGER_MIN_SUCCESS_RATE))
+            for p, s in zip(p99_canary, success_rate_canary)]
 
 
 def argo_rollouts_failed(success_rate_canary):
-    return [s < ARGO_ROLLOUTS_MIN_SUCCESS_RATE for s in success_rate_canary]
+    return [lt(s, ARGO_ROLLOUTS_MIN_SUCCESS_RATE) for s in success_rate_canary]
 
 
 def cloudwatch_breaching(p99_canary):
-    return [p > MAX_P99 for p in p99_canary]
+    return [gt(p, MAX_P99) for p in p99_canary]
 
 
 def in_a_row(failed):
@@ -120,7 +122,7 @@ def actions(length, decided, arm):
     return out
 
 
-def derive(query_rows, rules=RULES):
+def derive(query_rows, rules=RULES, policy=PLAIN, widen=None):
     if any(r["kind"] != "query_result" for r in query_rows):
         raise ValueError("derive reads query_result rows only")
     run_ids = {r["run_id"] for r in query_rows}
@@ -133,25 +135,26 @@ def derive(query_rows, rules=RULES):
     out = []
     values = {"exact": {}, "approx": {}}
     for q in queries:
-        _, _, q_times, exact, approx = found[q]
+        q_labels, _, q_times, exact, approx = found[q]
         if q_times != times:
             raise ValueError(f"queries {queries[0]} and {q} are not evaluated at the same times")
-        values["exact"][q], values["approx"][q] = exact, approx
+        values["exact"][q], values["approx"][q] = exact, widen_values(widen, q, times, q_labels, approx)
     app = {"use_case": labels["use_case"], "app": APP}
     for n, t in enumerate(times):
         for arm, by_query in values.items():
             out.append(row(t, "app_state", run_id, {**app, "arm": arm}, "ratio",
-                           by_query["p99_canary"][n] / by_query["p99_stable"][n], "ratio"))
+                           point(by_query["p99_canary"][n]) / point(by_query["p99_stable"][n]), "ratio"))
         out.append(row(t, "app_state", run_id, app, "tolerance", TOLERANCE, "ratio"))
     for name, rule in rules.items():
-        out += rule_rows(run_id, {**app, "signal": name}, rule, times, values)
+        out += rule_rows(run_id, {**app, "signal": name}, rule, times, values, policy)
     return out
 
 
-def rule_rows(run_id, app, rule, times, values):
+def rule_rows(run_id, app, rule, times, values, policy=PLAIN):
     every = rule["every"]
     checked = times[::every]
     failed = {arm: rule["check"](*[values[arm][q] for q in rule["queries"]])[::every] for arm in values}
+    failed["approx"], unsure = settle(failed["approx"], failed["exact"], policy)
     found = rollouts(failed["exact"], failed["approx"], rule["checks"], rule["decide"])
     decided = found["rollouts"]
     acted = {arm: actions(len(checked), decided, arm) for arm in values}
@@ -181,6 +184,8 @@ def rule_rows(run_id, app, rule, times, values):
                 ("agreement", (outcomes.count("true_positive") + outcomes.count("true_negative")) / len(decided)
                  if decided else 1.0, "ratio"),
                 ("gaps", len(found["gaps"]), "gaps")]
+    if policy != PLAIN:
+        summary.append(("unsure_checks", unsure, "checks"))
     summary += delay_summary([rollout["delay"] * every for rollout in decided
                               if rollout["outcome"] == "true_positive"],
                              "rollback_delay", "rollbacks", "early_rollbacks", "late_rollbacks")

@@ -3,6 +3,7 @@
 import math
 
 from approx_rows import row
+from bounds import PLAIN, all_of, any_of, ge, gt, lt, point, settle
 from membership import membership_fidelity
 
 APP = "rule"
@@ -14,7 +15,7 @@ def all_labels(labels):
     return ".".join(v for k, v in sorted(labels.items()) if k not in ("use_case", "signal", "query", "arm"))
 
 
-def collect(query_rows, queries, entity_of):
+def collect(query_rows, queries, entity_of, widen=None):
     """values[arm][entity][query] is one value per time of `times`, None where the arm gave no answer."""
     found, times, use_case = {}, set(), None
     for r in query_rows:
@@ -28,7 +29,10 @@ def collect(query_rows, queries, entity_of):
         at = found.setdefault(arm, {}).setdefault(entity, {}).setdefault(query, {})
         if r["time"] in at:
             raise ValueError(f"query {query}: {entity} {arm} evaluated twice at {r['time']}")
-        at[r["time"]] = r["value"]
+        value = r["value"]
+        if widen is not None and arm == "approx":
+            value = widen(query, r["time"], r["labels"], value)
+        at[r["time"]] = value
         times.add(r["time"])
         use_case = r["labels"]["use_case"]
     if not times:
@@ -41,7 +45,7 @@ def collect(query_rows, queries, entity_of):
 
 
 def known(values):
-    return [v for v in values if v is not None]
+    return [point(v) for v in values if v is not None]
 
 
 def history_band(values, i, size, minimum):
@@ -58,7 +62,7 @@ def above_band(values, size, k, minimum=None):
     out = []
     for i, v in enumerate(values):
         band = history_band(values, i, size, minimum or size)
-        out.append(v is not None and band is not None and v > band[0] + k * band[1])
+        out.append(band is not None and gt(v, band[0] + k * band[1]))
     return out
 
 
@@ -67,7 +71,7 @@ def outside_band(values, size, k, minimum=None):
     out = []
     for i, v in enumerate(values):
         band = history_band(values, i, size, minimum or size)
-        out.append(v is not None and band is not None and abs(v - band[0]) > k * band[1])
+        out.append(band is not None and any_of(gt(v, band[0] + k * band[1]), lt(v, band[0] - k * band[1])))
     return out
 
 
@@ -76,8 +80,9 @@ def above_decayed_band(values, decay, k, minimum):
     out, weight, centre, square, seen = [], 0.0, 0.0, 0.0, 0
     for v in values:
         spread = math.sqrt(max(0.0, square - centre ** 2))
-        out.append(v is not None and seen >= minimum and v > centre + k * spread)
+        out.append(seen >= minimum and gt(v, centre + k * spread))
         if v is not None:
+            v = point(v)
             weight = decay * weight + 1
             centre += (v - centre) / weight
             square += (v * v - square) / weight
@@ -86,19 +91,19 @@ def above_decayed_band(values, decay, k, minimum):
 
 
 def above(values, threshold):
-    return [v is not None and v > threshold for v in values]
+    return [gt(v, threshold) for v in values]
 
 
 def at_least(values, threshold):
-    return [v is not None and v >= threshold for v in values]
+    return [ge(v, threshold) for v in values]
 
 
 def both(a, b):
-    return [x and y for x, y in zip(a, b)]
+    return [all_of(x, y) for x, y in zip(a, b)]
 
 
 def either(a, b):
-    return [x or y for x, y in zip(a, b)]
+    return [any_of(x, y) for x, y in zip(a, b)]
 
 
 def as_is(flags):
@@ -136,7 +141,7 @@ def latch(evaluations, extend=True, while_held=False):
     return hold
 
 
-def derive(query_rows, rules):
+def derive(query_rows, rules, policy=PLAIN, widen=None):
     if any(r["kind"] != "query_result" for r in query_rows):
         raise ValueError("derive reads query_result rows only")
     run_ids = {r["run_id"] for r in query_rows}
@@ -145,15 +150,20 @@ def derive(query_rows, rules):
     (run_id,) = run_ids
     out = []
     for name, rule in rules.items():
-        out += rule_rows(run_id, name, rule, query_rows)
+        out += rule_rows(run_id, name, rule, query_rows, policy, widen)
     return out
 
 
-def rule_rows(run_id, name, rule, query_rows):
-    use_case, times, values = collect(query_rows, rule["queries"], rule.get("entity", all_labels))
+def rule_rows(run_id, name, rule, query_rows, policy=PLAIN, widen=None):
+    use_case, times, values = collect(query_rows, rule["queries"], rule.get("entity", all_labels), widen)
+    checks = {arm: {entity: rule["condition"](by_query) for entity, by_query in by_entity.items()}
+              for arm, by_entity in values.items()}
+    unsure = 0
+    for entity, approx in checks["approx"].items():
+        checks["approx"][entity], open_ = settle(approx, checks["exact"].get(entity, [False] * len(times)), policy)
+        unsure += open_
     hold = rule.get("hold", as_is)
-    on = {arm: {entity: hold(rule["condition"](by_query)) for entity, by_query in by_entity.items()}
-          for arm, by_entity in values.items()}
+    on = {arm: {entity: hold(flags) for entity, flags in by_entity.items()} for arm, by_entity in checks.items()}
     app = {"use_case": use_case, "signal": name, "app": APP}
     out, found = membership_fidelity(run_id, app, KEY, times, on, "state", (ACTIVE, IDLE))
     total = found["true_positive"] + found["false_positive"] + found["false_negative"] + found["true_negative"]
@@ -169,5 +179,7 @@ def rule_rows(run_id, name, rule, query_rows):
                 ("false_spans", found["false_spans"], "spans")]
     if "mean_onset_delay" in found:
         summary.append(("mean_onset_delay", found["mean_onset_delay"], "evaluations"))
+    if policy != PLAIN:
+        summary.append(("unsure_checks", unsure, "entity-evaluations"))
     out += [row(times[-1], "fidelity_summary", run_id, app, metric, value, unit) for metric, value, unit in summary]
     return out

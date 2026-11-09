@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 
+import bounds
 import decision
 import rollout
 import rules
@@ -33,25 +34,32 @@ def arm_flags(arm):
     return flags
 
 
-def uc1_derive(rows, queries):
-    return threshold_alert.derive(rows, {q["id"]: q["threshold"] for q in queries})
+def max_error_of(arm):
+    found = [float(part[3:]) for part in arm.split("-") if part.startswith("eps")]
+    return found[0] if found else None
 
 
-def uc4_derive(rows, queries):
-    return rollout.derive(rows)
+def uc1_derive(rows, queries, policy=bounds.PLAIN, widen=None):
+    return threshold_alert.derive(rows, {q["id"]: q["threshold"] for q in queries}, policy, widen)
 
 
-def uc2_derive(rows, queries):
+def uc4_derive(rows, queries, policy=bounds.PLAIN, widen=None):
+    return rollout.derive(rows, rollout.RULES, policy, widen)
+
+
+def uc2_derive(rows, queries, policy=bounds.PLAIN, widen=None):
     rule = {"cpu_up": 0.8, "memory_up": 1.5e9, "cpu_down": 0.4, "memory_down": 0.75e9}
-    return decision.derive(rows, "scale_decision", "p95_cpu", "p95_memory", "container", rule)
+    return decision.derive(rows, "scale_decision", "p95_cpu", "p95_memory", "container", rule, policy, widen)
 
 
-def uc5_derive(rows, queries):
+def uc5_derive(rows, queries, policy=bounds.PLAIN, widen=None):
+    if policy != bounds.PLAIN:
+        raise ValueError("the top clients rule has no use for an error bound")
     return topk_set.derive(rows, "top_clients", "top10_clients", "client_id")
 
 
-def uc3_derive(rows, queries):
-    return rules.derive(rows, video_rules.RULES)
+def uc3_derive(rows, queries, policy=bounds.PLAIN, widen=None):
+    return rules.derive(rows, video_rules.RULES, policy, widen)
 
 
 def rule_signals(rule_set):
@@ -114,9 +122,17 @@ USE_CASES = {
         "signal": lambda query: "top_clients",
         "derive": uc5_derive,
         "dashboard": "topk",
+        "bounds": False,
         "needs_every_query": True,
         "split": {"app_state": "client_id"},
     },
+}
+
+
+POLICY_TEXT = {
+    bounds.BOUND: "An answer whose error-bound interval leaves the check open takes no action",
+    bounds.RERUN: "An answer whose error-bound interval leaves the check open reruns the check's queries with "
+                  "the exact plan",
 }
 
 
@@ -329,6 +345,8 @@ def headlines(derived):
     out = {}
     for (app, signal), summary in by_signal.items():
         agreement, text = headline(app, summary)
+        if "unsure_checks" in summary:
+            text += f"; {counted(summary['unsure_checks'], 'unsure check')}"
         out[signal] = {"application": app, "agreement": agreement, "fidelity": text}
     return out
 
@@ -342,12 +360,19 @@ def max_relative_errors(derived):
     return out
 
 
-def write_arm(data, case, prefix, arm, exact, approx, trial=1):
-    run_id = f"{prefix}-{arm}" if trial == 1 else f"{prefix}-{arm}-trial{trial}"
+def run_name(prefix, arm, trial, policy):
+    name = f"{prefix}-{arm}" if policy == bounds.PLAIN else f"{prefix}-{arm}-{policy}"
+    return name if trial == 1 else f"{name}-trial{trial}"
+
+
+def write_arm(data, case, prefix, arm, exact, approx, trial=1, policy=bounds.PLAIN, widen=None):
+    run_id = run_name(prefix, arm, trial, policy)
     use_case = exact["use_case"]
     exact_by_id = {q["id"]: q for q in exact["queries"]}
     rows, errors, relative, costs, planned, plans, unsupported = [], [], [], [], [], {}, {}
     for q in approx["queries"]:
+        if bounds.is_bound_query(q["id"]):
+            continue
         if "unsupported" in q:
             unsupported[q["id"]] = short_reason(q["unsupported"])
             continue
@@ -373,7 +398,10 @@ def write_arm(data, case, prefix, arm, exact, approx, trial=1):
     }
     if "rules" in case:
         details["rules"] = {name: rule["description"] for name, rule in case["rules"].items()}
-    derived = case["derive"](rows, planned) + relative + errors
+    if policy != bounds.PLAIN:
+        details["policy"] = POLICY_TEXT[policy]
+        details["bounded_queries"] = widen.bounded_queries()
+    derived = case["derive"](rows, planned, policy, widen) + relative + errors
     details["max_relative_error"] = max_relative_errors(derived)
     details["sketch_bounds"] = [r for q in planned for r in sketch_bounds(q)]
     details["fidelity"] = headlines(derived)
@@ -395,6 +423,10 @@ def main(argv=None):
     parser.add_argument("--arm", action="append", help="repeatable; default every arm of the use case")
     parser.add_argument("--trials", type=int, default=1,
                         help="runs of each approximate arm, each with fresh sketch seeds")
+    parser.add_argument("--policy", action="append", choices=bounds.POLICIES,
+                        help="repeatable; how a rule treats an answer whose error bound leaves its check open: "
+                             "plain ignores the bound, bound takes no action, rerun asks the exact plan; "
+                             "default every policy the use case supports")
     args = parser.parse_args(argv)
     case = USE_CASES[args.use_case]
     prefix = f"uc{args.use_case}"
@@ -409,12 +441,29 @@ def main(argv=None):
     for q in exact["queries"]:
         if "unsupported" in q:
             sys.exit(f"the exact plan of {q['id']} is unsupported: {q['unsupported']}")
+    policies = args.policy or (bounds.POLICIES if case.get("bounds", True) else (bounds.PLAIN,))
+    if not case.get("bounds", True) and set(policies) != {bounds.PLAIN}:
+        parser.error(f"use case {args.use_case} supports only the plain policy")
     for arm in args.arm or case["arms"]:
+        max_error = max_error_of(arm)
+        arm_spec = spec
+        if max_error is not None and set(policies) != {bounds.PLAIN}:
+            with open(spec) as f:
+                widened = bounds.with_bound_queries(json.load(f), max_error)
+            arm_spec = os.path.join(args.raw_out, f"{prefix}-{arm}-spec.json")
+            with open(arm_spec, "w") as f:
+                json.dump(widened, f)
         for trial in range(1, args.trials + 1):
             name = arm if trial == 1 else f"{arm}-trial{trial}"
-            approx = run_binary(args.binary, spec, os.path.join(args.raw_out, f"{prefix}-{name}.json"),
+            approx = run_binary(args.binary, arm_spec, os.path.join(args.raw_out, f"{prefix}-{name}.json"),
                                 arm_flags(arm) + extra + ["--exact", exact_out])
-            write_arm(args.data, case, prefix, arm, exact, approx, trial)
+            widen = bounds.Widen(approx, max_error) if max_error is not None else None
+            for policy in policies:
+                if policy != bounds.PLAIN and not (widen and widen.bounded_queries()):
+                    print(f"{run_name(prefix, arm, trial, policy)}: no plan has an error bound; not written",
+                          file=sys.stderr)
+                    continue
+                write_arm(args.data, case, prefix, arm, exact, approx, trial, policy, widen)
 
 if __name__ == "__main__":
     main()

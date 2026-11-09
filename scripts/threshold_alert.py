@@ -4,6 +4,7 @@ import argparse
 import sys
 
 from approx_rows import read_index, read_run, row, write_run
+from bounds import PLAIN, gt, settle, widen_values
 
 APP = "threshold_alert"
 FIRING = "firing"
@@ -50,7 +51,7 @@ def series(query_rows, query):
     return labels, unit, times, [arms["exact"][t] for t in times], [arms["approx"][t] for t in times]
 
 
-def derive(query_rows, thresholds):
+def derive(query_rows, thresholds, policy=PLAIN, widen=None):
     if any(r["kind"] != "query_result" for r in query_rows):
         raise ValueError("derive reads query_result rows only")
     run_ids = {r["run_id"] for r in query_rows}
@@ -62,14 +63,21 @@ def derive(query_rows, thresholds):
     (run_id,) = run_ids
     out = []
     for query in sorted(thresholds):
-        out += derive_query(run_id, *series(query_rows, query), thresholds[query])
+        labels, unit, times, exact, approx = series(query_rows, query)
+        approx = widen_values(widen, query, times, labels, approx)
+        out += derive_query(run_id, labels, unit, times, exact, approx, thresholds[query], policy)
     return out
 
 
-def derive_query(run_id, labels, unit, times, exact, approx, threshold):
+def derive_query(run_id, labels, unit, times, exact, approx, threshold, policy=PLAIN):
     app = {**labels, "app": APP}
     out = [row(t, "app_state", run_id, app, "threshold", threshold, unit) for t in times]
-    return out + alert_fidelity(run_id, app, times, [e > threshold for e in exact], [a > threshold for a in approx])
+    exact_on = [e > threshold for e in exact]
+    approx_on, unsure = settle([gt(a, threshold) for a in approx], exact_on, policy)
+    out += alert_fidelity(run_id, app, times, exact_on, approx_on)
+    if policy != PLAIN:
+        out.append(row(times[-1], "fidelity_summary", run_id, app, "unsure_checks", unsure, "evaluations"))
+    return out
 
 
 def episodes_of(exact_on, approx_on, end_delay=False):
