@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 import bounds
 import ddos_rules
@@ -158,11 +159,23 @@ POLICY_TEXT = {
 
 
 def run_binary(binary, spec, out, flags):
+    """Run planeval and return its output, with the process's peak resident memory and CPU time."""
     cmd = [binary, "--spec", spec, "--out", out] + flags
     print("$ " + " ".join(cmd), file=sys.stderr)
-    subprocess.run(cmd, check=True)
+    started = time.monotonic()
+    proc = subprocess.Popen(cmd)
+    _, status, usage = os.wait4(proc.pid, 0)
+    proc.returncode = os.waitstatus_to_exitcode(status)
+    if proc.returncode:
+        raise subprocess.CalledProcessError(proc.returncode, cmd)
     with open(out) as f:
-        return json.load(f)
+        document = json.load(f)
+    document["process"] = {
+        "peak_memory_bytes": usage.ru_maxrss * (1 if sys.platform == "darwin" else 1024),
+        "cpu_seconds": usage.ru_utime + usage.ru_stime,
+        "wall_seconds": time.monotonic() - started,
+    }
+    return document
 
 
 def describe_plan(plan):
@@ -414,6 +427,7 @@ def write_arm(data, case, prefix, arm, exact, approx, trial=1, policy=bounds.PLA
         "exact_plans": {q["id"]: describe_plan(q["plan"]) for q in exact["queries"] if "plan" in q},
         "promql": {q["id"]: q["promql"] for q in exact["queries"]},
         "planner_rev": approx["planner_rev"],
+        "process": {"exact": exact.get("process"), "approx": approx.get("process")},
         "dashboard": case["dashboard"],
         "signals": {q["id"]: case.get("signals", case["signal"])(q["id"]) for q in exact["queries"]},
     }
