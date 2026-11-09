@@ -517,7 +517,8 @@ def main(argv=None):
                     print(f"{run_name(prefix, arm, trial, policy)}: no plan has an error bound; not written",
                           file=sys.stderr)
                     continue
-                write_arm(args.data, case, prefix, arm, exact, approx, trial, policy, widen, spec_doc)
+                write_arm(args.data, case, prefix, arm, exact, approx, trial, policy,
+                          widen if policy != bounds.PLAIN else None, spec_doc)
 
 if __name__ == "__main__":
     main()
