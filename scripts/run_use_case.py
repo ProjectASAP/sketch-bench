@@ -12,6 +12,7 @@ import ddos_rules
 import decision
 import rollout
 import rules
+import scaling_rules
 import threshold_alert
 import topk_set
 import video_rules
@@ -57,7 +58,8 @@ def uc4_derive(rows, queries, policy=bounds.PLAIN, widen=None):
 
 def uc2_derive(rows, queries, policy=bounds.PLAIN, widen=None):
     rule = {"cpu_up": 0.8, "memory_up": 1.5e9, "cpu_down": 0.4, "memory_down": 0.75e9}
-    return decision.derive(rows, "scale_decision", "p95_cpu", "p95_memory", "container", rule, policy, widen)
+    out = decision.derive(rows, "scale_decision", "p95_cpu", "p95_memory", "container", rule, policy, widen)
+    return out + rules.derive(rows, scaling_rules.RULES, policy, widen)
 
 
 def uc5_derive(rows, queries, policy=bounds.PLAIN, widen=None):
@@ -97,11 +99,15 @@ USE_CASES = {
     "2": {
         "spec": "uc2_autoscaling.json",
         "arms": ["raw-eps0.01", "noraw-eps0.1", "noraw-eps0.05", "noraw-eps0.01", "noraw-eps0.005"],
+        "planeval_flags": ["--executor-max-bytes", str(2 << 30)],
         "signal": lambda query: "scale_decision",
+        "signals": lambda query: (["scale_decision"] if query in ("p95_cpu", "p95_memory") else [])
+        + rule_signals(scaling_rules.RULES)(query),
+        "rules": scaling_rules.RULES,
         "derive": uc2_derive,
         "dashboard": "decision",
         "needs_every_query": True,
-        "split": {"query_result": "container", "low_level": "container", "app_state": "container"},
+        "split": {"query_result": "container", "low_level": "container", "app_state": ("container", "entity")},
     },
     "3": {
         "spec": "uc3_video.json",

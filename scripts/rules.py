@@ -124,6 +124,10 @@ def above(values, threshold):
     return [gt(v, threshold) for v in values]
 
 
+def below(values, threshold):
+    return [lt(v, threshold) for v in values]
+
+
 def at_least(values, threshold):
     return [ge(v, threshold) for v in values]
 

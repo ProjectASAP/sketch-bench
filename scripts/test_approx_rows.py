@@ -85,6 +85,16 @@ class WriteRunTest(unittest.TestCase):
             self.assertFalse(os.path.exists(os.path.join(path, "app_state")))
             self.assertEqual(len(read_run(out, "r1", "app_state")), 4)
 
+    def test_split_on_the_first_label_a_row_has(self):
+        with tempfile.TemporaryDirectory() as out:
+            rows = [row(1000, "app_state", "r1", labels, "state", "on", "state")
+                    for labels in ({"container": "c1"}, {"entity": "c1"}, {"entity": "c2", "container": "c3"})]
+            write_run(out, "r1", "uc", rows, split={"app_state": ("container", "entity")})
+            path = os.path.join(out, "runs", "r1", "app_state")
+            self.assertEqual(sorted(os.listdir(path)), ["c1.json", "c3.json"])
+            with open(os.path.join(path, "c1.json")) as f:
+                self.assertEqual(len(json.load(f)), 2)
+
     def test_split_rejects_entity_that_cannot_name_a_file(self):
         with tempfile.TemporaryDirectory() as out:
             r = row(1000, "app_state", "r1", {"container": "../c1"}, "state", "on", "state")

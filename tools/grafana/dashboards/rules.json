@@ -41,7 +41,7 @@
               "method": "GET",
               "data": ""
             },
-            "root_selector": "( $r := $[use_case in [\"video_experience\", \"ddos_syn_flood\"]]; $exists($r) ? $r : [] )",
+            "root_selector": "( $r := $[use_case in [\"video_experience\", \"ddos_syn_flood\", \"k8s_autoscaling\"]]; $exists($r) ? $r : [] )",
             "columns": [
               {
                 "selector": "run_id",
@@ -235,7 +235,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[use_case in [\"video_experience\", \"ddos_syn_flood\"]]; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[use_case in [\"video_experience\", \"ddos_syn_flood\", \"k8s_autoscaling\"]]; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "run_id",

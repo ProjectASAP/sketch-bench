@@ -4,6 +4,7 @@ import unittest
 
 import ddos_rules
 import rules
+import scaling_rules
 from bounds import Bounded
 import video_rules
 import video_spec
@@ -97,6 +98,17 @@ class DdosTest(unittest.TestCase):
     def test_any_threshold(self):
         v = {"entropy_10s": [9.0, 1.0, 1.0], "distinct_10s": [1, 3001, 1], "distinct_5s": [1, 1, 1]}
         self.assertEqual(ddos_rules.any_threshold(v), [True, True, False])
+
+
+class ScalingTest(unittest.TestCase):
+    def test_vpa_resizes_outside_the_bounds_or_on_a_memory_peak(self):
+        v = {"p50_cpu_1h": [0.5, 0.6, 0.1, 0.5], "p95_cpu_1h": [0.6, 0.7, 0.2, 0.6],
+             "max_memory_1h": [1e9, 1e9, 1e9, 1.5e9]}
+        self.assertEqual(scaling_rules.vpa(v), [False, True, True, True])
+
+    def test_azure_advisor_needs_both_cpu_and_memory_small(self):
+        v = {"p95_cpu_1h": [0.15, 0.15, 0.3], "p99_memory_1h": [5e8, 7e8, 5e8]}
+        self.assertEqual(scaling_rules.azure_advisor(v), [True, False, False])
 
 
 class VideoTest(unittest.TestCase):
