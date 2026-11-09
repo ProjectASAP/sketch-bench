@@ -512,6 +512,7 @@ def main(argv=None):
             name = arm if trial == 1 else f"{arm}-trial{trial}"
             approx = run_binary(args.binary, arm_spec, os.path.join(args.raw_out, f"{prefix}-{name}.json"),
                                 arm_flags(arm) + extra + ["--exact", exact_out])
+            approx["process"]["includes_bound_queries"] = arm_spec != spec
             widen = bounds.Widen(approx, max_error) if max_error is not None else None
             for policy in policies:
                 if policy != bounds.PLAIN and not (widen and widen.bounded_queries()):
