@@ -9,8 +9,10 @@ import sys
 
 import decision
 import rollout
+import rules
 import threshold_alert
 import topk_set
+import video_rules
 from approx_rows import row, write_run
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -48,6 +50,14 @@ def uc5_derive(rows, queries):
     return topk_set.derive(rows, "top_clients", "top10_clients", "client_id")
 
 
+def uc3_derive(rows, queries):
+    return rules.derive(rows, video_rules.RULES)
+
+
+def rule_signals(rule_set):
+    return lambda query: [name for name, rule in rule_set.items() if query in rule["queries"]]
+
+
 def uc4_stage2(derived, errors):
     ranked = {r["labels"]["query"] for r in errors}
     relative = [r for r in derived if r["kind"] == "low_level" and r["metric"] == "relative_error"
@@ -74,6 +84,18 @@ USE_CASES = {
         "dashboard": "decision",
         "needs_every_query": True,
         "split": {"query_result": "container", "low_level": "container", "app_state": "container"},
+    },
+    "3": {
+        "spec": "uc3_video.json",
+        "arms": ["noraw-ignore-eps0.1", "noraw-ignore-eps0.05", "noraw-ignore-eps0.01"],
+        "planeval_flags": ["--executor-max-bytes", str(1 << 30)],
+        "signal": lambda query: "video",
+        "signals": rule_signals(video_rules.RULES),
+        "rules": video_rules.RULES,
+        "derive": uc3_derive,
+        "dashboard": "rules",
+        "needs_every_query": True,
+        "split": {"query_result": "city", "low_level": "city", "app_state": "entity"},
     },
     "4": {
         "spec": "uc4_canary.json",
@@ -221,12 +243,12 @@ def stage1(arm, exact_query, approx_query, derived):
     return out
 
 
-def rollout_errors(derived, errors, rules):
+def rollout_errors(derived, errors, rule_set):
     by_query = {}
     for r in errors:
         by_query.setdefault(r["labels"]["query"], {})[r["time"]] = r["value"]
     out = []
-    for name, rule in rules.items():
+    for name, rule in rule_set.items():
         times = sorted({r["time"] for r in derived
                         if r["kind"] == "app_state" and r["labels"].get("signal") == name})
         for r in derived:
@@ -277,6 +299,13 @@ def headline(app, s):
                 f"{counted(s['false_negative'], 'missed rollback')}; {counted(s['gaps'], 'gap')} in failed checks"
                 + signed_delay_text(s, "mean_absolute_rollback_delay", "mean absolute rollback delay",
                                     "early_rollbacks", "late_rollbacks"))
+    if app == rules.APP:
+        return (s["agreement"],
+                f"{s['true_positive']} true positive, {s['false_positive']} false positive and "
+                f"{s['false_negative']} false negative entity-evaluations over "
+                f"{counted(s['entities'], 'entity', 'entities')}; "
+                f"{s['missed_entries']} of {counted(s['entries'], 'episode')} missed; {counted(s['gaps'], 'gap')}"
+                + delay_text(s, "mean_onset_delay", "mean onset delay"))
     if app == topk_set.APP:
         size = s["mean_list_size"]
         return (s["mean_overlap"] / size,
@@ -342,6 +371,8 @@ def write_arm(data, case, prefix, arm, exact, approx, trial=1):
         "dashboard": case["dashboard"],
         "signals": {q["id"]: case.get("signals", case["signal"])(q["id"]) for q in exact["queries"]},
     }
+    if "rules" in case:
+        details["rules"] = {name: rule["description"] for name, rule in case["rules"].items()}
     derived = case["derive"](rows, planned) + relative + errors
     details["max_relative_error"] = max_relative_errors(derived)
     details["sketch_bounds"] = [r for q in planned for r in sketch_bounds(q)]
@@ -373,7 +404,8 @@ def main(argv=None):
             parser.error(f"arm {arm} is not one of {case['arms']}")
     os.makedirs(args.raw_out, exist_ok=True)
     exact_out = os.path.join(args.raw_out, f"{prefix}-exact.json")
-    exact = run_binary(args.binary, spec, exact_out, [])
+    extra = case.get("planeval_flags", [])
+    exact = run_binary(args.binary, spec, exact_out, extra)
     for q in exact["queries"]:
         if "unsupported" in q:
             sys.exit(f"the exact plan of {q['id']} is unsupported: {q['unsupported']}")
@@ -381,7 +413,7 @@ def main(argv=None):
         for trial in range(1, args.trials + 1):
             name = arm if trial == 1 else f"{arm}-trial{trial}"
             approx = run_binary(args.binary, spec, os.path.join(args.raw_out, f"{prefix}-{name}.json"),
-                                arm_flags(arm) + ["--exact", exact_out])
+                                arm_flags(arm) + extra + ["--exact", exact_out])
             write_arm(args.data, case, prefix, arm, exact, approx, trial)
 
 if __name__ == "__main__":
