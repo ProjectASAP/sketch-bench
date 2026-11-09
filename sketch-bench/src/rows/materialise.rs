@@ -6,22 +6,22 @@ use super::*;
 /// the row's own width. The stream is moved into an `Rc` rather than copied:
 /// every measurement of this row reads the same one.
 pub(super) fn peel<T: ColumnItem>(
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
 ) -> Result<Rc<Vec<T>>, RunError> {
-    let column = table.into_column(columns.value)?;
+    let column = table.into_column(value_column.index)?;
     Ok(Rc::new(T::from_column(column)?))
 }
 
-/// The same, for the grouped rows: the label columns joined
+/// The same, for the grouped rows: the columns before the value column joined
 /// with `;` into one key, paired with the value. The join happens here rather
 /// than on the insert path, so a wrapper feeding a library that takes `"a;b"`
 /// pays nothing for it per item.
 pub(super) fn peel_labeled<V: ColumnItem>(
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
 ) -> Result<Rc<Vec<(String, V)>>, RunError> {
-    let (labels, values) = label_columns::<V>(columns, table)?;
+    let (labels, values) = label_columns::<V>(value_column, table)?;
     let mut items = Vec::with_capacity(values.len());
     for (row, value) in values.into_iter().enumerate() {
         let mut key = String::new();
@@ -40,10 +40,10 @@ pub(super) fn peel_labeled<V: ColumnItem>(
 /// The same records with the label values kept apart, as ASAPQuery's
 /// `KeyByLabelValues` holds them.
 pub(super) fn peel_grouped<V: ColumnItem>(
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
 ) -> Result<Rc<Vec<(Vec<String>, V)>>, RunError> {
-    let (labels, values) = label_columns::<V>(columns, table)?;
+    let (labels, values) = label_columns::<V>(value_column, table)?;
     let items = values
         .into_iter()
         .enumerate()
@@ -55,30 +55,38 @@ pub(super) fn peel_grouped<V: ColumnItem>(
 /// The label columns, and the value column at the row's width.
 #[allow(clippy::type_complexity)]
 fn label_columns<V: ColumnItem>(
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
 ) -> Result<(Vec<Vec<String>>, Vec<V>), RunError> {
-    if columns.labels.is_empty() {
-        return Err(RunError::Sketch(
+    let value_column = value_column.index;
+    if value_column == 0 {
+        return Err(RunError::Sketch(format!(
             "this row ingests labelled records, so it needs at least one label \
-             column besides the value column"
-                .into(),
-        ));
+             column before the value column; the table has {} column(s)",
+            table.column_num,
+        )));
     }
     let titles = table.column_title.clone();
-    let mut data = taken(table);
-    let values = V::from_column(take(&mut data, columns.value)?).map_err(|e| {
+    let mut columns = table.into_columns();
+    if value_column >= columns.len() {
+        return Err(RunError::Sketch(format!(
+            "column {value_column} was asked for, but the table holds {}",
+            columns.len(),
+        )));
+    }
+    let values = V::from_column(columns.remove(value_column)).map_err(|e| {
         RunError::Sketch(format!(
             "value column '{}': {e}. The value column's data_type has to be the \
              row's item type",
-            titles[columns.value],
+            titles[value_column],
         ))
     })?;
+    columns.truncate(value_column);
     let labels: Vec<Vec<String>> = columns
-        .labels
-        .iter()
-        .map(|&i| {
-            String::from_column(take(&mut data, i)?).map_err(|e| {
+        .into_iter()
+        .enumerate()
+        .map(|(i, c)| {
+            String::from_column(c).map_err(|e| {
                 RunError::Sketch(format!(
                     "label column '{}': {e}. Label columns are rendered as text, \
                      so their data_type has to be `string`",
@@ -91,39 +99,39 @@ fn label_columns<V: ColumnItem>(
 }
 
 pub(super) fn peel_keyed<K: ColumnItem>(
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
 ) -> Result<Rc<Vec<(K, i64)>>, RunError> {
-    let key = key_column(columns)?;
+    let value_column = value_column.index;
+    if value_column == 0 {
+        return Err(RunError::Sketch(format!(
+            "this row ingests keyed records, so it needs a key column before the \
+             value column; the table has {} column(s)",
+            table.column_num,
+        )));
+    }
     let titles = table.column_title.clone();
-    let mut data = taken(table);
-    let values = i64::from_column(take(&mut data, columns.value)?).map_err(|e| {
+    let mut columns = table.into_columns();
+    if value_column >= columns.len() {
+        return Err(RunError::Sketch(format!(
+            "column {value_column} was asked for, but the table holds {}",
+            columns.len(),
+        )));
+    }
+    let values = i64::from_column(columns.remove(value_column)).map_err(|e| {
         RunError::Sketch(format!(
             "value column '{}': {e}. A keyed row weights its keys with `i64`",
-            titles[columns.value],
+            titles[value_column],
         ))
     })?;
-    let keys = K::from_column(take(&mut data, key)?).map_err(|e| {
+    let keys = K::from_column(columns.remove(KEYED_KEY_COLUMN)).map_err(|e| {
         RunError::Sketch(format!(
             "key column '{}': {e}. A keyed row hashes its keys at the width \
              `--dtype` names",
-            titles[key],
+            titles[KEYED_KEY_COLUMN],
         ))
     })?;
     Ok(Rc::new(keys.into_iter().zip(values).collect()))
-}
-
-fn taken(table: GeneratedTable) -> Vec<Option<ColumnData>> {
-    table.into_columns().into_iter().map(Some).collect()
-}
-
-fn take(data: &mut [Option<ColumnData>], i: usize) -> Result<ColumnData, RunError> {
-    let held = data.len();
-    data.get_mut(i).and_then(Option::take).ok_or_else(|| {
-        RunError::Sketch(format!(
-            "column {i} was asked for, but the table holds {held} or it was named twice"
-        ))
-    })
 }
 
 /// The ordered rows build at every numeric width and at neither `string`: a

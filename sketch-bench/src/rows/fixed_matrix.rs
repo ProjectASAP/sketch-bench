@@ -10,7 +10,7 @@ macro_rules! fixed_matrix_row {
      $query:ident, $merge:ident, $merge_step:ident, $merge_query:ident) => {
         pub(crate) fn $fname(
             req: &Requirement,
-            columns: &ColumnRoles,
+            value_column: &ValueColumn,
             table: GeneratedTable,
             want: &[(Operation, Metric)],
         ) -> Result<Measurements, RunError> {
@@ -31,7 +31,7 @@ macro_rules! fixed_matrix_row {
             // can fail to resolve, and its refusal names the shape.
             struct V<'a, T> {
                 req: &'a Requirement,
-                columns: &'a ColumnRoles,
+                value_column: &'a ValueColumn,
                 table: GeneratedTable,
                 want: &'a [(Operation, Metric)],
                 item: PhantomData<T>,
@@ -48,7 +48,7 @@ macro_rules! fixed_matrix_row {
                 {
                     frequency_row::<T>(
                         self.req,
-                        self.columns,
+                        self.value_column,
                         self.table,
                         self.want,
                         w::$insert::<M, T>,
@@ -71,7 +71,7 @@ macro_rules! fixed_matrix_row {
                         p.cols,
                         V::<$t> {
                             req,
-                            columns,
+                            value_column,
                             table,
                             want,
                             item: PhantomData,

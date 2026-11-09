@@ -12,7 +12,7 @@ fn string_only(req: &Requirement, got: Dtype) -> RunError {
 
 pub(crate) fn row_elastic_lib(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -20,7 +20,7 @@ pub(crate) fn row_elastic_lib(
         ($t:ty) => {
             frequency_row(
                 req,
-                columns,
+                value_column,
                 table,
                 want,
                 el::insert_elastic_lib,
@@ -43,7 +43,7 @@ pub(crate) fn row_elastic_lib(
 
 pub(crate) fn row_elastic_topk_lib(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -51,7 +51,7 @@ pub(crate) fn row_elastic_topk_lib(
         ($t:ty) => {
             topk_row(
                 req,
-                columns,
+                value_column,
                 table,
                 want,
                 el::answered_k_elastic_lib(&req.params).map_err(cannot_build)?,
@@ -74,7 +74,7 @@ pub(crate) fn row_elastic_topk_lib(
 
 pub(crate) fn row_coco_lib(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -82,7 +82,7 @@ pub(crate) fn row_coco_lib(
         ($t:ty) => {
             frequency_row(
                 req,
-                columns,
+                value_column,
                 table,
                 want,
                 co::insert_coco_lib,

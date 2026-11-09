@@ -26,16 +26,12 @@ pub fn trial_options_given(args: &SketchbenchArgs) -> bool {
 }
 
 pub fn key_columns(comparator: Option<&str>, description: &TableDescription) -> Vec<usize> {
-    let roles = crate::column_roles(description);
+    let value = description.column_spec.len().saturating_sub(1);
     match comparator.unwrap_or("none") {
-        "frequency" | "cardinality" | "topk" | "membership" => vec![roles.value],
-        name if name.starts_with("keyed-") => roles.labels.first().copied().into_iter().collect(),
-        "subpop-rank-error" | "subpop-cdf-error" | "subpop-sum" => roles.labels,
-        name if name.starts_with("subpop-") => {
-            let mut columns = roles.labels;
-            columns.push(roles.value);
-            columns
-        }
+        "frequency" | "cardinality" | "topk" | "membership" => vec![value],
+        name if name.starts_with("keyed-") => vec![0],
+        "subpop-rank-error" | "subpop-cdf-error" | "subpop-sum" => (0..value).collect(),
+        name if name.starts_with("subpop-") => (0..=value).collect(),
         _ => Vec::new(),
     }
 }

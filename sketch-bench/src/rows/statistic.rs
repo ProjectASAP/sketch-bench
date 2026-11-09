@@ -24,7 +24,7 @@ pub(super) fn shards(req: &Requirement) -> usize {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn frequency_row<T: CountedValue>(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
     insert: InsertBody<T>,
@@ -35,10 +35,10 @@ pub(super) fn frequency_row<T: CountedValue>(
 ) -> Result<Measurements, RunError> {
     scored_row(
         req,
-        columns,
+        value_column,
         table,
         want,
-        FrequencyGT::<T>::over_column(columns.value),
+        FrequencyGT::<T>::over_column(value_column.index),
         peel::<T>,
         insert,
         insert_step,
@@ -53,7 +53,7 @@ pub(super) fn frequency_row<T: CountedValue>(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn cardinality_row<T: ColumnItem>(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
     insert: InsertBody<T>,
@@ -64,11 +64,11 @@ pub(super) fn cardinality_row<T: ColumnItem>(
 ) -> Result<Measurements, RunError> {
     scored_row(
         req,
-        columns,
+        value_column,
         table,
         want,
         CardinalityGT {
-            column: columns.value,
+            column: value_column.index,
         },
         peel::<T>,
         insert,
@@ -82,7 +82,7 @@ pub(super) fn cardinality_row<T: ColumnItem>(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn membership_row<T: CountedValue>(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
     insert: InsertBody<T>,
@@ -92,10 +92,10 @@ pub(super) fn membership_row<T: CountedValue>(
 ) -> Result<Measurements, RunError> {
     scored_row(
         req,
-        columns,
+        value_column,
         table,
         want,
-        MembershipGT::<T>::over_column(columns.value, columns.value_key_offset.clone()),
+        MembershipGT::<T>::over_column(value_column.index, value_column.key_offset.clone()),
         peel::<T>,
         insert,
         insert_step,
@@ -113,7 +113,7 @@ pub(super) fn membership_row<T: CountedValue>(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn topk_row<T: CountedValue>(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
     k: usize,
@@ -124,10 +124,10 @@ pub(super) fn topk_row<T: CountedValue>(
 ) -> Result<Measurements, RunError> {
     scored_row(
         req,
-        columns,
+        value_column,
         table,
         want,
-        TopkGT::<T>::over_column(k, columns.value),
+        TopkGT::<T>::over_column(k, value_column.index),
         peel::<T>,
         insert,
         insert_step,
@@ -138,25 +138,22 @@ pub(super) fn topk_row<T: CountedValue>(
 }
 
 /// The label columns a grouped row asks and scores: `--group-columns`, which
-/// must name at least one column, and only label columns, since those are the
-/// grid's key columns.
+/// must name at least one column, and only columns before the value column,
+/// since those are the grid's key columns.
 pub(super) fn group_columns(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
 ) -> Result<Vec<usize>, RunError> {
+    let labels = value_column.index;
     if req.group_columns.is_empty() {
         return Err(RunError::Sketch(
             "--group-columns names no column; a group is taken over at least one".into(),
         ));
     }
-    if let Some(&column) = req
-        .group_columns
-        .iter()
-        .find(|c| !columns.labels.contains(c))
-    {
+    if let Some(&column) = req.group_columns.iter().find(|&&c| c >= labels) {
         return Err(RunError::Sketch(format!(
-            "--group-columns {column}: the label columns are {:?}",
-            columns.labels
+            "--group-columns {column}: the label columns are 0..{labels}, the ones \
+             before the value column"
         )));
     }
     Ok(req.group_columns.clone())
@@ -167,7 +164,7 @@ pub(super) fn group_columns(
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn subpop_frequency_row<V: CountedValue + 'static>(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
     insert: InsertBody<(String, V)>,
@@ -178,10 +175,10 @@ pub(super) fn subpop_frequency_row<V: CountedValue + 'static>(
 ) -> Result<Measurements, RunError> {
     scored_row(
         req,
-        columns,
+        value_column,
         table,
         want,
-        SubpopFrequencyGT::<V>::over_columns(group_columns(req, columns)?, columns.value),
+        SubpopFrequencyGT::<V>::over_columns(group_columns(req, value_column)?, value_column.index),
         peel_labeled::<V>,
         insert,
         insert_step,
@@ -196,7 +193,7 @@ pub(super) fn subpop_frequency_row<V: CountedValue + 'static>(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn subpop_cardinality_row<V: ColumnItem + 'static>(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
     insert: InsertBody<(String, V)>,
@@ -207,12 +204,12 @@ pub(super) fn subpop_cardinality_row<V: ColumnItem + 'static>(
 ) -> Result<Measurements, RunError> {
     scored_row(
         req,
-        columns,
+        value_column,
         table,
         want,
         SubpopCardinalityGT {
-            group_columns: group_columns(req, columns)?,
-            value_column: columns.value,
+            group_columns: group_columns(req, value_column)?,
+            value_column: value_column.index,
         },
         peel_labeled::<V>,
         insert,
@@ -228,7 +225,7 @@ pub(super) fn subpop_cardinality_row<V: ColumnItem + 'static>(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn subpop_vector_row<V: ColumnItem + 'static, G>(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
     ground_truth: G,
@@ -244,7 +241,7 @@ where
 {
     scored_row(
         req,
-        columns,
+        value_column,
         table,
         want,
         ground_truth,
@@ -260,7 +257,7 @@ where
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn subpop_quantile_row<V: ColumnItem + 'static>(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
     insert: InsertBody<(String, V)>,
@@ -271,12 +268,12 @@ pub(super) fn subpop_quantile_row<V: ColumnItem + 'static>(
 ) -> Result<Measurements, RunError> {
     scored_row(
         req,
-        columns,
+        value_column,
         table,
         want,
         SubpopRankErrorGT {
-            group_columns: group_columns(req, columns)?,
-            value_column: columns.value,
+            group_columns: group_columns(req, value_column)?,
+            value_column: value_column.index,
         },
         peel_labeled::<V>,
         insert,
@@ -292,7 +289,7 @@ pub(super) fn subpop_quantile_row<V: ColumnItem + 'static>(
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(super) fn subpop_cdf_row<V: ColumnItem + 'static>(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
     insert: InsertBody<(String, V)>,
@@ -303,12 +300,12 @@ pub(super) fn subpop_cdf_row<V: ColumnItem + 'static>(
 ) -> Result<Measurements, RunError> {
     scored_row(
         req,
-        columns,
+        value_column,
         table,
         want,
         SubpopCdfErrorGT {
-            group_columns: group_columns(req, columns)?,
-            value_column: columns.value,
+            group_columns: group_columns(req, value_column)?,
+            value_column: value_column.index,
         },
         peel_labeled::<V>,
         insert,
@@ -322,7 +319,7 @@ pub(super) fn subpop_cdf_row<V: ColumnItem + 'static>(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn keyed_row<K: ColumnItem, G>(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
     ground_truth: G,
@@ -338,7 +335,7 @@ where
 {
     scored_row(
         req,
-        columns,
+        value_column,
         table,
         want,
         ground_truth,
@@ -356,7 +353,7 @@ where
 #[allow(clippy::too_many_arguments)]
 pub(super) fn quantile_row<T: ColumnItem>(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
     insert: InsertBody<T>,
@@ -367,11 +364,11 @@ pub(super) fn quantile_row<T: ColumnItem>(
 ) -> Result<Measurements, RunError> {
     scored_row(
         req,
-        columns,
+        value_column,
         table,
         want,
         RankErrorGT {
-            column: columns.value,
+            column: value_column.index,
             fractions: req.quantiles.clone(),
         },
         peel::<T>,
@@ -388,7 +385,7 @@ pub(super) fn quantile_row<T: ColumnItem>(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn relative_value_quantile_row<T: ColumnItem>(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
     insert: InsertBody<T>,
@@ -399,11 +396,11 @@ pub(super) fn relative_value_quantile_row<T: ColumnItem>(
 ) -> Result<Measurements, RunError> {
     scored_row(
         req,
-        columns,
+        value_column,
         table,
         want,
         RelativeValueErrorGT {
-            column: columns.value,
+            column: value_column.index,
         },
         peel::<T>,
         insert,
@@ -417,7 +414,7 @@ pub(super) fn relative_value_quantile_row<T: ColumnItem>(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn scored_row<G, I>(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
     ground_truth: G,
@@ -440,15 +437,15 @@ where
         Some(path) => {
             let shapes = aqpbm_core::accuracy::subpopulation::group_shapes(
                 &table,
-                &group_columns(req, columns)?,
-                columns.value,
+                &group_columns(req, value_column)?,
+                value_column.index,
             )
             .map_err(|e| RunError::Sketch(format!("--per-group-out: {e}")))?;
             per_group_written(score, per_group, shapes, path, req.trial)?
         }
         None => score,
     };
-    let items = materialise(columns, table)?;
+    let items = materialise(value_column, table)?;
     // What the folds cut into shards: the stream itself, or reordered so the
     // same cut deals it round-robin. Copied only when a merge will use it.
     let merging = want
@@ -566,12 +563,12 @@ fn per_group_written<A: 'static>(
 /// is one call over the whole stream rather than a loop over it.
 pub(super) fn timed_row<T: ColumnItem>(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
     insert: ParallelInsertBody<T>,
 ) -> Result<Measurements, RunError> {
-    let items = peel::<T>(columns, table)?;
+    let items = peel::<T>(value_column, table)?;
     let workers = req.workers.max(1);
     let mut bodies = Vec::with_capacity(want.len());
     for &(operation, metric) in want {

@@ -36,16 +36,15 @@ use aqpbm_core::measure::{
     record_calls, runs_for, Measurement, Pass as CorePass, Report, RunOutcome, MIN_MERGE_SHARDS,
 };
 use aqpbm_core::metrics::{Metric, Operation};
-use aqpbm_core::{ColumnData, ColumnItem, GeneratedTable};
+use aqpbm_core::{ColumnItem, GeneratedTable, KeyOffset};
 
-fn key_column(columns: &ColumnRoles) -> Result<usize, RunError> {
-    columns.labels.first().copied().ok_or_else(|| {
-        RunError::Sketch(
-            "this row ingests keyed records, so it needs a key column besides the value column"
-                .into(),
-        )
-    })
+const KEYED_KEY_COLUMN: usize = 0;
+
+pub struct ValueColumn {
+    pub index: usize,
+    pub key_offset: Option<KeyOffset>,
 }
+
 /// One invocation's worth of work: one closure per measurement, in the order
 /// they were asked for. The provenance is not here — the frontend generated the
 /// data and already holds the description that names it.
@@ -55,12 +54,12 @@ pub type Measurements = Vec<((Operation, Metric), Measurement)>;
 /// request and the data, handing back the closures.
 pub type RowBinding = fn(
     &Requirement,
-    &ColumnRoles,
+    &ValueColumn,
     GeneratedTable,
     &[(Operation, Metric)],
 ) -> Result<Measurements, RunError>;
 
-type Materialise<I> = fn(&ColumnRoles, GeneratedTable) -> Result<Rc<Vec<I>>, RunError>;
+type Materialise<I> = fn(&ValueColumn, GeneratedTable) -> Result<Rc<Vec<I>>, RunError>;
 
 /// Bind a row to its wrapper and hand back the closures. The registry declares
 /// the pair; [`binding`] is what names the code, so a pair the registry lists
@@ -86,12 +85,11 @@ pub fn measurements(
     let mut order = columns.labels.clone();
     order.push(columns.value);
     let table = table.select(&order)?;
-    let columns = ColumnRoles {
-        labels: (0..columns.labels.len()).collect(),
-        value: columns.labels.len(),
-        value_key_offset: columns.value_key_offset.clone(),
+    let value_column = ValueColumn {
+        index: columns.labels.len(),
+        key_offset: columns.value_key_offset.clone(),
     };
-    row(req, &columns, table, want)
+    row(req, &value_column, table, want)
 }
 
 /// The pair a registry entry names, bound to the code that runs it.

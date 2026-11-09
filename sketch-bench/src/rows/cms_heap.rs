@@ -6,7 +6,7 @@ use crate::wrappers::cms_heap::sketchlib as chl;
 
 pub(crate) fn row_cms_heap_fastpath_vector2d_lib(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -14,7 +14,7 @@ pub(crate) fn row_cms_heap_fastpath_vector2d_lib(
         ($t:ty) => {
             frequency_row::<$t>(
                 req,
-                columns,
+                value_column,
                 table,
                 want,
                 chl::insert_cms_heap_lib_vector2d_fast::<$t>,
@@ -39,7 +39,7 @@ pub(crate) fn row_cms_heap_fastpath_vector2d_lib(
 
 pub(crate) fn row_cms_heap_regularpath_vector2d_lib(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -47,7 +47,7 @@ pub(crate) fn row_cms_heap_regularpath_vector2d_lib(
         ($t:ty) => {
             frequency_row::<$t>(
                 req,
-                columns,
+                value_column,
                 table,
                 want,
                 chl::insert_cms_heap_lib_vector2d_regular::<$t>,
@@ -72,7 +72,7 @@ pub(crate) fn row_cms_heap_regularpath_vector2d_lib(
 
 pub(crate) fn row_cms_heap_topk_fastpath_vector2d_lib(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -80,7 +80,7 @@ pub(crate) fn row_cms_heap_topk_fastpath_vector2d_lib(
         ($t:ty) => {
             topk_row::<$t>(
                 req,
-                columns,
+                value_column,
                 table,
                 want,
                 chl::answered_k(&req.params),
@@ -105,7 +105,7 @@ pub(crate) fn row_cms_heap_topk_fastpath_vector2d_lib(
 
 pub(crate) fn row_cms_heap_topk_regularpath_vector2d_lib(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -113,7 +113,7 @@ pub(crate) fn row_cms_heap_topk_regularpath_vector2d_lib(
         ($t:ty) => {
             topk_row::<$t>(
                 req,
-                columns,
+                value_column,
                 table,
                 want,
                 chl::answered_k(&req.params),
@@ -138,7 +138,7 @@ pub(crate) fn row_cms_heap_topk_regularpath_vector2d_lib(
 
 pub(crate) fn row_cms_fastpath_fixedmatrix_32k_parallel_lib(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -146,7 +146,7 @@ pub(crate) fn row_cms_fastpath_fixedmatrix_32k_parallel_lib(
         ($t:ty) => {
             timed_row::<$t>(
                 req,
-                columns,
+                value_column,
                 table,
                 want,
                 cl::insert_parallel_cms_fast_path::<$t>,

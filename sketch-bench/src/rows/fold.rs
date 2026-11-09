@@ -3,7 +3,7 @@ use crate::wrappers::{count_min_fold as cmf, count_sketch_fold as csf};
 
 pub(crate) fn row_count_min_fold_lib(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -11,7 +11,7 @@ pub(crate) fn row_count_min_fold_lib(
         ($t:ty) => {
             frequency_row::<$t>(
                 req,
-                columns,
+                value_column,
                 table,
                 want,
                 cmf::insert_count_min_fold_lib::<$t>,
@@ -36,7 +36,7 @@ pub(crate) fn row_count_min_fold_lib(
 
 pub(crate) fn row_count_min_fold_topk_lib(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -44,7 +44,7 @@ pub(crate) fn row_count_min_fold_topk_lib(
         ($t:ty) => {
             topk_row::<$t>(
                 req,
-                columns,
+                value_column,
                 table,
                 want,
                 cmf::answered_k_count_min_fold_lib(&req.params).map_err(cannot_build)?,
@@ -69,7 +69,7 @@ pub(crate) fn row_count_min_fold_topk_lib(
 
 pub(crate) fn row_count_sketch_fold_lib(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -77,7 +77,7 @@ pub(crate) fn row_count_sketch_fold_lib(
         ($t:ty) => {
             frequency_row::<$t>(
                 req,
-                columns,
+                value_column,
                 table,
                 want,
                 csf::insert_count_sketch_fold_lib::<$t>,
@@ -102,7 +102,7 @@ pub(crate) fn row_count_sketch_fold_lib(
 
 pub(crate) fn row_count_sketch_fold_topk_lib(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -110,7 +110,7 @@ pub(crate) fn row_count_sketch_fold_topk_lib(
         ($t:ty) => {
             topk_row::<$t>(
                 req,
-                columns,
+                value_column,
                 table,
                 want,
                 csf::answered_k_count_sketch_fold_lib(&req.params).map_err(cannot_build)?,

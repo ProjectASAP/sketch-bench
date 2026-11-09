@@ -3,7 +3,7 @@ use crate::wrappers::{count_min_hll as cmh, count_sketch_l2_norm as csl};
 
 pub(crate) fn row_count_sketch_l2_norm_lib(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -11,10 +11,10 @@ pub(crate) fn row_count_sketch_l2_norm_lib(
         ($t:ty) => {
             keyed_row::<$t, _>(
                 req,
-                columns,
+                value_column,
                 table,
                 want,
-                KeyedL2NormGT::<$t>::over_columns(key_column(columns)?, columns.value),
+                KeyedL2NormGT::<$t>::over_columns(KEYED_KEY_COLUMN, value_column.index),
                 csl::insert_count_sketch_l2_norm_lib::<$t>,
                 csl::insert_step_count_sketch_l2_norm_lib::<$t>,
                 csl::query_count_sketch_l2_norm_lib::<$t>,
@@ -37,7 +37,7 @@ pub(crate) fn row_count_sketch_l2_norm_lib(
 
 pub(crate) fn row_count_min_hll_lib(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -45,7 +45,7 @@ pub(crate) fn row_count_min_hll_lib(
         ($t:ty) => {
             subpop_cardinality_row::<$t>(
                 req,
-                columns,
+                value_column,
                 table,
                 want,
                 cmh::insert_count_min_hll_lib::<$t>,

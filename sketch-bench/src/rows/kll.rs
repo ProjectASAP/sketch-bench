@@ -11,7 +11,7 @@ use crate::wrappers::kll_dynamic as kd;
 
 pub(crate) fn row_kll_percall_oxide(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -19,7 +19,7 @@ pub(crate) fn row_kll_percall_oxide(
         ($t:ty) => {
             quantile_row::<$t>(
                 req,
-                columns,
+                value_column,
                 table,
                 want,
                 ko::insert_kll_oxide_per_call::<$t>,
@@ -44,7 +44,7 @@ pub(crate) fn row_kll_percall_oxide(
 
 pub(crate) fn row_kll_percall_lib(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -52,7 +52,7 @@ pub(crate) fn row_kll_percall_lib(
         ($t:ty) => {
             quantile_row::<$t>(
                 req,
-                columns,
+                value_column,
                 table,
                 want,
                 kl::insert_kll_lib_per_call::<$t>,
@@ -77,7 +77,7 @@ pub(crate) fn row_kll_percall_lib(
 
 pub(crate) fn row_kll_cdf_oxide(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -85,7 +85,7 @@ pub(crate) fn row_kll_cdf_oxide(
         ($t:ty) => {
             quantile_row::<$t>(
                 req,
-                columns,
+                value_column,
                 table,
                 want,
                 ko::insert_kll_oxide_cdf::<$t>,
@@ -110,7 +110,7 @@ pub(crate) fn row_kll_cdf_oxide(
 
 pub(crate) fn row_kll_cdf_lib(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -118,7 +118,7 @@ pub(crate) fn row_kll_cdf_lib(
         ($t:ty) => {
             quantile_row::<$t>(
                 req,
-                columns,
+                value_column,
                 table,
                 want,
                 kl::insert_kll_lib_cdf::<$t>,
@@ -146,7 +146,7 @@ pub(crate) fn row_kll_cdf_lib(
 // run at and this row refused would leave that error with nothing to subtract.
 pub(crate) fn row_kll_cdf_polars(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -154,7 +154,7 @@ pub(crate) fn row_kll_cdf_polars(
         ($t:ty) => {
             quantile_row::<$t>(
                 req,
-                columns,
+                value_column,
                 table,
                 want,
                 kp::insert_polars_quantile_kll::<$t>,
@@ -175,7 +175,7 @@ pub(crate) fn row_kll_cdf_polars(
 
 pub(crate) fn row_kll_dynamic_lib(
     req: &Requirement,
-    columns: &ColumnRoles,
+    value_column: &ValueColumn,
     table: GeneratedTable,
     want: &[(Operation, Metric)],
 ) -> Result<Measurements, RunError> {
@@ -183,7 +183,7 @@ pub(crate) fn row_kll_dynamic_lib(
         ($t:ty) => {
             quantile_row::<$t>(
                 req,
-                columns,
+                value_column,
                 table,
                 want,
                 kd::insert_kll_dynamic_lib::<$t>,
