@@ -15,7 +15,7 @@ pub mod metrics;
 // Re-exported so callers find it here.
 pub use accuracy::GroundTruth;
 pub use aqpbm_datagen::{
-    ColumnData, ColumnItem, ColumnSpec, DataDistribution, DataGenError, GeneratedTable,
+    ColumnData, ColumnItem, ColumnSpec, DataDistribution, DataGenError, GeneratedTable, KeyOffset,
     NormalParameter, ParetoParameter, StringOpts, TableDescription, UniformParameter,
     ZipfParameter, RULE_MONOTONIC_INCREASE, RULE_NONE,
 };

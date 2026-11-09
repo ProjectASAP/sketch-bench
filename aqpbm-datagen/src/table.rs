@@ -357,18 +357,6 @@ impl GeneratedTable {
         Ok(table)
     }
 
-    pub fn column_index(&self, title: &str) -> Result<usize, DataGenError> {
-        self.column_title
-            .iter()
-            .position(|t| t == title)
-            .ok_or_else(|| {
-                DataGenError::BadParam(format!(
-                    "no column titled '{title}'; the table holds {:?}",
-                    self.column_title
-                ))
-            })
-    }
-
     pub fn select(self, columns: &[usize]) -> Result<GeneratedTable, DataGenError> {
         let held = self.data.len();
         let mut titles: Vec<Option<String>> = self.column_title.into_iter().map(Some).collect();

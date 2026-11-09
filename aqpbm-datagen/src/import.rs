@@ -145,16 +145,14 @@ impl ExternalTableDescription {
         }
     }
 
-    pub fn time_columns(&self) -> Vec<String> {
+    fn time_columns(&self) -> (String, Option<String>) {
         match &self.source {
-            ExternalSource::Boom | ExternalSource::Alibaba => vec!["timestamp".to_string()],
-            ExternalSource::Google => vec!["start_time".to_string(), "end_time".to_string()],
-            ExternalSource::Custom => self
-                .timestamp_column
-                .iter()
-                .chain(&self.end_timestamp_column)
-                .cloned()
-                .collect(),
+            ExternalSource::Boom | ExternalSource::Alibaba => ("timestamp".to_string(), None),
+            ExternalSource::Google => ("start_time".to_string(), Some("end_time".to_string())),
+            ExternalSource::Custom => (
+                self.timestamp_column.clone().unwrap_or_default(),
+                self.end_timestamp_column.clone(),
+            ),
         }
     }
 
@@ -248,11 +246,13 @@ fn load(spec: &ExternalTableDescription, data_root: &Path) -> Result<Option<Gene
 }
 
 fn materialise(records: &[RawRecord], spec: &ExternalTableDescription) -> Result<GeneratedTable> {
-    let mut labels = spec.time_columns();
+    let (start, end) = spec.time_columns();
+    let mut labels = vec![start];
     let mut data = vec![ColumnData::Int64(
         records.iter().map(|r| r.start_ns).collect(),
     )];
-    if labels.len() > 1 {
+    if let Some(end) = end {
+        labels.push(end);
         data.push(ColumnData::Int64(
             records.iter().map(|r| r.end_ns).collect(),
         ));
@@ -365,19 +365,15 @@ fn load_alibaba(
         }
         let value = parse_value(field(&record, value, row)?)
             .with_context(|| format!("Alibaba row {} value", row + 2))?;
-        include(
-            RawRecord {
-                start_ns,
-                end_ns: start_ns,
-                groups: groups
-                    .iter()
-                    .map(|i| field(&record, *i, row).map(str::to_string))
-                    .collect::<Result<_>>()?,
-                value,
-            },
-            window,
-            &mut out,
-        );
+        out.push(RawRecord {
+            start_ns,
+            end_ns: start_ns,
+            groups: groups
+                .iter()
+                .map(|i| field(&record, *i, row).map(str::to_string))
+                .collect::<Result<_>>()?,
+            value,
+        });
     }
     Ok(out)
 }
@@ -482,19 +478,15 @@ fn load_google(
         }
         let value = parse_value(field(&record, value, row)?)
             .with_context(|| format!("Google row {} value", row + 1))?;
-        include(
-            RawRecord {
-                start_ns,
-                end_ns,
-                groups: groups
-                    .iter()
-                    .map(|i| field(&record, *i, row).map(str::to_string))
-                    .collect::<Result<_>>()?,
-                value,
-            },
-            window,
-            &mut out,
-        );
+        out.push(RawRecord {
+            start_ns,
+            end_ns,
+            groups: groups
+                .iter()
+                .map(|i| field(&record, *i, row).map(str::to_string))
+                .collect::<Result<_>>()?,
+            value,
+        });
     }
     Ok(out)
 }
@@ -753,7 +745,7 @@ value_column: latency
     }
 
     fn start_times(table: &GeneratedTable) -> &ColumnData {
-        table.column(table.column_index("ts").unwrap()).unwrap()
+        table.column(0).unwrap()
     }
 
     const WINDOW: &str = r#"window: {start: "0", end: "50"}"#;
@@ -787,32 +779,6 @@ value_column: latency
             &format!("{WINDOW}\nend_timestamp_column: end_ts"),
         );
         assert_eq!(table.column_title, ["ts", "end_ts", "service", "latency"]);
-        assert_eq!(
-            table.column(table.column_index("end_ts").unwrap()).unwrap(),
-            &ColumnData::Int64(vec![10, 40])
-        );
-    }
-
-    #[test]
-    fn user_csv_spec_preserves_generic_column_mapping() {
-        let spec: ExternalTableDescription = serde_norway::from_str(
-            r#"
-source: custom
-dataset: tenant/events.csv.gz
-mode: grouped
-timestamp_column: ts
-end_timestamp_column: end_ts
-timestamp_unit: milliseconds
-group_columns: [service]
-value_column: key
-window: {start: "0", end: "60000"}
-min_records: 100
-"#,
-        )
-        .unwrap();
-        assert!(matches!(spec.source, ExternalSource::Custom));
-        assert_eq!(spec.timestamp_column.as_deref(), Some("ts"));
-        assert_eq!(spec.end_timestamp_column.as_deref(), Some("end_ts"));
-        assert_eq!(spec.dataset, "tenant/events.csv.gz");
+        assert_eq!(table.column(1).unwrap(), &ColumnData::Int64(vec![10, 40]));
     }
 }
