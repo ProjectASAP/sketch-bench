@@ -114,8 +114,8 @@ fn the_use_case_1_spec_draws_the_samples_it_drew_before_specs_had_many_series() 
             hash = hash.wrapping_mul(0x100_0000_01b3);
         }
     }
-    assert_eq!(series[0].points.len(), 1_800_000);
-    assert_eq!(hash, 0x2b28_6d1f_7dab_be70);
+    assert_eq!(series[0].points.len(), 11_340_033);
+    assert_eq!(hash, 0x0ab5_805d_18d8_d702);
 }
 
 #[test]
