@@ -14,6 +14,7 @@ import decision
 import rollout
 import rate_limit_rules
 import rules
+import scenario
 import scaling_rules
 import threshold_alert
 import topk_set
@@ -94,6 +95,7 @@ USE_CASES = {
         "signal": lambda query: query,
         "signals": lambda query: [query] + rule_signals(ddos_rules.RULES)(query),
         "rules": ddos_rules.RULES,
+        "scenario_entity": ddos_rules.server,
         "derive": uc1_derive,
         "dashboard": "threshold-alert",
         "needs_every_query": False,
@@ -107,6 +109,7 @@ USE_CASES = {
         "signals": lambda query: (["scale_decision"] if query in ("p95_cpu", "p95_memory") else [])
         + rule_signals(scaling_rules.RULES)(query),
         "rules": scaling_rules.RULES,
+        "scenario_entity": scaling_rules.container,
         "derive": uc2_derive,
         "dashboard": "decision",
         "needs_every_query": True,
@@ -119,6 +122,7 @@ USE_CASES = {
         "signal": lambda query: "video",
         "signals": rule_signals(video_rules.RULES),
         "rules": video_rules.RULES,
+        "scenario_entity": video_rules.subpopulation,
         "derive": uc3_derive,
         "dashboard": "rules",
         "needs_every_query": True,
@@ -373,7 +377,7 @@ def headline(app, s):
 def headlines(derived):
     by_signal = {}
     for r in derived:
-        if r["kind"] == "fidelity_summary" and r["metric"] != "disagreements":
+        if r["kind"] == "fidelity_summary" and r["metric"] != "disagreements" and "arm" not in r["labels"]:
             key = (r["labels"]["app"], r["labels"]["signal"])
             by_signal.setdefault(key, {})[r["metric"]] = r["value"]
     out = {}
@@ -399,7 +403,12 @@ def run_name(prefix, arm, trial, policy):
     return name if trial == 1 else f"{name}-trial{trial}"
 
 
-def write_arm(data, case, prefix, arm, exact, approx, trial=1, policy=bounds.PLAIN, widen=None):
+def caught_text(by_arm):
+    return "; incidents caught " + ", ".join(
+        f"{arm} {by_arm[arm]['caught']} of {by_arm[arm]['incidents']}" for arm in ("exact", "approx") if arm in by_arm)
+
+
+def write_arm(data, case, prefix, arm, exact, approx, trial=1, policy=bounds.PLAIN, widen=None, spec=None):
     run_id = run_name(prefix, arm, trial, policy)
     use_case = exact["use_case"]
     exact_by_id = {q["id"]: q for q in exact["queries"]}
@@ -438,9 +447,16 @@ def write_arm(data, case, prefix, arm, exact, approx, trial=1, policy=bounds.PLA
         details["policy"] = POLICY_TEXT[policy]
         details["bounded_queries"] = widen.bounded_queries()
     derived = case["derive"](rows, planned, policy, widen) + relative + errors
+    if spec is not None:
+        scored_rows, scored = scenario.derive(run_id, spec, case.get("scenario_entity"), derived)
+        derived += scored_rows
+        details["scenario"] = scored
     details["max_relative_error"] = max_relative_errors(derived)
     details["sketch_bounds"] = [r for q in planned for r in sketch_bounds(q)]
     details["fidelity"] = headlines(derived)
+    for signal, by_arm in details.get("scenario", {}).items():
+        if signal in details["fidelity"]:
+            details["fidelity"][signal]["fidelity"] += caught_text(by_arm)
     details["stage1"] = [stage1(approx["arm"], exact_by_id[q["id"]], q, derived) for q in planned]
     if "stage2" in case:
         details["stage2"] = case["stage2"](derived, errors)
@@ -472,6 +488,8 @@ def main(argv=None):
             parser.error(f"arm {arm} is not one of {case['arms']}")
     os.makedirs(args.raw_out, exist_ok=True)
     exact_out = os.path.join(args.raw_out, f"{prefix}-exact.json")
+    with open(spec) as f:
+        spec_doc = json.load(f)
     extra = case.get("planeval_flags", [])
     exact = run_binary(args.binary, spec, exact_out, extra)
     for q in exact["queries"]:
@@ -484,8 +502,7 @@ def main(argv=None):
         max_error = max_error_of(arm)
         arm_spec = spec
         if max_error is not None and set(policies) != {bounds.PLAIN}:
-            with open(spec) as f:
-                widened = bounds.with_bound_queries(json.load(f), max_error)
+            widened = bounds.with_bound_queries(spec_doc, max_error)
             arm_spec = os.path.join(args.raw_out, f"{prefix}-{arm}-spec.json")
             with open(arm_spec, "w") as f:
                 json.dump(widened, f)
@@ -499,7 +516,7 @@ def main(argv=None):
                     print(f"{run_name(prefix, arm, trial, policy)}: no plan has an error bound; not written",
                           file=sys.stderr)
                     continue
-                write_arm(args.data, case, prefix, arm, exact, approx, trial, policy, widen)
+                write_arm(args.data, case, prefix, arm, exact, approx, trial, policy, widen, spec_doc)
 
 if __name__ == "__main__":
     main()
