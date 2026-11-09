@@ -477,14 +477,19 @@ def main(argv=None):
     parser.add_argument("--arm", action="append", help="repeatable; default every arm of the use case")
     parser.add_argument("--trials", type=int, default=1,
                         help="runs of each approximate arm, each with fresh sketch seeds")
+    parser.add_argument("--real", action="store_true",
+                        help="read the use case's recorded data (its _real spec) from --data-root instead of "
+                             "generating it")
+    parser.add_argument("--data-root", default=os.path.expanduser("~/ProjectASAP/datasets"))
     parser.add_argument("--policy", action="append", choices=bounds.POLICIES,
                         help="repeatable; how a rule treats an answer whose error bound leaves its check open: "
                              "plain ignores the bound, bound takes no action, rerun asks the exact plan; "
                              "default every policy the use case supports")
     args = parser.parse_args(argv)
     case = USE_CASES[args.use_case]
-    prefix = f"uc{args.use_case}"
-    spec = os.path.join(REPO, "aqpbm-planeval", "workloads", case["spec"])
+    prefix = f"uc{args.use_case}-real" if args.real else f"uc{args.use_case}"
+    spec_name = case["spec"].replace(".json", "_real.json") if args.real else case["spec"]
+    spec = os.path.join(REPO, "aqpbm-planeval", "workloads", spec_name)
     for arm in args.arm or []:
         if arm not in case["arms"]:
             parser.error(f"arm {arm} is not one of {case['arms']}")
@@ -492,7 +497,7 @@ def main(argv=None):
     exact_out = os.path.join(args.raw_out, f"{prefix}-exact.json")
     with open(spec) as f:
         spec_doc = json.load(f)
-    extra = case.get("planeval_flags", [])
+    extra = case.get("planeval_flags", []) + (["--data-root", args.data_root] if args.real else [])
     exact = run_binary(args.binary, spec, exact_out, extra)
     for q in exact["queries"]:
         if "unsupported" in q:

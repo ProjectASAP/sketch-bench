@@ -1,0 +1,99 @@
+{
+ "use_case": "k8s_autoscaling",
+ "start_ms": 1767225600000,
+ "duration_ms": 5100000,
+ "seed": 21,
+ "metrics": [
+  {
+   "name": "container_cpu",
+   "sample_interval_ms": 300000,
+   "non_negative": true,
+   "planned_series_count": 200,
+   "import": {
+    "table": {
+     "source": "custom",
+     "dataset": "converted/uc2/google_2011_container_cpu.csv.gz",
+     "mode": "grouped",
+     "value_column": "value",
+     "timestamp_column": "timestamp",
+     "timestamp_unit": "nanoseconds",
+     "group_columns": [
+      "container",
+      "dimension"
+     ]
+    },
+    "time_scale": 1.0
+   }
+  },
+  {
+   "name": "container_memory",
+   "sample_interval_ms": 300000,
+   "non_negative": true,
+   "planned_series_count": 200,
+   "import": {
+    "table": {
+     "source": "custom",
+     "dataset": "converted/uc2/google_2011_container_memory.csv.gz",
+     "mode": "grouped",
+     "value_column": "value",
+     "timestamp_column": "timestamp",
+     "timestamp_unit": "nanoseconds",
+     "group_columns": [
+      "container",
+      "dimension"
+     ]
+    },
+    "time_scale": 1.0
+   }
+  }
+ ],
+ "queries": [
+  {
+   "id": "p95_cpu",
+   "promql": "quantile_over_time(0.95, container_cpu{dimension=\"used\"}[5m])",
+   "window_ms": 300000,
+   "interval_ms": 60000,
+   "unit": "cores",
+   "accuracy_metric": "rank"
+  },
+  {
+   "id": "p95_memory",
+   "promql": "quantile_over_time(0.95, container_memory{dimension=\"used\"}[5m])",
+   "window_ms": 300000,
+   "interval_ms": 60000,
+   "unit": "bytes",
+   "accuracy_metric": "rank"
+  },
+  {
+   "id": "p50_cpu_1h",
+   "promql": "quantile_over_time(0.5, container_cpu{dimension=\"used\"}[1h])",
+   "window_ms": 3600000,
+   "interval_ms": 60000,
+   "unit": "cores",
+   "accuracy_metric": "rank"
+  },
+  {
+   "id": "p95_cpu_1h",
+   "promql": "quantile_over_time(0.95, container_cpu{dimension=\"used\"}[1h])",
+   "window_ms": 3600000,
+   "interval_ms": 60000,
+   "unit": "cores",
+   "accuracy_metric": "rank"
+  },
+  {
+   "id": "p99_memory_1h",
+   "promql": "quantile_over_time(0.99, container_memory{dimension=\"used\"}[1h])",
+   "window_ms": 3600000,
+   "interval_ms": 60000,
+   "unit": "bytes",
+   "accuracy_metric": "rank"
+  },
+  {
+   "id": "max_memory_1h",
+   "promql": "max_over_time(container_memory{dimension=\"used\"}[1h])",
+   "window_ms": 3600000,
+   "interval_ms": 60000,
+   "unit": "bytes"
+  }
+ ]
+}

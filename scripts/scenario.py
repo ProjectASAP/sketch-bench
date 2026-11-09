@@ -36,7 +36,7 @@ def incidents(spec, entity_of):
     """
     out = []
     for metric in spec["metrics"]:
-        for group in metric["series"]:
+        for group in metric.get("series", []):
             spans = {}
             for phase in group.get("phases", []):
                 if phase["start_offset_ms"] <= 0 and phase["end_offset_ms"] >= spec["duration_ms"]:

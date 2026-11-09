@@ -1,0 +1,172 @@
+{
+ "use_case": "video_experience",
+ "start_ms": 1704132000000,
+ "duration_ms": 7200000,
+ "seed": 31,
+ "metrics": [
+  {
+   "name": "bitrate",
+   "sample_interval_ms": 267,
+   "planned_series_count": 56,
+   "floor": true,
+   "import": {
+    "time_scale": 1,
+    "table": {
+     "source": "custom",
+     "dataset": "converted/uc3/bitrate.csv.gz",
+     "mode": "grouped",
+     "group_columns": [
+      "city",
+      "isp",
+      "cdn",
+      "device"
+     ],
+     "value_column": "bitrate",
+     "timestamp_column": "time",
+     "timestamp_unit": "nanoseconds"
+    },
+    "origin_ns": 1704132000000000000
+   }
+  },
+  {
+   "name": "buffering",
+   "sample_interval_ms": 267,
+   "planned_series_count": 56,
+   "non_negative": true,
+   "import": {
+    "time_scale": 1,
+    "table": {
+     "source": "custom",
+     "dataset": "converted/uc3/buffering.csv.gz",
+     "mode": "grouped",
+     "group_columns": [
+      "city",
+      "isp",
+      "cdn",
+      "device"
+     ],
+     "value_column": "buffering",
+     "timestamp_column": "time",
+     "timestamp_unit": "nanoseconds"
+    },
+    "origin_ns": 1704132000000000000
+   }
+  },
+  {
+   "name": "play_time",
+   "sample_interval_ms": 267,
+   "planned_series_count": 56,
+   "import": {
+    "time_scale": 1,
+    "table": {
+     "source": "custom",
+     "dataset": "converted/uc3/play_time.csv.gz",
+     "mode": "grouped",
+     "group_columns": [
+      "city",
+      "isp",
+      "cdn",
+      "device"
+     ],
+     "value_column": "play_time",
+     "timestamp_column": "time",
+     "timestamp_unit": "nanoseconds"
+    },
+    "origin_ns": 1704132000000000000
+   }
+  },
+  {
+   "name": "startup_time",
+   "sample_interval_ms": 57625,
+   "planned_series_count": 56,
+   "non_negative": true,
+   "import": {
+    "time_scale": 1,
+    "table": {
+     "source": "custom",
+     "dataset": "converted/uc3/startup_time.csv.gz",
+     "mode": "grouped",
+     "group_columns": [
+      "city",
+      "isp",
+      "cdn",
+      "device"
+     ],
+     "value_column": "startup_time",
+     "timestamp_column": "time",
+     "timestamp_unit": "nanoseconds"
+    },
+    "origin_ns": 1704132000000000000
+   }
+  },
+  {
+   "name": "device_id",
+   "sample_interval_ms": 267,
+   "planned_series_count": 56,
+   "floor": true,
+   "import": {
+    "time_scale": 1,
+    "table": {
+     "source": "custom",
+     "dataset": "converted/uc3/device_id.csv.gz",
+     "mode": "grouped",
+     "group_columns": [
+      "city",
+      "isp",
+      "cdn",
+      "device"
+     ],
+     "value_column": "device_id",
+     "timestamp_column": "time",
+     "timestamp_unit": "nanoseconds"
+    },
+    "origin_ns": 1704132000000000000
+   }
+  }
+ ],
+ "queries": [
+  {
+   "id": "entropy_bitrate",
+   "promql": "entropy_over_time(bitrate[1m])",
+   "window_ms": 60000,
+   "interval_ms": 60000,
+   "unit": "bits"
+  },
+  {
+   "id": "buffering_l1",
+   "promql": "sum_over_time(buffering[1m])",
+   "window_ms": 60000,
+   "interval_ms": 60000,
+   "unit": "s"
+  },
+  {
+   "id": "sessions",
+   "promql": "count_over_time(bitrate[1m])",
+   "window_ms": 60000,
+   "interval_ms": 60000,
+   "unit": "sessions"
+  },
+  {
+   "id": "distinct_devices",
+   "promql": "distinct_over_time(device_id[1m])",
+   "window_ms": 60000,
+   "interval_ms": 60000,
+   "unit": "devices"
+  },
+  {
+   "id": "startup_p95",
+   "promql": "quantile_over_time(0.95, startup_time[5m])",
+   "window_ms": 300000,
+   "interval_ms": 60000,
+   "unit": "s",
+   "accuracy_metric": "rank"
+  },
+  {
+   "id": "rebuffer_ratio",
+   "promql": "sum_over_time(buffering[5m]) / (sum_over_time(play_time[5m]) + sum_over_time(buffering[5m]))",
+   "window_ms": 300000,
+   "interval_ms": 60000,
+   "unit": "ratio"
+  }
+ ]
+}
