@@ -2,7 +2,9 @@
 
 import unittest
 
+import ddos_rules
 import rules
+from bounds import Bounded
 import video_rules
 import video_spec
 from approx_rows import row
@@ -30,6 +32,21 @@ class BandTest(unittest.TestCase):
     def test_decayed_band_waits_for_minimum(self):
         flags = rules.above_decayed_band([1.0, 1.0, 1.0, 10.0, 1.0], 0.5, 3, 3)
         self.assertEqual(flags, [False, False, False, True, False])
+
+
+class ChangeTest(unittest.TestCase):
+    def test_above_mean_times(self):
+        self.assertEqual(rules.above_mean_times([1.0, 1.0, 2.5, 1.5], 2, 2.0), [False, False, True, False])
+
+    def test_cusum_fires_on_a_shift_and_falls_back(self):
+        values = [1.0, 2.0] * 5 + [6.0] * 4 + [1.5] * 12
+        flags = rules.cusum_above(values, 10, 0.5, 5)
+        self.assertEqual(flags[:11], [False] * 10 + [True])
+        self.assertFalse(flags[-1])
+
+    def test_cusum_is_unsure_when_the_interval_straddles(self):
+        values = [1.0, 2.0] * 5 + [Bounded(4.0, 1.0, 7.0)]
+        self.assertEqual(rules.cusum_above(values, 10, 0.5, 5)[-1], None)
 
 
 class HoldTest(unittest.TestCase):
@@ -74,6 +91,12 @@ class DeriveTest(unittest.TestCase):
         summary = {r["metric"]: r["value"] for r in rules.derive(rows, {"over": rule})
                    if r["kind"] == "fidelity_summary" and "entity" not in r["labels"]}
         self.assertEqual((summary["false_positive"], summary["true_negative"]), (2, 2))
+
+
+class DdosTest(unittest.TestCase):
+    def test_any_threshold(self):
+        v = {"entropy_10s": [9.0, 1.0, 1.0], "distinct_10s": [1, 3001, 1], "distinct_5s": [1, 1, 1]}
+        self.assertEqual(ddos_rules.any_threshold(v), [True, True, False])
 
 
 class VideoTest(unittest.TestCase):

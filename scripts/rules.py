@@ -3,7 +3,7 @@
 import math
 
 from approx_rows import row
-from bounds import PLAIN, all_of, any_of, ge, gt, judge, lt, point
+from bounds import PLAIN, all_of, any_of, ge, gt, hi, judge, lo, lt, point
 from membership import membership_fidelity
 
 APP = "rule"
@@ -87,6 +87,36 @@ def above_decayed_band(values, decay, k, minimum):
             centre += (v - centre) / weight
             square += (v * v - square) / weight
             seen += 1
+    return out
+
+
+def above_mean_times(values, size, factor, minimum=None):
+    """Above `factor` times the mean of the previous `size` values."""
+    out = []
+    for i, v in enumerate(values):
+        band = history_band(values, i, size, minimum or size)
+        out.append(band is not None and gt(v, factor * band[0]))
+    return out
+
+
+def cusum_above(values, training, k, h):
+    """One-sided CUSUM: S = max(0, S + x - mean - k * sd), with mean and sd from the first `training` values;
+    holds while S > h * sd. S is capped at 2 * h * sd so that it falls back below h once the change ends.
+    An interval answer carries a lower and an upper S.
+    """
+    band = history_band(values, training, training, training)
+    if band is None:
+        return [False] * len(values)
+    centre, spread = band
+    out, low, high = [], 0.0, 0.0
+    for i, v in enumerate(values):
+        if i < training or v is None:
+            out.append(False)
+            continue
+        limit = h * spread
+        low = min(2 * limit, max(0.0, low + lo(v) - centre - k * spread))
+        high = min(2 * limit, max(0.0, high + hi(v) - centre - k * spread))
+        out.append(True if low > limit else False if high <= limit else None)
     return out
 
 

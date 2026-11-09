@@ -699,7 +699,7 @@ def topk_dashboard():
     return dashboard(uid, "Top clients", b, [run_variable(use_cases), client, shown])
 
 
-RULE_USE_CASES = ["video_experience"]
+RULE_USE_CASES = ["video_experience", "ddos_syn_flood"]
 
 
 def rules_dashboard():
@@ -870,7 +870,8 @@ def overview_dashboard():
             '"why no approx plan": $lookup($e.details.unsupported, $q), '
             '"max relative error": $lookup($e.details.max_relative_error, $q), '
             '"signal": $s, "agreement": $f.agreement, "fidelity": $f.fidelity, '
-            '"dashboard": $e.details.dashboard} ) ) )')
+            '"dashboard": ( $d := $lookup($e.details.signal_dashboards, $s); $exists($d) ? $d : $e.details.dashboard )'
+            '} ) ) )')
     text = ("use_case", "run_id", "query", "approx plan", "why no approx plan", "signal", "fidelity", "dashboard")
     numbers = ("start", "end", "max relative error", "agreement")
     shown = ("use_case", "run_id", "query", "approx plan", "why no approx plan", "max relative error", "signal",

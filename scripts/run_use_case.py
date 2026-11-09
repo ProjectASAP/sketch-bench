@@ -8,6 +8,7 @@ import subprocess
 import sys
 
 import bounds
+import ddos_rules
 import decision
 import rollout
 import rules
@@ -39,8 +40,15 @@ def max_error_of(arm):
     return found[0] if found else None
 
 
+def planned_rules(rule_set, queries):
+    ids = {q["id"] for q in queries}
+    return {name: rule for name, rule in rule_set.items() if set(rule["queries"]) <= ids}
+
+
 def uc1_derive(rows, queries, policy=bounds.PLAIN, widen=None):
-    return threshold_alert.derive(rows, {q["id"]: q["threshold"] for q in queries}, policy, widen)
+    out = threshold_alert.derive(rows, {q["id"]: q["threshold"] for q in queries}, policy, widen)
+    usable = planned_rules(ddos_rules.RULES, queries)
+    return out + (rules.derive(rows, usable, policy, widen) if usable else [])
 
 
 def uc4_derive(rows, queries, policy=bounds.PLAIN, widen=None):
@@ -79,10 +87,12 @@ USE_CASES = {
         "arms": ["raw-eps0.05", "noraw-eps0.1", "noraw-eps0.05", "noraw-eps0.01",
                  "noraw-ignore-eps0.1", "noraw-ignore-eps0.05", "noraw-ignore-eps0.01"],
         "signal": lambda query: query,
+        "signals": lambda query: [query] + rule_signals(ddos_rules.RULES)(query),
+        "rules": ddos_rules.RULES,
         "derive": uc1_derive,
         "dashboard": "threshold-alert",
         "needs_every_query": False,
-        "split": {},
+        "split": {"app_state": "entity"},
     },
     "2": {
         "spec": "uc2_autoscaling.json",
@@ -398,6 +408,7 @@ def write_arm(data, case, prefix, arm, exact, approx, trial=1, policy=bounds.PLA
     }
     if "rules" in case:
         details["rules"] = {name: rule["description"] for name, rule in case["rules"].items()}
+        details["signal_dashboards"] = {name: "rules" for name in case["rules"]}
     if policy != bounds.PLAIN:
         details["policy"] = POLICY_TEXT[policy]
         details["bounded_queries"] = widen.bounded_queries()
