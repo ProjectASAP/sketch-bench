@@ -92,6 +92,8 @@ def queries():
 
 def spec(duration_minutes):
     groups = list(subpopulations())
+    sessions = sum(MINUTE // max(1, MINUTE // n) for _, n in groups)
+    mean_interval = round(len(groups) * MINUTE / sessions)
     metrics = []
     for n, (name, flags) in enumerate(METRICS.items()):
         series = []
@@ -102,7 +104,7 @@ def spec(duration_minutes):
             if phases:
                 group["phases"] = phases
             series.append(group)
-        metrics.append({"name": name, "sample_interval_ms": MINUTE, **flags, "series": series})
+        metrics.append({"name": name, "sample_interval_ms": mean_interval, **flags, "series": series})
     return {"use_case": "video_experience", "start_ms": START_MS, "duration_ms": duration_minutes * MINUTE,
             "seed": 31, "metrics": metrics, "queries": queries()}
 

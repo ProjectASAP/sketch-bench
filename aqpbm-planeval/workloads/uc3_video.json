@@ -6,7 +6,7 @@
  "metrics": [
   {
    "name": "bitrate",
-   "sample_interval_ms": 60000,
+   "sample_interval_ms": 720,
    "floor": true,
    "series": [
     {
@@ -1165,7 +1165,7 @@
   },
   {
    "name": "buffering",
-   "sample_interval_ms": 60000,
+   "sample_interval_ms": 720,
    "non_negative": true,
    "series": [
     {
@@ -2360,7 +2360,7 @@
   },
   {
    "name": "play_time",
-   "sample_interval_ms": 60000,
+   "sample_interval_ms": 720,
    "series": [
     {
      "sample_interval_ms": 136,
@@ -3446,7 +3446,7 @@
   },
   {
    "name": "startup_time",
-   "sample_interval_ms": 60000,
+   "sample_interval_ms": 720,
    "non_negative": true,
    "series": [
     {
@@ -4749,7 +4749,7 @@
   },
   {
    "name": "device_id",
-   "sample_interval_ms": 60000,
+   "sample_interval_ms": 720,
    "floor": true,
    "series": [
     {
