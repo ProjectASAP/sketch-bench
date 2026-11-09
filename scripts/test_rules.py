@@ -3,6 +3,7 @@
 import unittest
 
 import ddos_rules
+import rate_limit_rules
 import rules
 import scaling_rules
 from bounds import Bounded
@@ -98,6 +99,16 @@ class DdosTest(unittest.TestCase):
     def test_any_threshold(self):
         v = {"entropy_10s": [9.0, 1.0, 1.0], "distinct_10s": [1, 3001, 1], "distinct_5s": [1, 1, 1]}
         self.assertEqual(ddos_rules.any_threshold(v), [True, True, False])
+
+
+class RateLimitTest(unittest.TestCase):
+    def test_a_client_outside_the_top_list_is_not_over(self):
+        self.assertEqual(rate_limit_rules.aws_waf({"top10_clients": [2500, None, 1500]}), [True, False, False])
+
+    def test_cloud_armor_ban_outlasts_the_burst(self):
+        rule = rate_limit_rules.RULES["cloud_armor"]
+        flags = rule["hold"](rule["condition"]({"top10_clients_1m": [600] + [None] * 11}))
+        self.assertEqual(flags, [True] * 10 + [False] * 2)
 
 
 class ScalingTest(unittest.TestCase):

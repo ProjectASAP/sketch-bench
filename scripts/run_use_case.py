@@ -11,6 +11,7 @@ import bounds
 import ddos_rules
 import decision
 import rollout
+import rate_limit_rules
 import rules
 import scaling_rules
 import threshold_alert
@@ -65,7 +66,8 @@ def uc2_derive(rows, queries, policy=bounds.PLAIN, widen=None):
 def uc5_derive(rows, queries, policy=bounds.PLAIN, widen=None):
     if policy != bounds.PLAIN:
         raise ValueError("the top clients rule has no use for an error bound")
-    return topk_set.derive(rows, "top_clients", "top10_clients", "client_id")
+    out = topk_set.derive(rows, "top_clients", "top10_clients", "client_id")
+    return out + rules.derive(rows, rate_limit_rules.RULES)
 
 
 def uc3_derive(rows, queries, policy=bounds.PLAIN, widen=None):
@@ -136,11 +138,14 @@ USE_CASES = {
         "spec": "uc5_top_clients.json",
         "arms": ["noraw-ignore-eps0.05", "noraw-ignore-eps0.01", "noraw-ignore-eps0.005", "noraw-ignore-eps0.001"],
         "signal": lambda query: "top_clients",
+        "signals": lambda query: (["top_clients"] if query == "top10_clients" else [])
+        + rule_signals(rate_limit_rules.RULES)(query),
+        "rules": rate_limit_rules.RULES,
         "derive": uc5_derive,
         "dashboard": "topk",
         "bounds": False,
         "needs_every_query": True,
-        "split": {"app_state": "client_id"},
+        "split": {"app_state": ("client_id", "entity")},
     },
 }
 

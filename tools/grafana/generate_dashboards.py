@@ -699,7 +699,7 @@ def topk_dashboard():
     return dashboard(uid, "Top clients", b, [run_variable(use_cases), client, shown])
 
 
-RULE_USE_CASES = ["video_experience", "ddos_syn_flood", "k8s_autoscaling"]
+RULE_USE_CASES = ["video_experience", "ddos_syn_flood", "k8s_autoscaling", "top_clients"]
 
 
 def rules_dashboard():
