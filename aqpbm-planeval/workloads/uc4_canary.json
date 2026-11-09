@@ -59,6 +59,7 @@
   ],
   "queries": [
     {"id": "p99_canary", "promql": "quantile_over_time(0.99, request_latency{version=\"canary\"}[5m])", "window_ms": 300000, "interval_ms": 60000, "unit": "s", "accuracy_metric": "rank"},
+    {"id": "p95_canary", "promql": "quantile_over_time(0.95, request_latency{version=\"canary\"}[5m])", "window_ms": 300000, "interval_ms": 60000, "unit": "s", "accuracy_metric": "rank"},
     {"id": "p99_stable", "promql": "quantile_over_time(0.99, request_latency{version=\"stable\"}[5m])", "window_ms": 300000, "interval_ms": 60000, "unit": "s", "accuracy_metric": "rank"},
     {"id": "success_rate_canary", "promql": "sum(count_over_time(requests{version=\"canary\", code=\"200\"}[5m])) / sum(count_over_time(requests{version=\"canary\"}[5m]))", "window_ms": 300000, "interval_ms": 60000, "unit": "ratio"}
   ]

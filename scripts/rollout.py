@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from approx_rows import row
-from bounds import PLAIN, any_of, gt, judge, lt, point, ratio, widen_values
+from bounds import PLAIN, any_of, ge, gt, judge, lt, point, ratio, widen_values
 from threshold_alert import EVENT_LABELS, NOTHING, annotations, cells_of, delay_summary, episodes_of, series
 
 APP = "rollout_controller"
@@ -12,6 +12,7 @@ MAX_P99 = 0.5
 FLAGGER_MIN_SUCCESS_RATE, FAILURE_THRESHOLD, PASSES_TO_PROMOTE = 0.99, 10, 25
 ARGO_ROLLOUTS_MIN_SUCCESS_RATE, ARGO_ROLLOUTS_INTERVAL, ARGO_ROLLOUTS_COUNT, FAILURE_LIMIT = 0.95, 5, 10, 3
 CLOUDWATCH_CHECKS, BREACHING_POINTS, EVALUATED_POINTS = 10, 4, 5
+KEPTN_INTERVAL, KEPTN_RELATIVE, KEPTN_MAX_P95, KEPTN_PASSING = 10, 1.1, 0.6, 3
 
 
 def slower(p99_canary, p99_stable):
@@ -29,6 +30,27 @@ def argo_rollouts_failed(success_rate_canary):
 
 def cloudwatch_breaching(p99_canary):
     return [gt(p, MAX_P99) for p in p99_canary]
+
+
+def keptn_failed(p95_canary):
+    """Keptn's objective: p95 at most 10% above the average of the last 3 passing evaluations, and below 600 ms.
+
+    Only a passing evaluation joins the baseline; an unsure one does not. The first evaluation has no baseline
+    and is judged on the absolute criterion alone.
+    """
+    out, passing = [], []
+    for p in p95_canary:
+        baseline = sum(passing[-KEPTN_PASSING:]) / len(passing[-KEPTN_PASSING:]) if passing else None
+        relative = gt(p, KEPTN_RELATIVE * baseline) if baseline is not None else False
+        failed = any_of(relative, ge(p, KEPTN_MAX_P95))
+        if failed is False:
+            passing.append(point(p))
+        out.append(failed)
+    return out
+
+
+def each_check(failed):
+    return 0, ROLLBACK if failed[0] else PROMOTE
 
 
 def in_a_row(failed):
@@ -77,6 +99,8 @@ RULES = {
                       "every": ARGO_ROLLOUTS_INTERVAL, "checks": ARGO_ROLLOUTS_COUNT, "decide": failures_over_limit},
     "cloudwatch": {"queries": ("p99_canary",), "check": cloudwatch_breaching, "every": 1,
                    "checks": CLOUDWATCH_CHECKS, "decide": m_of_last_n},
+    "keptn": {"queries": ("p95_canary",), "check": keptn_failed, "every": KEPTN_INTERVAL, "checks": 1,
+              "decide": each_check},
 }
 
 

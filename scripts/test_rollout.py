@@ -3,19 +3,22 @@
 import unittest
 
 from approx_rows import row
+from bounds import Bounded
 from rollout import (PROMOTE, ROLLBACK, RULES, argo_rollouts_failed, cloudwatch_breaching, decisions_of, derive,
-                     failures_or_passes, failures_over_limit, flagger_failed, m_of_last_n, rollouts)
+                     failures_or_passes, failures_over_limit, flagger_failed, keptn_failed, m_of_last_n, rollouts)
 
 
 def flags(bits):
     return [b == "1" for b in bits]
 
 
-def query_rows(canary, stable, run_id="r1", success_rate=None):
+def query_rows(canary, stable, run_id="r1", success_rate=None, p95=None):
     rows = []
     queries = (("p99_canary", canary), ("p99_stable", stable))
     if success_rate:
         queries += (("success_rate_canary", success_rate),)
+    if p95:
+        queries += (("p95_canary", p95),)
     for query, arms in queries:
         for arm, values in zip(("exact", "approx"), arms):
             for i, v in enumerate(values):
@@ -107,7 +110,8 @@ class DeriveTest(unittest.TestCase):
         canary = ([0.3] * 50, [0.3] * 50)
         stable = ([0.3] * 50, [0.3] * 50)
         success_rate = ([0.9] * 20 + [0.999] * 30, [0.999] * 10 + [0.9] * 20 + [0.999] * 20)
-        rows = derive(query_rows(canary, stable, success_rate=success_rate))
+        p95 = ([0.1] * 50, [0.1] * 25 + [0.7] * 25)
+        rows = derive(query_rows(canary, stable, success_rate=success_rate, p95=p95))
         checks = {}
         for r in rows:
             if r["metric"] == "check" and r["labels"]["arm"] == "exact":
@@ -115,11 +119,23 @@ class DeriveTest(unittest.TestCase):
         self.assertEqual(sorted(checks), sorted(RULES))
         self.assertEqual(checks["argo_rollouts"], list(range(0, 50, 5)))
         outcomes = {r["labels"]["signal"]: r["value"] for r in rows if r["metric"] == "rollout"}
+        self.assertEqual(checks["keptn"], list(range(0, 50, 10)))
         self.assertEqual(outcomes, {"ours": "true_negative", "flagger": "true_positive",
-                                    "argo_rollouts": "true_positive", "cloudwatch": "true_negative"})
+                                    "argo_rollouts": "true_positive", "cloudwatch": "true_negative",
+                                    "keptn": "false_positive"})
         delays = {r["labels"]["signal"]: r["value"] for r in rows if r["metric"] == "decision_delay"}
         self.assertEqual(delays, {"flagger": 10, "argo_rollouts": 10})
         self.assertEqual(sum(r["metric"] == "ratio" for r in rows), 100)
+
+
+class KeptnTest(unittest.TestCase):
+    def test_relative_to_the_last_three_passing_and_absolute(self):
+        self.assertEqual(keptn_failed([0.10, 0.10, 0.20, 0.104, 0.65, 0.12]),
+                         [False, False, True, False, True, True])
+
+    def test_an_unsure_evaluation_stays_out_of_the_baseline(self):
+        out = keptn_failed([0.10, Bounded(0.105, 0.10, 0.12), 0.113])
+        self.assertEqual(out, [False, None, True])
 
 
 if __name__ == "__main__":

@@ -432,7 +432,7 @@ def decision_dashboard():
                       in_run("container_in_run", "container", "container")], annotations)
 
 
-QUERY_COLORS = {"p99_canary": "orange", "p99_stable": "blue", "success_rate_canary": "green"}
+QUERY_COLORS = {"p99_canary": "orange", "p99_stable": "blue", "success_rate_canary": "green", "p95_canary": "purple"}
 DECISION_MARKS = {"failed check": ("#FF9830", 5), "rollback": ("red", 14), "promote": ("green", 14)}
 DECISION_LEVEL = {"exact": 101, "approx": 100}
 
@@ -457,6 +457,9 @@ def rule_descriptions():
         f"{r.ARGO_ROLLOUTS_COUNT} |",
         f"| cloudwatch | p99_canary | canary p99 > {r.MAX_P99} s | {r.BREACHING_POINTS} of the last "
         f"{r.EVALUATED_POINTS} checks failed, within {r.CLOUDWATCH_CHECKS} checks |",
+        f"| keptn | p95_canary | canary p95 > {r.KEPTN_RELATIVE} × the mean of the last {r.KEPTN_PASSING} passing "
+        f"checks, or ≥ {r.KEPTN_MAX_P95} s (a check every {every['keptn']} evaluations) | the check fails; "
+        "each check is its own evaluation |",
     ]
     return "\n".join(lines)
 
