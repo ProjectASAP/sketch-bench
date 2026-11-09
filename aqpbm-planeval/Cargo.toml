@@ -16,7 +16,7 @@ asap-types = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "b82255
 asap-frontend-promql = { git = "https://github.com/ProjectASAP/ASAPPlanner", rev = "b822553f1ea7e5fc60940dd23536d1f6c99c5334" }
 asap_sketchlib.workspace = true
 aqpbm-core.workspace = true
-aqpbm-datagen.workspace = true
+aqpbm-datagen = { workspace = true, features = ["import"] }
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true
