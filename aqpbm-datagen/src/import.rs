@@ -1,6 +1,6 @@
 //! Bounded loaders for representative external trace formats.
 //!
-//! Loading, decompression, validation, and window selection all
+//! Loading, decompression, validation, ordering, and window selection all
 //! happen here, so a consumer sees the same in-memory table shape as a
 //! synthetic run.
 
@@ -72,9 +72,16 @@ pub struct ExternalTableDescription {
     pub variate: Option<usize>,
     #[serde(default)]
     pub timestamp_unit: Option<String>,
-    pub window: WindowSpec,
+    #[serde(default)]
+    pub window: Option<WindowSpec>,
+    #[serde(default = "default_sort_by_start_time")]
+    pub sort_by_start_time: bool,
     #[serde(default = "default_min_records")]
     pub min_records: usize,
+}
+
+fn default_sort_by_start_time() -> bool {
+    true
 }
 
 fn default_min_records() -> usize {
@@ -117,7 +124,7 @@ impl ExternalTableDescription {
         }
     }
 
-    pub fn window_ns(&self) -> Result<(i64, i64), DataGenError> {
+    pub fn window_ns(&self) -> Result<Option<(i64, i64)>, DataGenError> {
         window_ns(self).map_err(import_error)
     }
 
@@ -170,15 +177,18 @@ fn import_error(e: anyhow::Error) -> DataGenError {
     DataGenError::Import(format!("{e:#}"))
 }
 
-fn window_ns(spec: &ExternalTableDescription) -> Result<(i64, i64)> {
-    let window_start_ns = parse_timestamp_ns(&spec.window.start)
-        .with_context(|| format!("invalid window start '{}'", spec.window.start))?;
-    let window_end_ns = parse_timestamp_ns(&spec.window.end)
-        .with_context(|| format!("invalid window end '{}'", spec.window.end))?;
+fn window_ns(spec: &ExternalTableDescription) -> Result<Option<(i64, i64)>> {
+    let Some(window) = &spec.window else {
+        return Ok(None);
+    };
+    let window_start_ns = parse_timestamp_ns(&window.start)
+        .with_context(|| format!("invalid window start '{}'", window.start))?;
+    let window_end_ns = parse_timestamp_ns(&window.end)
+        .with_context(|| format!("invalid window end '{}'", window.end))?;
     if window_start_ns >= window_end_ns {
         bail!("window start must be before window end");
     }
-    Ok((window_start_ns, window_end_ns))
+    Ok(Some((window_start_ns, window_end_ns)))
 }
 
 fn load(spec: &ExternalTableDescription, data_root: &Path) -> Result<Option<GeneratedTable>> {
@@ -219,20 +229,23 @@ fn load(spec: &ExternalTableDescription, data_root: &Path) -> Result<Option<Gene
         bail!("column '{name}' clashes with the loaded table's time column of the same name");
     }
 
-    let (window_start_ns, window_end_ns) = window_ns(spec)?;
+    let window = window_ns(spec)?;
     let path = data_root.join(logical);
-    let records = match &spec.source {
-        ExternalSource::Boom => load_boom(spec, &path, window_start_ns, window_end_ns)?,
-        ExternalSource::Google => load_google(spec, &path, window_start_ns, window_end_ns)?,
-        ExternalSource::Alibaba => load_alibaba(spec, &path, window_start_ns, window_end_ns)?,
-        ExternalSource::Custom => load_custom(spec, &path, window_start_ns, window_end_ns)?,
+    let mut records = match &spec.source {
+        ExternalSource::Boom => load_boom(spec, &path, window)?,
+        ExternalSource::Google => load_google(spec, &path, window)?,
+        ExternalSource::Alibaba => load_alibaba(spec, &path, window)?,
+        ExternalSource::Custom => load_custom(spec, &path, window)?,
     };
+    if spec.sort_by_start_time {
+        records.sort_by_key(|r| r.start_ns);
+    }
     if records.len() < spec.min_records {
         if records.is_empty() {
             return Ok(None);
         }
         bail!(
-            "external table window contains {} records, below min_records {}",
+            "external table holds {} records, below min_records {}",
             records.len(),
             spec.min_records
         );
@@ -303,10 +316,14 @@ fn number_to_ns(value: &str, unit: &str) -> Result<i64> {
     i64::try_from(ns).context("timestamp is outside nanosecond range")
 }
 
-fn include(record: RawRecord, start_ns: i64, end_ns: i64, out: &mut Vec<RawRecord>) {
-    if contained(record.start_ns, record.end_ns, start_ns, end_ns) {
+fn include(record: RawRecord, window: Option<(i64, i64)>, out: &mut Vec<RawRecord>) {
+    if in_window(record.start_ns, record.end_ns, window) {
         out.push(record);
     }
+}
+
+fn in_window(record_start: i64, record_end: i64, window: Option<(i64, i64)>) -> bool {
+    window.is_none_or(|(start, end)| contained(record_start, record_end, start, end))
 }
 
 fn contained(record_start: i64, record_end: i64, window_start: i64, window_end: i64) -> bool {
@@ -329,8 +346,7 @@ fn open_reader(path: &Path) -> Result<Box<dyn Read>> {
 fn load_alibaba(
     spec: &ExternalTableDescription,
     path: &Path,
-    window_start_ns: i64,
-    window_end_ns: i64,
+    window: Option<(i64, i64)>,
 ) -> Result<Vec<RawRecord>> {
     let mut reader = csv::ReaderBuilder::new()
         .flexible(false)
@@ -352,7 +368,7 @@ fn load_alibaba(
         let record = result.with_context(|| format!("malformed Alibaba CSV row {}", row + 2))?;
         let start_ns = number_to_ns(field(&record, timestamp, row)?, unit)
             .with_context(|| format!("Alibaba row {} timestamp", row + 2))?;
-        if !contained(start_ns, start_ns, window_start_ns, window_end_ns) {
+        if !in_window(start_ns, start_ns, window) {
             continue;
         }
         let value = parse_value(field(&record, value, row)?)
@@ -367,8 +383,7 @@ fn load_alibaba(
                     .collect::<Result<_>>()?,
                 value,
             },
-            window_start_ns,
-            window_end_ns,
+            window,
             &mut out,
         );
     }
@@ -378,8 +393,7 @@ fn load_alibaba(
 fn load_custom(
     spec: &ExternalTableDescription,
     path: &Path,
-    window_start_ns: i64,
-    window_end_ns: i64,
+    window: Option<(i64, i64)>,
 ) -> Result<Vec<RawRecord>> {
     let mut reader = csv::ReaderBuilder::new()
         .flexible(false)
@@ -430,8 +444,7 @@ fn load_custom(
                     .collect::<Result<_>>()?,
                 value,
             },
-            window_start_ns,
-            window_end_ns,
+            window,
             &mut out,
         );
     }
@@ -441,8 +454,7 @@ fn load_custom(
 fn load_google(
     spec: &ExternalTableDescription,
     path: &Path,
-    window_start_ns: i64,
-    window_end_ns: i64,
+    window: Option<(i64, i64)>,
 ) -> Result<Vec<RawRecord>> {
     let table = spec.table.as_deref().unwrap_or("task_usage");
     if table != "task_usage" {
@@ -473,7 +485,7 @@ fn load_google(
         if end_ns < start_ns {
             bail!("Google task_usage row {} ends before it starts", row + 1);
         }
-        if !contained(start_ns, end_ns, window_start_ns, window_end_ns) {
+        if !in_window(start_ns, end_ns, window) {
             continue;
         }
         let value = parse_value(field(&record, value, row)?)
@@ -488,8 +500,7 @@ fn load_google(
                     .collect::<Result<_>>()?,
                 value,
             },
-            window_start_ns,
-            window_end_ns,
+            window,
             &mut out,
         );
     }
@@ -525,8 +536,7 @@ fn google_column(name: &str) -> Result<usize> {
 fn load_boom(
     spec: &ExternalTableDescription,
     path: &Path,
-    window_start_ns: i64,
-    window_end_ns: i64,
+    window: Option<(i64, i64)>,
 ) -> Result<Vec<RawRecord>> {
     let arrow_path: PathBuf = if path.is_dir() {
         path.join("data-00000-of-00001.arrow")
@@ -612,8 +622,7 @@ fn load_boom(
                 groups: Vec::new(),
                 value,
             },
-            window_start_ns,
-            window_end_ns,
+            window,
             &mut out,
         );
     }
@@ -695,8 +704,7 @@ mod tests {
                 groups: Vec::new(),
                 value: 1.0,
             },
-            0,
-            10,
+            Some((0, 10)),
             &mut out,
         );
         assert!(out.is_empty());
@@ -712,8 +720,7 @@ mod tests {
                 groups: Vec::new(),
                 value: 1.0,
             },
-            0,
-            10,
+            Some((0, 10)),
             &mut out,
         );
         assert!(out.is_empty());
@@ -727,9 +734,8 @@ mod tests {
         );
     }
 
-    fn custom_table(end_column: bool) -> GeneratedTable {
-        let root =
-            std::env::temp_dir().join(format!("aqpbm-import-{}-{end_column}", std::process::id()));
+    fn custom_table(name: &str, options: &str) -> GeneratedTable {
+        let root = std::env::temp_dir().join(format!("aqpbm-import-{}-{name}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(
             root.join("events.csv"),
@@ -742,17 +748,11 @@ source: custom
 dataset: events.csv
 mode: grouped
 timestamp_column: ts
-{}
 timestamp_unit: nanoseconds
 group_columns: [service]
 value_column: latency
-window: {{start: "0", end: "50"}}
-"#,
-            if end_column {
-                "end_timestamp_column: end_ts"
-            } else {
-                ""
-            }
+{options}
+"#
         ))
         .unwrap();
         let table = spec.load(&root).unwrap().unwrap();
@@ -760,27 +760,48 @@ window: {{start: "0", end: "50"}}
         table
     }
 
+    fn start_times(table: &GeneratedTable) -> &ColumnData {
+        table.column(table.column_index(START_NS).unwrap()).unwrap()
+    }
+
+    const WINDOW: &str = r#"window: {start: "0", end: "50"}"#;
+
     #[test]
-    fn point_records_keep_their_start_time_in_file_order() {
-        let table = custom_table(false);
+    fn point_records_are_sorted_by_start_time_by_default() {
+        let table = custom_table("sorted", WINDOW);
         assert_eq!(table.column_title, ["start_ns", "service", "latency"]);
-        assert_eq!(
-            table.column(table.column_index(START_NS).unwrap()).unwrap(),
-            &ColumnData::Int64(vec![30, 10])
-        );
+        assert_eq!(start_times(&table), &ColumnData::Int64(vec![10, 30]));
         assert!(table.column_index(END_NS).is_err());
     }
 
     #[test]
+    fn file_order_is_kept_when_sorting_is_off() {
+        let table = custom_table(
+            "file-order",
+            &format!("{WINDOW}\nsort_by_start_time: false"),
+        );
+        assert_eq!(start_times(&table), &ColumnData::Int64(vec![30, 10]));
+    }
+
+    #[test]
+    fn without_a_window_every_record_is_kept() {
+        let table = custom_table("no-window", "sort_by_start_time: false");
+        assert_eq!(start_times(&table), &ColumnData::Int64(vec![30, 10, 90]));
+    }
+
+    #[test]
     fn interval_records_keep_both_ends() {
-        let table = custom_table(true);
+        let table = custom_table(
+            "intervals",
+            &format!("{WINDOW}\nend_timestamp_column: end_ts"),
+        );
         assert_eq!(
             table.column_title,
             ["start_ns", "end_ns", "service", "latency"]
         );
         assert_eq!(
             table.column(table.column_index(END_NS).unwrap()).unwrap(),
-            &ColumnData::Int64(vec![40, 10])
+            &ColumnData::Int64(vec![10, 40])
         );
     }
 

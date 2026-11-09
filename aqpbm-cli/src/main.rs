@@ -314,8 +314,10 @@ fn run_sketchbench(args: SketchbenchArgs) -> Result<()> {
         Some(path) => {
             let mut spec = aqpbm_datagen::ExternalTableDescription::from_path(Path::new(path))?;
             if let Some(start) = args.window_start.clone() {
-                spec.window.start = start;
-                spec.window.end = args.window_end.clone().expect("clap requires --window-end");
+                spec.window = Some(aqpbm_datagen::WindowSpec {
+                    start,
+                    end: args.window_end.clone().expect("clap requires --window-end"),
+                });
             }
             let loaded = external::load(&spec, Path::new(&args.data_root))?;
             if loaded.is_none() {
