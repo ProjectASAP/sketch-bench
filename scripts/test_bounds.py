@@ -21,6 +21,10 @@ class TriStateTest(unittest.TestCase):
         self.assertEqual((r.value, r.lo, r.hi), (1, 0.25, 3))
         self.assertEqual(bounds.ratio(4.0, 2.0), 2.0)
 
+    def test_ratio_over_an_interval_reaching_zero_is_open(self):
+        r = bounds.ratio(Bounded(2, 1, 3), Bounded(0.5, 0, 1))
+        self.assertIsNone(bounds.gt(r, 1))
+
     def test_three_valued_logic(self):
         self.assertIs(bounds.any_of(None, True), True)
         self.assertIsNone(bounds.any_of(None, False))
@@ -33,6 +37,16 @@ class TriStateTest(unittest.TestCase):
         self.assertEqual(bounds.settle([True, None, None], [False, True, False], bounds.RERUN),
                          ([True, True, False], 2))
         self.assertEqual(bounds.settle(["up", None], ["up", "down"], bounds.BOUND, "none"), (["up", "none"], 1))
+
+
+class JudgeTest(unittest.TestCase):
+    def test_rerun_stops_when_history_keeps_a_check_open(self):
+        from rules import cusum_above
+        check = lambda v: cusum_above(v, 2, 0, 1)
+        out, unsure = bounds.judge(check, [[-1, 1, Bounded(1.7, 1.5, 1.9), -0.6]], [[-1, 1, 1.7, -0.6]],
+                                   bounds.RERUN)
+        self.assertEqual(out, check([-1, 1, 1.7, -0.6]))
+        self.assertEqual(unsure, 1)
 
 
 class WidenTest(unittest.TestCase):

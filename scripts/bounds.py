@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import math
 import re
 
 PLAIN, BOUND, RERUN = "plain", "bound", "rerun"
@@ -67,6 +68,8 @@ def ratio(x, y):
         return None
     if not isinstance(x, Bounded) and not isinstance(y, Bounded):
         return x / y
+    if lo(y) <= 0 <= hi(y):
+        return Bounded(point(x) / point(y) if point(y) else math.inf, -math.inf, math.inf)
     corners = [a / b for a in (lo(x), hi(x)) for b in (lo(y), hi(y))]
     return Bounded(point(x) / point(y), min(corners), max(corners))
 
@@ -100,7 +103,8 @@ def judge(check, approx_args, exact_args, policy, default=False):
 
     Under RERUN an unsure evaluation reruns the check's queries with the exact plan: its values become the
     exact ones and the check runs again, so a check that keeps history sees the rerun answers.
-    Returns the checks and how many evaluations were unsure.
+    A check still unsure after its rerun, because history from earlier interval answers keeps it open,
+    takes the exact plan's check. Returns the checks and how many evaluations were unsure.
     """
     if policy != RERUN:
         return settle(check(*approx_args), check(*exact_args), policy, default)
@@ -109,9 +113,13 @@ def judge(check, approx_args, exact_args, policy, default=False):
     while True:
         out = check(*values)
         open_ = [i for i, c in enumerate(out) if c is None]
-        if not open_:
+        fresh = [i for i in open_ if i not in rerun]
+        if not fresh:
+            if open_:
+                exact = check(*exact_args)
+                out = [exact[i] if c is None else c for i, c in enumerate(out)]
             return out, len(rerun)
-        for i in open_:
+        for i in fresh:
             rerun.add(i)
             for v, e in zip(values, exact_args):
                 v[i] = e[i]
