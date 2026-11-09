@@ -35,9 +35,9 @@ pub fn load(spec: &ExternalTableDescription, data_root: &Path) -> Result<Option<
         source_timestamp_unit: spec.source_timestamp_unit(),
         timestamp_unit: "nanoseconds".to_string(),
     });
-    let value = table.column_num as usize - 1;
+    let (labels, value) = spec.group_and_value_positions();
     let columns = ColumnRoles {
-        labels: (value - spec.group_columns.len()..value).collect(),
+        labels,
         value,
         value_key_offset: None,
     };

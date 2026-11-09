@@ -140,7 +140,6 @@ pub struct Requirement {
     pub trial: Option<u64>,
 }
 
-#[derive(Clone, Debug)]
 pub struct ColumnRoles {
     pub labels: Vec<usize>,
     pub value: usize,

@@ -145,6 +145,12 @@ impl ExternalTableDescription {
         }
     }
 
+    pub fn group_and_value_positions(&self) -> (Vec<usize>, usize) {
+        let first_group = 1 + usize::from(self.time_columns().1.is_some());
+        let value = first_group + self.group_columns.len();
+        ((first_group..value).collect(), value)
+    }
+
     fn time_columns(&self) -> (String, Option<String>) {
         match &self.source {
             ExternalSource::Boom | ExternalSource::Alibaba => ("timestamp".to_string(), None),
@@ -308,12 +314,6 @@ fn number_to_ns(value: &str, unit: &str) -> Result<i64> {
     i64::try_from(ns).context("timestamp is outside nanosecond range")
 }
 
-fn include(record: RawRecord, window: Option<(i64, i64)>, out: &mut Vec<RawRecord>) {
-    if in_window(record.start_ns, record.end_ns, window) {
-        out.push(record);
-    }
-}
-
 fn in_window(record_start: i64, record_end: i64, window: Option<(i64, i64)>) -> bool {
     window.is_none_or(|(start, end)| contained(record_start, record_end, start, end))
 }
@@ -422,19 +422,18 @@ fn load_custom(
         }
         let value = parse_value(field(&record, value, row)?)
             .with_context(|| format!("custom row {} value", row + 2))?;
-        include(
-            RawRecord {
-                start_ns,
-                end_ns,
-                groups: groups
-                    .iter()
-                    .map(|column| field(&record, *column, row).map(str::to_string))
-                    .collect::<Result<_>>()?,
-                value,
-            },
-            window,
-            &mut out,
-        );
+        if !in_window(start_ns, end_ns, window) {
+            continue;
+        }
+        out.push(RawRecord {
+            start_ns,
+            end_ns,
+            groups: groups
+                .iter()
+                .map(|column| field(&record, *column, row).map(str::to_string))
+                .collect::<Result<_>>()?,
+            value,
+        });
     }
     Ok(out)
 }
@@ -599,16 +598,15 @@ fn load_boom(
                     .context("BOOM timestamp overflow")?,
             )
             .context("BOOM timestamp overflow")?;
-        include(
-            RawRecord {
-                start_ns: timestamp,
-                end_ns: timestamp,
-                groups: Vec::new(),
-                value,
-            },
-            window,
-            &mut out,
-        );
+        if !in_window(timestamp, timestamp, window) {
+            continue;
+        }
+        out.push(RawRecord {
+            start_ns: timestamp,
+            end_ns: timestamp,
+            groups: Vec::new(),
+            value,
+        });
     }
     Ok(out)
 }
@@ -680,34 +678,12 @@ mod tests {
 
     #[test]
     fn point_windows_are_half_open() {
-        let mut out = Vec::new();
-        include(
-            RawRecord {
-                start_ns: 10,
-                end_ns: 10,
-                groups: Vec::new(),
-                value: 1.0,
-            },
-            Some((0, 10)),
-            &mut out,
-        );
-        assert!(out.is_empty());
+        assert!(!in_window(10, 10, Some((0, 10))));
     }
 
     #[test]
     fn intervals_must_be_completely_contained() {
-        let mut out = Vec::new();
-        include(
-            RawRecord {
-                start_ns: 5,
-                end_ns: 15,
-                groups: Vec::new(),
-                value: 1.0,
-            },
-            Some((0, 10)),
-            &mut out,
-        );
-        assert!(out.is_empty());
+        assert!(!in_window(5, 15, Some((0, 10))));
     }
 
     #[test]
@@ -718,7 +694,7 @@ mod tests {
         );
     }
 
-    fn custom_table(name: &str, options: &str) -> GeneratedTable {
+    fn custom_table(name: &str, options: &str) -> (ExternalTableDescription, GeneratedTable) {
         let root = std::env::temp_dir().join(format!("aqpbm-import-{}-{name}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(
@@ -741,7 +717,21 @@ value_column: latency
         .unwrap();
         let table = spec.load(&root).unwrap().unwrap();
         std::fs::remove_dir_all(&root).unwrap();
-        table
+        (spec, table)
+    }
+
+    fn position_titles(
+        spec: &ExternalTableDescription,
+        table: &GeneratedTable,
+    ) -> (Vec<String>, String) {
+        let (groups, value) = spec.group_and_value_positions();
+        (
+            groups
+                .iter()
+                .map(|&i| table.column_title[i].clone())
+                .collect(),
+            table.column_title[value].clone(),
+        )
     }
 
     fn start_times(table: &GeneratedTable) -> &ColumnData {
@@ -752,14 +742,18 @@ value_column: latency
 
     #[test]
     fn point_records_are_sorted_by_start_time_by_default() {
-        let table = custom_table("sorted", WINDOW);
+        let (spec, table) = custom_table("sorted", WINDOW);
         assert_eq!(table.column_title, ["ts", "service", "latency"]);
+        assert_eq!(
+            position_titles(&spec, &table),
+            (vec!["service".to_string()], "latency".to_string())
+        );
         assert_eq!(start_times(&table), &ColumnData::Int64(vec![10, 30]));
     }
 
     #[test]
     fn file_order_is_kept_when_sorting_is_off() {
-        let table = custom_table(
+        let (_, table) = custom_table(
             "file-order",
             &format!("{WINDOW}\nsort_by_start_time: false"),
         );
@@ -768,17 +762,21 @@ value_column: latency
 
     #[test]
     fn without_a_window_every_record_is_kept() {
-        let table = custom_table("no-window", "sort_by_start_time: false");
+        let (_, table) = custom_table("no-window", "sort_by_start_time: false");
         assert_eq!(start_times(&table), &ColumnData::Int64(vec![30, 10, 90]));
     }
 
     #[test]
     fn interval_records_keep_both_ends() {
-        let table = custom_table(
+        let (spec, table) = custom_table(
             "intervals",
             &format!("{WINDOW}\nend_timestamp_column: end_ts"),
         );
         assert_eq!(table.column_title, ["ts", "end_ts", "service", "latency"]);
+        assert_eq!(
+            position_titles(&spec, &table),
+            (vec!["service".to_string()], "latency".to_string())
+        );
         assert_eq!(table.column(1).unwrap(), &ColumnData::Int64(vec![10, 40]));
     }
 }
