@@ -1597,6 +1597,25 @@
       "panels": []
     },
     {
+      "type": "text",
+      "title": "Decision rules (selected: ${rule})",
+      "options": {
+        "mode": "markdown",
+        "content": "Every minute, each query is evaluated over the last 5 minutes. A rule turns the query results into a pass or fail per check, then decides rollback or promote per rollout. Exact and approx decide separately from their own results.\n\n| rule | queries | a check fails when | a rollout rolls back when, else promotes |\n|---|---|---|---|\n| ours | p99_canary, p99_stable | canary p99 / stable p99 > 1.1 | 3 failed checks in a row out of 10 |\n| flagger | p99_canary, success_rate_canary | canary p99 > 0.5 s or canary success rate < 99% | 10 failed checks in total; promotes after 25 passed checks (up to 34 checks) |\n| argo_rollouts | success_rate_canary | canary success rate < 95% (a check every 5 evaluations) | more than 3 failed checks out of 10 |\n| cloudwatch | p99_canary | canary p99 > 0.5 s | 4 of the last 5 checks failed, within 10 checks |"
+      },
+      "id": 11,
+      "gridPos": {
+        "x": 0,
+        "y": 30,
+        "w": 24,
+        "h": 6
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
       "type": "timeseries",
       "title": "Canary p99 over stable p99 (rule ours compares it with the tolerance)",
       "targets": [
@@ -1808,10 +1827,10 @@
           "sort": "none"
         }
       },
-      "id": 11,
+      "id": 12,
       "gridPos": {
         "x": 0,
-        "y": 30,
+        "y": 36,
         "w": 24,
         "h": 7
       },
@@ -2127,10 +2146,10 @@
           "sort": "none"
         }
       },
-      "id": 12,
+      "id": 13,
       "gridPos": {
         "x": 0,
-        "y": 37,
+        "y": 43,
         "w": 24,
         "h": 9
       },
@@ -2140,13 +2159,697 @@
       }
     },
     {
-      "id": 13,
+      "id": 14,
+      "type": "row",
+      "title": "Query result and decision on one time axis, rule ${rule}",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 52,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Query results of rule ${rule}, exact solid and approx dashed, with each arm's failed checks and decisions on the same time axis",
+      "description": "The top two rows of marks are the rule's checks and decisions: the upper row is exact, the lower row approx. Small orange: a failed check. Large red: rollback. Large green: promote. Hover a time to see every query value and mark at that time.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "timeseries",
+          "url": "http://localhost:8000/runs/${run}/query_result.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.query in $lookup({\"ours\": [\"p99_canary\", \"p99_stable\"], \"flagger\": [\"p99_canary\", \"success_rate_canary\"], \"argo_rollouts\": [\"success_rate_canary\"], \"cloudwatch\": [\"p99_canary\"]}, \"${rule}\")].{\"time\": time, \"value\": value, \"series\": labels.query & \" \" & labels.arm}; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "value",
+              "type": "number"
+            },
+            {
+              "selector": "series",
+              "text": "series",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "timeseries",
+          "url": "http://localhost:8000/runs/${run}/app_state.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.app=\"rollout_controller\" and labels.signal=\"${rule}\" and (metric=\"check\" or metric=\"action\")].( $level := labels.arm=\"exact\" ? 101 : 100; metric=\"check\" ? [{\"time\": time, \"value\": value=\"failed\" ? $level : 0, \"series\": labels.arm & \" failed check\"}] : [{\"time\": time, \"value\": value=\"rollback\" ? $level : 0, \"series\": labels.arm & \" rollback\"}, {\"time\": time, \"value\": value=\"promote\" ? $level : 0, \"series\": labels.arm & \" promote\"}] ); $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "value",
+              "type": "number"
+            },
+            {
+              "selector": "series",
+              "text": "series",
+              "type": "string"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true,
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
+            }
+          },
+          "unit": "s",
+          "displayName": "${__field.labels.series}"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*p99_canary exact.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*p99_canary approx.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*p99_stable exact.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*p99_stable approx.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*success_rate_canary exact.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              },
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.scaleDistribution",
+                "value": {
+                  "type": "linear"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*success_rate_canary approx.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              },
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.scaleDistribution",
+                "value": {
+                  "type": "linear"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*exact failed check.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#FF9830"
+                }
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "points"
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "always"
+              },
+              {
+                "id": "custom.spanNulls",
+                "value": false
+              },
+              {
+                "id": "custom.pointSize",
+                "value": 5
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "hidden"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "min",
+                "value": 91
+              },
+              {
+                "id": "max",
+                "value": 101.5
+              },
+              {
+                "id": "custom.scaleDistribution",
+                "value": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "101": {
+                        "text": "failed check"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*exact rollback.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "points"
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "always"
+              },
+              {
+                "id": "custom.spanNulls",
+                "value": false
+              },
+              {
+                "id": "custom.pointSize",
+                "value": 14
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "hidden"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "min",
+                "value": 91
+              },
+              {
+                "id": "max",
+                "value": 101.5
+              },
+              {
+                "id": "custom.scaleDistribution",
+                "value": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "101": {
+                        "text": "rollback"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*exact promote.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "points"
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "always"
+              },
+              {
+                "id": "custom.spanNulls",
+                "value": false
+              },
+              {
+                "id": "custom.pointSize",
+                "value": 14
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "hidden"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "min",
+                "value": 91
+              },
+              {
+                "id": "max",
+                "value": 101.5
+              },
+              {
+                "id": "custom.scaleDistribution",
+                "value": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "101": {
+                        "text": "promote"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*approx failed check.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#FF9830"
+                }
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "points"
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "always"
+              },
+              {
+                "id": "custom.spanNulls",
+                "value": false
+              },
+              {
+                "id": "custom.pointSize",
+                "value": 5
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "hidden"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "min",
+                "value": 91
+              },
+              {
+                "id": "max",
+                "value": 101.5
+              },
+              {
+                "id": "custom.scaleDistribution",
+                "value": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "100": {
+                        "text": "failed check"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*approx rollback.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "points"
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "always"
+              },
+              {
+                "id": "custom.spanNulls",
+                "value": false
+              },
+              {
+                "id": "custom.pointSize",
+                "value": 14
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "hidden"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "min",
+                "value": 91
+              },
+              {
+                "id": "max",
+                "value": 101.5
+              },
+              {
+                "id": "custom.scaleDistribution",
+                "value": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "100": {
+                        "text": "rollback"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*approx promote.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "points"
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "always"
+              },
+              {
+                "id": "custom.spanNulls",
+                "value": false
+              },
+              {
+                "id": "custom.pointSize",
+                "value": 14
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "hidden"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "min",
+                "value": 91
+              },
+              {
+                "id": "max",
+                "value": 101.5
+              },
+              {
+                "id": "custom.scaleDistribution",
+                "value": {
+                  "type": "linear"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "100": {
+                        "text": "promote"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none",
+          "hideZeros": true
+        }
+      },
+      "id": 15,
+      "gridPos": {
+        "x": 0,
+        "y": 53,
+        "w": 24,
+        "h": 12
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "id": 16,
       "type": "row",
       "title": "Fidelity over rollouts",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 46,
+        "y": 65,
         "w": 24,
         "h": 1
       },
@@ -2234,10 +2937,10 @@
         "orientation": "horizontal",
         "justifyMode": "auto"
       },
-      "id": 14,
+      "id": 17,
       "gridPos": {
         "x": 0,
-        "y": 47,
+        "y": 66,
         "w": 6,
         "h": 8
       },
@@ -2357,10 +3060,10 @@
         "orientation": "horizontal",
         "justifyMode": "auto"
       },
-      "id": 15,
+      "id": 18,
       "gridPos": {
         "x": 6,
-        "y": 47,
+        "y": 66,
         "w": 6,
         "h": 8
       },
@@ -2480,10 +3183,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 16,
+      "id": 19,
       "gridPos": {
         "x": 12,
-        "y": 47,
+        "y": 66,
         "w": 7,
         "h": 8
       },
@@ -2556,10 +3259,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 17,
+      "id": 20,
       "gridPos": {
         "x": 19,
-        "y": 47,
+        "y": 66,
         "w": 5,
         "h": 8
       },

@@ -2,6 +2,11 @@
 
 import json
 import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                                "scripts"))
+import rollout
 
 DS = {"type": "yesoreyeram-infinity-datasource", "uid": "approx-rows"}
 DATA = "http://localhost:8000/runs/"
@@ -428,6 +433,89 @@ def decision_dashboard():
 
 
 QUERY_COLORS = {"p99_canary": "orange", "p99_stable": "blue", "success_rate_canary": "green"}
+DECISION_MARKS = {"failed check": ("#FF9830", 5), "rollback": ("red", 14), "promote": ("green", 14)}
+DECISION_LEVEL = {"exact": 101, "approx": 100}
+
+
+def rule_descriptions():
+    r = rollout
+    every = {name: rule["every"] for name, rule in r.RULES.items()}
+    lines = [
+        "Every minute, each query is evaluated over the last 5 minutes. A rule turns the query results "
+        "into a pass or fail per check, then decides rollback or promote per rollout. Exact and approx decide "
+        "separately from their own results.",
+        "",
+        "| rule | queries | a check fails when | a rollout rolls back when, else promotes |",
+        "|---|---|---|---|",
+        f"| ours | p99_canary, p99_stable | canary p99 / stable p99 > {r.TOLERANCE} | {r.STREAK} failed checks in a "
+        f"row out of {r.CHECKS} |",
+        f"| flagger | p99_canary, success_rate_canary | canary p99 > {r.MAX_P99} s or canary success rate < "
+        f"{r.FLAGGER_MIN_SUCCESS_RATE:.0%} | {r.FAILURE_THRESHOLD} failed checks in total; promotes after "
+        f"{r.PASSES_TO_PROMOTE} passed checks (up to {r.RULES['flagger']['checks']} checks) |",
+        f"| argo_rollouts | success_rate_canary | canary success rate < {r.ARGO_ROLLOUTS_MIN_SUCCESS_RATE:.0%} "
+        f"(a check every {every['argo_rollouts']} evaluations) | more than {r.FAILURE_LIMIT} failed checks out of "
+        f"{r.ARGO_ROLLOUTS_COUNT} |",
+        f"| cloudwatch | p99_canary | canary p99 > {r.MAX_P99} s | {r.BREACHING_POINTS} of the last "
+        f"{r.EVALUATED_POINTS} checks failed, within {r.CLOUDWATCH_CHECKS} checks |",
+    ]
+    return "\n".join(lines)
+
+
+def query_and_decision_panel(app):
+    queries = json.dumps({name: list(rule["queries"]) for name, rule in rollout.RULES.items()})
+    lines = (f'$[labels.query in $lookup({queries}, "${{rule}}")]'
+             '.{"time": time, "value": value, "series": labels.query & " " & labels.arm}')
+    level = f'labels.arm="exact" ? {DECISION_LEVEL["exact"]} : {DECISION_LEVEL["approx"]}'
+    marks = (f'$[{app} and (metric="check" or metric="action")].( $level := {level}; metric="check" '
+             '? [{"time": time, "value": value="failed" ? $level : 0, "series": labels.arm & " failed check"}] '
+             ': [{"time": time, "value": value="rollback" ? $level : 0, "series": labels.arm & " rollback"}, '
+             '{"time": time, "value": value="promote" ? $level : 0, "series": labels.arm & " promote"}] )')
+    targets = []
+    for ref, path, root in (("A", "query_result", lines), ("B", "app_state", marks)):
+        target = iq(ref, RUN + path + ".json", root, [T, col("value", "value", "number"),
+                                                       col("series", "series", "string")])
+        target["format"] = "timeseries"
+        targets.append(target)
+    overrides = []
+    for query, color in QUERY_COLORS.items():
+        for arm in ("exact", "approx"):
+            properties = [{"id": "color", "value": {"mode": "fixed", "fixedColor": color}}]
+            if arm == "approx":
+                properties.append({"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [10, 10]}})
+            else:
+                properties.append({"id": "custom.lineWidth", "value": 2})
+            if query.startswith("success_rate"):
+                properties += [{"id": "unit", "value": "percentunit"},
+                               {"id": "custom.axisPlacement", "value": "right"},
+                               {"id": "custom.scaleDistribution", "value": {"type": "linear"}}]
+            overrides.append({"matcher": {"id": "byRegexp", "options": f".*{query} {arm}.*"},
+                              "properties": properties})
+    for arm, level in DECISION_LEVEL.items():
+        for mark, (color, size) in DECISION_MARKS.items():
+            overrides.append({"matcher": {"id": "byRegexp", "options": f".*{arm} {mark}.*"}, "properties": [
+                {"id": "color", "value": {"mode": "fixed", "fixedColor": color}},
+                {"id": "custom.drawStyle", "value": "points"},
+                {"id": "custom.showPoints", "value": "always"},
+                {"id": "custom.spanNulls", "value": False},
+                {"id": "custom.pointSize", "value": size},
+                {"id": "custom.axisPlacement", "value": "hidden"},
+                {"id": "unit", "value": "none"},
+                {"id": "min", "value": min(DECISION_LEVEL.values()) - 9},
+                {"id": "max", "value": max(DECISION_LEVEL.values()) + 0.5},
+                {"id": "custom.scaleDistribution", "value": {"type": "linear"}},
+                {"id": "mappings", "value": [{"type": "value", "options": {str(level): {"text": mark}}}]}]})
+    return {"type": "timeseries",
+            "title": "Query results of rule ${rule}, exact solid and approx dashed, with each arm's failed checks "
+                     "and decisions on the same time axis",
+            "description": "The top two rows of marks are the rule's checks and decisions: the upper row is "
+                           "exact, the lower row approx. Small orange: a failed check. Large red: rollback. "
+                           "Large green: promote. Hover a time to see every query value and mark at that time.",
+            "targets": targets,
+            "fieldConfig": {"defaults": {**LINES, "unit": "s", "displayName": "${__field.labels.series}",
+                                         "custom": {**LINES["custom"], "spanNulls": True,
+                                                    "scaleDistribution": {"type": "log", "log": 10}}},
+                            "overrides": overrides},
+            "options": {**LEGEND, "tooltip": {**LEGEND["tooltip"], "hideZeros": True}}}
 
 
 def rollout_dashboard():
@@ -467,6 +555,8 @@ def rollout_dashboard():
                  "options": LEGEND}, x, y, w, 6)
 
     b.row("Application: rollout controller, rule ${rule}", 29)
+    b.panel({"type": "text", "title": "Decision rules (selected: ${rule})",
+             "options": {"mode": "markdown", "content": rule_descriptions()}}, 0, 30, 24, 6)
     ratio = 'labels.app="rollout_controller"'
     b.panel({"type": "timeseries", "title": "Canary p99 over stable p99 (rule ours compares it with the tolerance)",
              "targets": [rows_of("A", "app_state", f'{ratio} and metric="ratio" and labels.arm="exact"', "exact"),
@@ -475,7 +565,7 @@ def rollout_dashboard():
              "fieldConfig": {"defaults": LINES,
                              "overrides": [by_ref("A", "blue", 2), by_ref("B", "orange"), dashed("C", "red")]
                              + named("exact", "approx", "tolerance")},
-             "options": LEGEND}, 0, 30, 24, 7)
+             "options": LEGEND}, 0, 36, 24, 7)
     b.panel(strip_panel("Check result and rollout decision per check, with what differs",
                         [(f'{app} and metric="check" and labels.arm="exact"', "exact check"),
                          (f'{app} and metric="check" and labels.arm="approx"', "approx check"),
@@ -484,10 +574,13 @@ def rollout_dashboard():
                          (f'{app} and metric="annotation"', "annotation")],
                         {"failed": {"color": "red", "text": "failed"}, "passed": OFF,
                          "rollback": {"color": "red", "text": "rollback"},
-                         "promote": {"color": "green", "text": "promote"}}), 0, 37, 24, 9)
+                         "promote": {"color": "green", "text": "promote"}}), 0, 43, 24, 9)
 
-    b.row("Fidelity over rollouts", 46)
-    b.panel(outcome_stat("Rollouts by outcome (positive: rollback)", summary, app), 0, 47, 6, 8)
+    b.row("Query result and decision on one time axis, rule ${rule}", 52)
+    b.panel(query_and_decision_panel(app), 0, 53, 24, 12)
+
+    b.row("Fidelity over rollouts", 65)
+    b.panel(outcome_stat("Rollouts by outcome (positive: rollback)", summary, app), 0, 66, 6, 8)
     b.panel({"type": "stat", "title": "Rollouts",
              "targets": [iq("A", summary, metric_values(app), by_metric_columns(
                  ("rollouts", "rollouts"), ("agreement", "same decision"),
@@ -499,7 +592,7 @@ def rollout_dashboard():
              "fieldConfig": {"defaults": TEXT, "overrides": [
                  {"matcher": {"id": "byName", "options": "same decision"},
                   "properties": [{"id": "unit", "value": "percentunit"}, {"id": "decimals", "value": 1}]}]},
-             "options": STAT}, 6, 47, 6, 8)
+             "options": STAT}, 6, 66, 6, 8)
     b.panel({"type": "table", "title": "Rollouts",
              "targets": [iq("A", RUN + "fidelity_event.json", f'$[{app} and metric="rollout"]',
                             [T, col("labels.rollout", "rollout", "string"), col("labels.exact", "exact", "string"),
@@ -509,13 +602,13 @@ def rollout_dashboard():
                  {"matcher": {"id": "byName", "options": "outcome"},
                   "properties": [{"id": "mappings", "value": [{"type": "value", "options": {
                       value: {"text": text, "index": i} for i, (value, text) in enumerate(OUTCOMES.items())}}]}]}]},
-             "options": {"showHeader": True}}, 12, 47, 7, 8)
+             "options": {"showHeader": True}}, 12, 66, 7, 8)
     b.panel({"type": "table", "title": "Fidelity events",
              "targets": [iq("A", RUN + "fidelity_event.json", f'$[{app} and metric!="rollout"]',
                             [T, col("metric", "event", "string"), col("value", "evaluations", "number")])],
              "transformations": order("time", "event", "evaluations"),
              "fieldConfig": {"defaults": {"custom": {"minWidth": 60}}, "overrides": []},
-             "options": {"showHeader": True}}, 19, 47, 5, 8)
+             "options": {"showHeader": True}}, 19, 66, 5, 8)
     return dashboard(uid, "Canary rollout", b,
                      [run_variable(use_cases), variable("rule", summary, '$[metric="rollouts"].labels', "signal")],
                      to="2026-01-01T04:10:00.000Z")
