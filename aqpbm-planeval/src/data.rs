@@ -90,7 +90,7 @@ impl<'a> Stream<'a> {
                             known.len() - 1
                         }),
                 ),
-                Change::Scale { .. } => None,
+                Change::Scale { .. } | Change::Rate { .. } => None,
             });
         }
         let distributions = known
@@ -145,6 +145,39 @@ impl<'a> Stream<'a> {
     }
 }
 
+/// Offsets in ms of one stream's samples: one every `interval_ms`, more often while a rate phase holds.
+fn offsets(group: &SeriesGroup, interval_ms: i64, duration_ms: i64, index: i64) -> Vec<i64> {
+    let rates: Vec<(&Phase, f64)> = group
+        .phases
+        .iter()
+        .filter_map(|phase| match phase.change {
+            Change::Rate { factor } => Some((phase, factor)),
+            _ => None,
+        })
+        .collect();
+    if rates.is_empty() {
+        return (1..=duration_ms / interval_ms)
+            .map(|i| i * interval_ms)
+            .collect();
+    }
+    let mut out = Vec::new();
+    let mut offset = 0.0f64;
+    loop {
+        let at = offset.round() as i64;
+        let rate: f64 = rates
+            .iter()
+            .map(|(phase, factor)| {
+                1.0 + intensity(phase, at, index * phase.stagger_ms) * (factor - 1.0)
+            })
+            .product();
+        offset += interval_ms as f64 / rate;
+        if offset > duration_ms as f64 {
+            return out;
+        }
+        out.push(offset.round() as i64);
+    }
+}
+
 fn labels(metric: &MetricSpec, group: &SeriesGroup, index: usize) -> BTreeMap<String, String> {
     let mut labels: BTreeMap<String, String> = group
         .labels
@@ -161,13 +194,11 @@ pub fn generate(spec: &Spec) -> Result<Vec<Series>> {
     for metric in &spec.metrics {
         for group in &metric.series {
             let interval_ms = metric.sample_interval_of(group);
-            let count = spec.duration_ms / interval_ms;
             if let Some(label) = &metric.label_from_value {
                 let mut drawn = Stream::new(spec, metric, group, stream, 0)?;
                 stream += 1;
                 let mut by_value: BTreeMap<u64, Vec<(i64, f64)>> = BTreeMap::new();
-                for i in 0..count {
-                    let offset_ms = (i + 1) * interval_ms;
+                for offset_ms in offsets(group, interval_ms, spec.duration_ms, 0) {
                     let value = drawn.draw(offset_ms) as u64;
                     by_value
                         .entry(value)
@@ -184,11 +215,9 @@ pub fn generate(spec: &Spec) -> Result<Vec<Series>> {
             for index in 0..group.count {
                 let mut drawn = Stream::new(spec, metric, group, stream, index as i64)?;
                 stream += 1;
-                let points = (0..count)
-                    .map(|i| {
-                        let offset_ms = (i + 1) * interval_ms;
-                        (spec.start_ms + offset_ms, drawn.draw(offset_ms))
-                    })
+                let points = offsets(group, interval_ms, spec.duration_ms, index as i64)
+                    .into_iter()
+                    .map(|offset_ms| (spec.start_ms + offset_ms, drawn.draw(offset_ms)))
                     .collect();
                 out.push(Series {
                     labels: labels(metric, group, index),

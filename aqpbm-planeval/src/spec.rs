@@ -72,6 +72,10 @@ pub enum Change {
     Scale {
         factor: f64,
     },
+    /// Multiplies how often the series samples: factor 25 writes 25 samples where the baseline writes one.
+    Rate {
+        factor: f64,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -152,6 +156,10 @@ impl Spec {
                 let share = match phase.change {
                     Change::Mix { share, .. } => share,
                     Change::Scale { .. } => 0.0,
+                    Change::Rate { factor } if factor > 0.0 => 0.0,
+                    Change::Rate { .. } => {
+                        bail!("a rate phase of {} needs a positive factor", metric.name)
+                    }
                 };
                 if !(0.0..=1.0).contains(&share)
                     || phase.start_offset_ms >= phase.end_offset_ms

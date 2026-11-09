@@ -157,3 +157,36 @@ fn a_quantile_answer_is_scored_by_rank_within_its_window_and_series() {
     assert_eq!(scores.as_ref().unwrap()["rank_err_q0.5"], 0.25);
     assert!(cells[1].2.is_none());
 }
+
+#[test]
+fn a_rate_phase_writes_more_samples_while_it_holds_and_none_change_elsewhere() {
+    let mut spec = small_spec();
+    let baseline = generate(&spec).unwrap()[0].points.clone();
+    spec.metrics[0].series[0].phases = serde_json::from_value(serde_json::json!([
+        {"start_offset_ms": 20000, "end_offset_ms": 30000, "ramp_ms": 0, "change": {"rate": {"factor": 4}}}
+    ]))
+    .unwrap();
+    spec.check().unwrap();
+    let points = generate(&spec).unwrap()[0].points.clone();
+    let count = |points: &[(i64, f64)], from: i64, to: i64| {
+        points
+            .iter()
+            .filter(|(t, _)| *t > spec.start_ms + from && *t <= spec.start_ms + to)
+            .count()
+    };
+    assert_eq!(count(&baseline, 0, 20000), 2000);
+    assert_eq!(count(&points, 0, 20000), 2000);
+    assert_eq!(count(&points, 20000, 30000), 4000);
+    assert_eq!(count(&points, 30010, 60000), 2999);
+    assert!(points.windows(2).all(|w| w[0].0 <= w[1].0));
+}
+
+#[test]
+fn a_rate_phase_needs_a_positive_factor() {
+    let mut spec = small_spec();
+    spec.metrics[0].series[0].phases = serde_json::from_value(serde_json::json!([
+        {"start_offset_ms": 20000, "end_offset_ms": 30000, "ramp_ms": 0, "change": {"rate": {"factor": 0}}}
+    ]))
+    .unwrap();
+    assert!(spec.check().is_err());
+}
