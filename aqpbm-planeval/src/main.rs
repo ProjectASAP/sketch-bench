@@ -63,7 +63,8 @@ struct Args {
 
     #[arg(
         long,
-        default_value = ".",
+        env = "ASAP_DATASETS",
+        default_value = "datasets",
         help = "Directory that imported tables' dataset paths are relative to"
     )]
     data_root: PathBuf,
