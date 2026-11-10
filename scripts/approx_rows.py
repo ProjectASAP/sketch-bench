@@ -60,10 +60,13 @@ def write_run(out_dir, run_id, use_case, rows, details=None, split=None):
         if r["run_id"] != run_id:
             raise ValueError(f"row of run {r['run_id']} written into run {run_id}")
         name = r["kind"]
-        entity = r["labels"].get(split.get(name))
+        keys = split.get(name) or ()
+        keys = (keys,) if isinstance(keys, str) else keys
+        key = next((k for k in keys if k in r["labels"]), None)
+        entity = r["labels"].get(key)
         if entity is not None:
             if not re.fullmatch(r"[\w-][\w.-]*", entity):
-                raise ValueError(f"{split[name]} {entity!r} cannot name a file")
+                raise ValueError(f"{key} {entity!r} cannot name a file")
             name = os.path.join(r["kind"], entity)
         files[r["kind"]].setdefault(name, []).append(r)
     for kind, by_name in files.items():
@@ -71,7 +74,7 @@ def write_run(out_dir, run_id, use_case, rows, details=None, split=None):
         for name in by_name:
             other = folded.setdefault(name.casefold(), name)
             if other != name:
-                raise ValueError(f"{split[kind]} {os.path.basename(other)!r} and {os.path.basename(name)!r} "
+                raise ValueError(f"{os.path.basename(other)!r} and {os.path.basename(name)!r} "
                                  "name the same file on a case-insensitive filesystem")
     path = run_dir(out_dir, run_id)
     os.makedirs(path, exist_ok=True)

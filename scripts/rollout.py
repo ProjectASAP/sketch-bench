@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from approx_rows import row
+from bounds import PLAIN, any_of, ge, gt, judge, lt, point, ratio, widen_values
 from threshold_alert import EVENT_LABELS, NOTHING, annotations, cells_of, delay_summary, episodes_of, series
 
 APP = "rollout_controller"
@@ -11,22 +12,45 @@ MAX_P99 = 0.5
 FLAGGER_MIN_SUCCESS_RATE, FAILURE_THRESHOLD, PASSES_TO_PROMOTE = 0.99, 10, 25
 ARGO_ROLLOUTS_MIN_SUCCESS_RATE, ARGO_ROLLOUTS_INTERVAL, ARGO_ROLLOUTS_COUNT, FAILURE_LIMIT = 0.95, 5, 10, 3
 CLOUDWATCH_CHECKS, BREACHING_POINTS, EVALUATED_POINTS = 10, 4, 5
+KEPTN_INTERVAL, KEPTN_RELATIVE, KEPTN_MAX_P95, KEPTN_PASSING = 10, 1.1, 0.6, 3
 
 
 def slower(p99_canary, p99_stable):
-    return [c / s > TOLERANCE for c, s in zip(p99_canary, p99_stable)]
+    return [gt(ratio(c, s), TOLERANCE) for c, s in zip(p99_canary, p99_stable)]
 
 
 def flagger_failed(p99_canary, success_rate_canary):
-    return [p > MAX_P99 or s < FLAGGER_MIN_SUCCESS_RATE for p, s in zip(p99_canary, success_rate_canary)]
+    return [any_of(gt(p, MAX_P99), lt(s, FLAGGER_MIN_SUCCESS_RATE))
+            for p, s in zip(p99_canary, success_rate_canary)]
 
 
 def argo_rollouts_failed(success_rate_canary):
-    return [s < ARGO_ROLLOUTS_MIN_SUCCESS_RATE for s in success_rate_canary]
+    return [lt(s, ARGO_ROLLOUTS_MIN_SUCCESS_RATE) for s in success_rate_canary]
 
 
 def cloudwatch_breaching(p99_canary):
-    return [p > MAX_P99 for p in p99_canary]
+    return [gt(p, MAX_P99) for p in p99_canary]
+
+
+def keptn_failed(p95_canary):
+    """Keptn's objective: p95 at most 10% above the average of the last 3 passing evaluations, and below 600 ms.
+
+    Only a passing evaluation joins the baseline; an unsure one does not. The first evaluation has no baseline
+    and is judged on the absolute criterion alone.
+    """
+    out, passing = [], []
+    for p in p95_canary:
+        baseline = sum(passing[-KEPTN_PASSING:]) / len(passing[-KEPTN_PASSING:]) if passing else None
+        relative = gt(p, KEPTN_RELATIVE * baseline) if baseline is not None else False
+        failed = any_of(relative, ge(p, KEPTN_MAX_P95))
+        if failed is False:
+            passing.append(point(p))
+        out.append(failed)
+    return out
+
+
+def each_check(failed):
+    return 0, ROLLBACK if failed[0] else PROMOTE
 
 
 def in_a_row(failed):
@@ -75,6 +99,8 @@ RULES = {
                       "every": ARGO_ROLLOUTS_INTERVAL, "checks": ARGO_ROLLOUTS_COUNT, "decide": failures_over_limit},
     "cloudwatch": {"queries": ("p99_canary",), "check": cloudwatch_breaching, "every": 1,
                    "checks": CLOUDWATCH_CHECKS, "decide": m_of_last_n},
+    "keptn": {"queries": ("p95_canary",), "check": keptn_failed, "every": KEPTN_INTERVAL, "checks": 1,
+              "decide": each_check},
 }
 
 
@@ -120,7 +146,7 @@ def actions(length, decided, arm):
     return out
 
 
-def derive(query_rows, rules=RULES):
+def derive(query_rows, rules=RULES, policy=PLAIN, widen=None):
     if any(r["kind"] != "query_result" for r in query_rows):
         raise ValueError("derive reads query_result rows only")
     run_ids = {r["run_id"] for r in query_rows}
@@ -133,25 +159,27 @@ def derive(query_rows, rules=RULES):
     out = []
     values = {"exact": {}, "approx": {}}
     for q in queries:
-        _, _, q_times, exact, approx = found[q]
+        q_labels, _, q_times, exact, approx = found[q]
         if q_times != times:
             raise ValueError(f"queries {queries[0]} and {q} are not evaluated at the same times")
-        values["exact"][q], values["approx"][q] = exact, approx
+        values["exact"][q], values["approx"][q] = exact, widen_values(widen, q, times, q_labels, approx)
     app = {"use_case": labels["use_case"], "app": APP}
     for n, t in enumerate(times):
         for arm, by_query in values.items():
             out.append(row(t, "app_state", run_id, {**app, "arm": arm}, "ratio",
-                           by_query["p99_canary"][n] / by_query["p99_stable"][n], "ratio"))
+                           point(by_query["p99_canary"][n]) / point(by_query["p99_stable"][n]), "ratio"))
         out.append(row(t, "app_state", run_id, app, "tolerance", TOLERANCE, "ratio"))
     for name, rule in rules.items():
-        out += rule_rows(run_id, {**app, "signal": name}, rule, times, values)
+        out += rule_rows(run_id, {**app, "signal": name}, rule, times, values, policy)
     return out
 
 
-def rule_rows(run_id, app, rule, times, values):
+def rule_rows(run_id, app, rule, times, values, policy=PLAIN):
     every = rule["every"]
     checked = times[::every]
-    failed = {arm: rule["check"](*[values[arm][q] for q in rule["queries"]])[::every] for arm in values}
+    args = {arm: [values[arm][q][::every] for q in rule["queries"]] for arm in values}
+    failed = {"exact": rule["check"](*args["exact"])}
+    failed["approx"], unsure = judge(rule["check"], args["approx"], args["exact"], policy)
     found = rollouts(failed["exact"], failed["approx"], rule["checks"], rule["decide"])
     decided = found["rollouts"]
     acted = {arm: actions(len(checked), decided, arm) for arm in values}
@@ -181,6 +209,8 @@ def rule_rows(run_id, app, rule, times, values):
                 ("agreement", (outcomes.count("true_positive") + outcomes.count("true_negative")) / len(decided)
                  if decided else 1.0, "ratio"),
                 ("gaps", len(found["gaps"]), "gaps")]
+    if policy != PLAIN:
+        summary.append(("unsure_checks", unsure, "checks"))
     summary += delay_summary([rollout["delay"] * every for rollout in decided
                               if rollout["outcome"] == "true_positive"],
                              "rollback_delay", "rollbacks", "early_rollbacks", "late_rollbacks")

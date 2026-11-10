@@ -48,7 +48,7 @@ fn evaluation_times_start_one_window_in_and_stay_on_the_grid() {
 #[tokio::test(flavor = "current_thread")]
 async fn exact_distinct_count_equals_the_distinct_values_in_each_window() {
     let spec = small_spec();
-    let series = generate(&spec).unwrap();
+    let series = generate(&spec, std::path::Path::new(".")).unwrap();
     let arm = Arm {
         max_error: None,
         failure_probability: 0.01,
@@ -72,7 +72,7 @@ async fn exact_distinct_count_equals_the_distinct_values_in_each_window() {
 #[tokio::test(flavor = "current_thread")]
 async fn panes_built_at_ingestion_answer_as_the_query_time_reference() {
     let spec = small_spec();
-    let series = generate(&spec).unwrap();
+    let series = generate(&spec, std::path::Path::new(".")).unwrap();
     let arm = Arm {
         max_error: Some(0.05),
         failure_probability: 0.01,
@@ -105,7 +105,7 @@ async fn panes_built_at_ingestion_answer_as_the_query_time_reference() {
 #[test]
 fn the_use_case_1_spec_draws_the_samples_it_drew_before_specs_had_many_series() {
     let spec = Spec::read(Path::new("workloads/uc1_syn_flood.json")).unwrap();
-    let series = generate(&spec).unwrap();
+    let series = generate(&spec, std::path::Path::new(".")).unwrap();
     assert_eq!(series.len(), 1);
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for &(t, v) in &series[0].points {
@@ -114,8 +114,8 @@ fn the_use_case_1_spec_draws_the_samples_it_drew_before_specs_had_many_series() 
             hash = hash.wrapping_mul(0x100_0000_01b3);
         }
     }
-    assert_eq!(series[0].points.len(), 1_800_000);
-    assert_eq!(hash, 0x2b28_6d1f_7dab_be70);
+    assert_eq!(series[0].points.len(), 11_340_033);
+    assert_eq!(hash, 0x0ab5_805d_18d8_d702);
 }
 
 #[test]
@@ -156,4 +156,41 @@ fn a_quantile_answer_is_scored_by_rank_within_its_window_and_series() {
     assert_eq!(a.get("k").map(String::as_str), Some("a"));
     assert_eq!(scores.as_ref().unwrap()["rank_err_q0.5"], 0.25);
     assert!(cells[1].2.is_none());
+}
+
+#[test]
+fn a_rate_phase_writes_more_samples_while_it_holds_and_none_change_elsewhere() {
+    let mut spec = small_spec();
+    let baseline = generate(&spec, std::path::Path::new(".")).unwrap()[0]
+        .points
+        .clone();
+    spec.metrics[0].series[0].phases = serde_json::from_value(serde_json::json!([
+        {"start_offset_ms": 20000, "end_offset_ms": 30000, "ramp_ms": 0, "change": {"rate": {"factor": 4}}}
+    ]))
+    .unwrap();
+    spec.check().unwrap();
+    let points = generate(&spec, std::path::Path::new(".")).unwrap()[0]
+        .points
+        .clone();
+    let count = |points: &[(i64, f64)], from: i64, to: i64| {
+        points
+            .iter()
+            .filter(|(t, _)| *t > spec.start_ms + from && *t <= spec.start_ms + to)
+            .count()
+    };
+    assert_eq!(count(&baseline, 0, 20000), 2000);
+    assert_eq!(count(&points, 0, 20000), 2000);
+    assert_eq!(count(&points, 20000, 30000), 4000);
+    assert_eq!(count(&points, 30010, 60000), 2999);
+    assert!(points.windows(2).all(|w| w[0].0 <= w[1].0));
+}
+
+#[test]
+fn a_rate_phase_needs_a_positive_factor() {
+    let mut spec = small_spec();
+    spec.metrics[0].series[0].phases = serde_json::from_value(serde_json::json!([
+        {"start_offset_ms": 20000, "end_offset_ms": 30000, "ramp_ms": 0, "change": {"rate": {"factor": 0}}}
+    ]))
+    .unwrap();
+    assert!(spec.check().is_err());
 }

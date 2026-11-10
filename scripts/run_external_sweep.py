@@ -7,6 +7,7 @@ windows can share one JSONL destination.
 """
 
 import argparse
+import data_root
 import datetime as dt
 import subprocess
 import sys
@@ -28,7 +29,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", default="approxbench")
     parser.add_argument("--workload-spec", required=True)
-    parser.add_argument("--data-root", default=".")
+    parser.add_argument("--data-root", default=data_root.default())
     parser.add_argument("--start", required=True, help="UTC/RFC3339 sweep start")
     parser.add_argument("--end", required=True, help="UTC/RFC3339 sweep end")
     parser.add_argument("--window-seconds", type=int, default=60)

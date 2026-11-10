@@ -31,7 +31,24 @@ pub struct MetricSpec {
     pub label_from_value: Option<String>,
     #[serde(default)]
     pub planned_series_count: Option<u64>,
+    #[serde(default)]
     pub series: Vec<SeriesGroup>,
+    #[serde(default)]
+    pub import: Option<Import>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Import {
+    pub table: aqpbm_datagen::ExternalTableDescription,
+    #[serde(default = "unit_scale")]
+    pub time_scale: f64,
+    #[serde(default)]
+    pub origin_ns: Option<i64>,
+}
+
+fn unit_scale() -> f64 {
+    1.0
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -72,6 +89,10 @@ pub enum Change {
     Scale {
         factor: f64,
     },
+    /// Multiplies how often the series samples: factor 25 writes 25 samples where the baseline writes one.
+    Rate {
+        factor: f64,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -106,6 +127,13 @@ impl MetricSpec {
     }
 
     pub fn rows_per_second(&self) -> f64 {
+        if self.import.is_some() {
+            let streams = match self.label_from_value {
+                Some(_) => 1,
+                None => self.series_count(),
+            };
+            return streams as f64 * 1000.0 / self.sample_interval_ms as f64;
+        }
         self.series
             .iter()
             .map(|g| {
@@ -134,6 +162,21 @@ impl Spec {
             bail!("duration_ms must be positive");
         }
         for metric in &self.metrics {
+            if metric.import.is_some() != metric.series.is_empty() {
+                bail!(
+                    "metric {} needs either series to generate or a table to import, not both",
+                    metric.name
+                );
+            }
+            if metric.import.is_some() && metric.planned_series_count.is_none() {
+                bail!(
+                    "metric {} is imported, so it needs planned_series_count",
+                    metric.name
+                );
+            }
+            if metric.import.as_ref().is_some_and(|i| i.time_scale <= 0.0) {
+                bail!("metric {} needs a positive time_scale", metric.name);
+            }
             if metric.sample_interval_ms <= 0
                 || metric
                     .series
@@ -152,6 +195,10 @@ impl Spec {
                 let share = match phase.change {
                     Change::Mix { share, .. } => share,
                     Change::Scale { .. } => 0.0,
+                    Change::Rate { factor } if factor > 0.0 => 0.0,
+                    Change::Rate { .. } => {
+                        bail!("a rate phase of {} needs a positive factor", metric.name)
+                    }
                 };
                 if !(0.0..=1.0).contains(&share)
                     || phase.start_offset_ms >= phase.end_offset_ms

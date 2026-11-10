@@ -40,7 +40,7 @@ rand = "0.9"
 rand_distr = "0.5"
 rand_xoshiro = "0.7"
 
-clap = { version = "4", features = ["derive", "wrap_help"] }
+clap = { version = "4", features = ["derive", "wrap_help", "env"] }
 
 # Errors.
 thiserror = "2"

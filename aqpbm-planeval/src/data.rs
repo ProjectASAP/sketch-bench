@@ -5,7 +5,12 @@ use aqpbm_datagen::{DataDistribution, Sampler};
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 
-use crate::spec::{Change, MetricSpec, Phase, SeriesGroup, Spec};
+use std::path::Path;
+
+use anyhow::Context;
+use aqpbm_datagen::ColumnData;
+
+use crate::spec::{Change, Import, MetricSpec, Phase, SeriesGroup, Spec};
 
 pub struct Series {
     pub labels: BTreeMap<String, String>,
@@ -90,7 +95,7 @@ impl<'a> Stream<'a> {
                             known.len() - 1
                         }),
                 ),
-                Change::Scale { .. } => None,
+                Change::Scale { .. } | Change::Rate { .. } => None,
             });
         }
         let distributions = known
@@ -145,6 +150,39 @@ impl<'a> Stream<'a> {
     }
 }
 
+/// Offsets in ms of one stream's samples: one every `interval_ms`, more often while a rate phase holds.
+fn offsets(group: &SeriesGroup, interval_ms: i64, duration_ms: i64, index: i64) -> Vec<i64> {
+    let rates: Vec<(&Phase, f64)> = group
+        .phases
+        .iter()
+        .filter_map(|phase| match phase.change {
+            Change::Rate { factor } => Some((phase, factor)),
+            _ => None,
+        })
+        .collect();
+    if rates.is_empty() {
+        return (1..=duration_ms / interval_ms)
+            .map(|i| i * interval_ms)
+            .collect();
+    }
+    let mut out = Vec::new();
+    let mut offset = 0.0f64;
+    loop {
+        let at = offset.round() as i64;
+        let rate: f64 = rates
+            .iter()
+            .map(|(phase, factor)| {
+                1.0 + intensity(phase, at, index * phase.stagger_ms) * (factor - 1.0)
+            })
+            .product();
+        offset += interval_ms as f64 / rate;
+        if offset > duration_ms as f64 {
+            return out;
+        }
+        out.push(offset.round() as i64);
+    }
+}
+
 fn labels(metric: &MetricSpec, group: &SeriesGroup, index: usize) -> BTreeMap<String, String> {
     let mut labels: BTreeMap<String, String> = group
         .labels
@@ -155,19 +193,71 @@ fn labels(metric: &MetricSpec, group: &SeriesGroup, index: usize) -> BTreeMap<St
     labels
 }
 
-pub fn generate(spec: &Spec) -> Result<Vec<Series>> {
+fn imported(
+    spec: &Spec,
+    metric: &MetricSpec,
+    import: &Import,
+    data_root: &Path,
+) -> Result<Vec<Series>> {
+    let table = import
+        .table
+        .load(data_root)
+        .with_context(|| format!("loading metric {}", metric.name))?
+        .with_context(|| format!("metric {}: the table has no records", metric.name))?;
+    let groups = import.table.group_columns.len();
+    let first_group = table.column_num as usize - 1 - groups;
+    let times = table.column(0)?.as_i64()?;
+    let values = table.column(table.column_num as usize - 1)?.as_f64()?;
+    let labels_of: Vec<&[String]> = (first_group..first_group + groups)
+        .map(|i| table.column(i).and_then(ColumnData::as_string))
+        .collect::<std::result::Result<_, _>>()?;
+    let first = import
+        .origin_ns
+        .unwrap_or_else(|| times.iter().copied().min().unwrap_or(0));
+    let mut by_labels: BTreeMap<BTreeMap<String, String>, Vec<(i64, f64)>> = BTreeMap::new();
+    for row in 0..times.len() {
+        let offset_ms = 1 + ((times[row] - first) as f64 / 1e6 * import.time_scale) as i64;
+        if offset_ms < 1 || offset_ms > spec.duration_ms {
+            continue;
+        }
+        let mut labels = BTreeMap::from([("__name__".to_string(), metric.name.clone())]);
+        for (column, values) in import.table.group_columns.iter().zip(&labels_of) {
+            labels.insert(column.clone(), values[row].clone());
+        }
+        let mut value = values[row];
+        if let Some(label) = &metric.label_from_value {
+            labels.insert(label.clone(), (value as u64).to_string());
+            value = 1.0;
+        }
+        by_labels
+            .entry(labels)
+            .or_default()
+            .push((spec.start_ms + offset_ms, value));
+    }
+    Ok(by_labels
+        .into_iter()
+        .map(|(labels, mut points)| {
+            points.sort_by_key(|&(t, _)| t);
+            Series { labels, points }
+        })
+        .collect())
+}
+
+pub fn generate(spec: &Spec, data_root: &Path) -> Result<Vec<Series>> {
     let mut out = Vec::new();
     let mut stream = 0u64;
     for metric in &spec.metrics {
+        if let Some(import) = &metric.import {
+            out.extend(imported(spec, metric, import, data_root)?);
+            continue;
+        }
         for group in &metric.series {
             let interval_ms = metric.sample_interval_of(group);
-            let count = spec.duration_ms / interval_ms;
             if let Some(label) = &metric.label_from_value {
                 let mut drawn = Stream::new(spec, metric, group, stream, 0)?;
                 stream += 1;
                 let mut by_value: BTreeMap<u64, Vec<(i64, f64)>> = BTreeMap::new();
-                for i in 0..count {
-                    let offset_ms = (i + 1) * interval_ms;
+                for offset_ms in offsets(group, interval_ms, spec.duration_ms, 0) {
                     let value = drawn.draw(offset_ms) as u64;
                     by_value
                         .entry(value)
@@ -184,11 +274,9 @@ pub fn generate(spec: &Spec) -> Result<Vec<Series>> {
             for index in 0..group.count {
                 let mut drawn = Stream::new(spec, metric, group, stream, index as i64)?;
                 stream += 1;
-                let points = (0..count)
-                    .map(|i| {
-                        let offset_ms = (i + 1) * interval_ms;
-                        (spec.start_ms + offset_ms, drawn.draw(offset_ms))
-                    })
+                let points = offsets(group, interval_ms, spec.duration_ms, index as i64)
+                    .into_iter()
+                    .map(|offset_ms| (spec.start_ms + offset_ms, drawn.draw(offset_ms)))
                     .collect();
                 out.push(Series {
                     labels: labels(metric, group, index),

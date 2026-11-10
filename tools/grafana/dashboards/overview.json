@@ -50,7 +50,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[$exists(details.fidelity)].( $e := $; $append($keys($e.details.plans), $keys($e.details.unsupported)).( $q := $; $lookup($e.details.signals, $q).( $s := $; $f := $lookup($e.details.fidelity, $s); {\"run_id\": $e.run_id, \"use_case\": $e.use_case, \"start\": $e.start, \"end\": $e.end, \"query\": $q, \"approx plan\": $lookup($e.details.plans, $q), \"why no approx plan\": $lookup($e.details.unsupported, $q), \"max relative error\": $lookup($e.details.max_relative_error, $q), \"signal\": $s, \"agreement\": $f.agreement, \"fidelity\": $f.fidelity, \"dashboard\": $e.details.dashboard} ) ) ); $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[$exists(details.fidelity)].( $e := $; $append($keys($e.details.plans), $keys($e.details.unsupported)).( $q := $; $lookup($e.details.signals, $q).( $s := $; $f := $lookup($e.details.fidelity, $s); {\"run_id\": $e.run_id, \"use_case\": $e.use_case, \"start\": $e.start, \"end\": $e.end, \"query\": $q, \"approx plan\": $lookup($e.details.plans, $q), \"why no approx plan\": $lookup($e.details.unsupported, $q), \"max relative error\": $lookup($e.details.max_relative_error, $q), \"signal\": $s, \"agreement\": $f.agreement, \"fidelity\": $f.fidelity, \"dashboard\": ( $d := $lookup($e.details.signal_dashboards, $s); $exists($d) ? $d : $e.details.dashboard )} ) ) ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "use_case",
@@ -196,7 +196,7 @@
             "properties": [
               {
                 "id": "description",
-                "value": "Defined per application. Threshold alert: evaluations where exact and approx agree on firing. Autoscaler: matched scaling actions over matched, false and missed ones. Rollout controller: rollouts decided the same. Top clients: mean clients shared by the exact and approx top lists, as a fraction of the list size."
+                "value": "Defined per application. Threshold alert: evaluations where exact and approx agree on firing. Autoscaler: matched scaling actions over matched, false and missed ones. Rollout controller: rollouts decided the same. Top clients: mean clients shared by the exact and approx top lists, as a fraction of the list size. Rule: entity-evaluations where exact and approx agree on whether the rule is active."
               },
               {
                 "id": "unit",

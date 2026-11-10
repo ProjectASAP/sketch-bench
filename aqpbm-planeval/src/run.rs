@@ -32,6 +32,7 @@ pub struct Driver {
     store: BTreeMap<String, StoredState>,
     reference: Option<InstallablePlan>,
     metrics: BTreeSet<String>,
+    max_bytes: usize,
 }
 
 pub struct Evaluation {
@@ -165,6 +166,7 @@ fn execute(
     slices: &[Slice],
     ids: &[u64],
     scope: Scope,
+    max_bytes: usize,
 ) -> Result<(Vec<Vec<Batch>>, f64)> {
     let read: Vec<MaterializedView> = if views.is_empty() {
         Vec::new()
@@ -190,7 +192,14 @@ fn execute(
         .instantiate(Arc::new(store))
         .map_err(|e| anyhow!("instantiating: {e}"))?;
     let outputs = block_on(async {
-        let context = RunContext::new(scope, Limits::default()).map_err(|e| anyhow!("{e}"))?;
+        let context = RunContext::new(
+            scope,
+            Limits {
+                max_bytes,
+                ..Limits::default()
+            },
+        )
+        .map_err(|e| anyhow!("{e}"))?;
         let outputs = instance
             .execute(compiled.roots(), context)
             .map_err(|e| anyhow!("executing: {e}"))?;
@@ -263,7 +272,13 @@ impl Driver {
             store: BTreeMap::new(),
             reference,
             metrics,
+            max_bytes: Limits::default().max_bytes,
         })
+    }
+
+    pub fn with_max_bytes(mut self, max_bytes: usize) -> Driver {
+        self.max_bytes = max_bytes;
+        self
     }
 
     fn roots(plan: &InstallablePlan) -> Vec<u64> {
@@ -329,8 +344,14 @@ impl Driver {
                 };
                 let slices = self.scanned(between(series, span.0, span.1));
                 samples_ingested += samples(&slices);
-                let (mut outputs, compile_seconds) =
-                    execute(dag, sources, &slices, &[view.node_id as u64], scope)?;
+                let (mut outputs, compile_seconds) = execute(
+                    dag,
+                    sources,
+                    &slices,
+                    &[view.node_id as u64],
+                    scope,
+                    self.max_bytes,
+                )?;
                 refresh_compile_seconds += compile_seconds;
                 let batches = outputs.remove(0);
                 let schema = batches
@@ -380,8 +401,14 @@ impl Driver {
             evaluation_time_ms: evaluation_ms,
         };
         let query_started = Instant::now();
-        let (mut outputs, compile_seconds) =
-            execute(dag, inputs, &raw, &Self::roots(&self.plan), query.clone())?;
+        let (mut outputs, compile_seconds) = execute(
+            dag,
+            inputs,
+            &raw,
+            &Self::roots(&self.plan),
+            query.clone(),
+            self.max_bytes,
+        )?;
         let answers_now = answers(&outputs.remove(0))?;
         let query_seconds = query_started.elapsed().as_secs_f64() - compile_seconds;
         self.store
@@ -414,6 +441,7 @@ impl Driver {
                     &raw,
                     &Self::roots(reference),
                     query,
+                    self.max_bytes,
                 )?;
                 Some(answers(&out[0])?)
             }

@@ -180,7 +180,12 @@ pub struct SketchbenchArgs {
     #[arg(long, conflicts_with = "spec", help_heading = "Dataset")]
     pub workload_spec: Option<String>,
     /// Root directory for logical paths named by --workload-spec.
-    #[arg(long, default_value = ".", help_heading = "Dataset")]
+    #[arg(
+        long,
+        env = "ASAP_DATASETS",
+        default_value = "datasets",
+        help_heading = "Dataset"
+    )]
     pub data_root: String,
     /// Override the external window start. Must be supplied with --window-end.
     #[arg(long, requires = "window_end", help_heading = "Dataset")]

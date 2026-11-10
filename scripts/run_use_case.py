@@ -6,11 +6,20 @@ import os
 import re
 import subprocess
 import sys
+import time
 
+import bounds
+import data_root
+import ddos_rules
 import decision
 import rollout
+import rate_limit_rules
+import rules
+import scenario
+import scaling_rules
 import threshold_alert
 import topk_set
+import video_rules
 from approx_rows import row, write_run
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -31,21 +40,45 @@ def arm_flags(arm):
     return flags
 
 
-def uc1_derive(rows, queries):
-    return threshold_alert.derive(rows, {q["id"]: q["threshold"] for q in queries})
+def max_error_of(arm):
+    found = [float(part[3:]) for part in arm.split("-") if part.startswith("eps")]
+    return found[0] if found else None
 
 
-def uc4_derive(rows, queries):
-    return rollout.derive(rows)
+def planned_rules(rule_set, queries):
+    ids = {q["id"] for q in queries}
+    return {name: rule for name, rule in rule_set.items() if set(rule["queries"]) <= ids}
 
 
-def uc2_derive(rows, queries):
+def uc1_derive(rows, queries, policy=bounds.PLAIN, widen=None):
+    out = threshold_alert.derive(rows, {q["id"]: q["threshold"] for q in queries}, policy, widen)
+    usable = planned_rules(ddos_rules.RULES, queries)
+    return out + (rules.derive(rows, usable, policy, widen) if usable else [])
+
+
+def uc4_derive(rows, queries, policy=bounds.PLAIN, widen=None):
+    return rollout.derive(rows, rollout.RULES, policy, widen)
+
+
+def uc2_derive(rows, queries, policy=bounds.PLAIN, widen=None):
     rule = {"cpu_up": 0.8, "memory_up": 1.5e9, "cpu_down": 0.4, "memory_down": 0.75e9}
-    return decision.derive(rows, "scale_decision", "p95_cpu", "p95_memory", "container", rule)
+    out = decision.derive(rows, "scale_decision", "p95_cpu", "p95_memory", "container", rule, policy, widen)
+    return out + rules.derive(rows, scaling_rules.RULES, policy, widen)
 
 
-def uc5_derive(rows, queries):
-    return topk_set.derive(rows, "top_clients", "top10_clients", "client_id")
+def uc5_derive(rows, queries, policy=bounds.PLAIN, widen=None):
+    if policy != bounds.PLAIN:
+        raise ValueError("the top clients rule has no use for an error bound")
+    out = topk_set.derive(rows, "top_clients", "top10_clients", "client_id")
+    return out + rules.derive(rows, rate_limit_rules.RULES)
+
+
+def uc3_derive(rows, queries, policy=bounds.PLAIN, widen=None):
+    return rules.derive(rows, video_rules.RULES, policy, widen)
+
+
+def rule_signals(rule_set):
+    return lambda query: [name for name, rule in rule_set.items() if query in rule["queries"]]
 
 
 def uc4_stage2(derived, errors):
@@ -60,20 +93,42 @@ USE_CASES = {
         "spec": "uc1_syn_flood.json",
         "arms": ["raw-eps0.05", "noraw-eps0.1", "noraw-eps0.05", "noraw-eps0.01",
                  "noraw-ignore-eps0.1", "noraw-ignore-eps0.05", "noraw-ignore-eps0.01"],
+        "planeval_flags": ["--executor-max-bytes", str(2 << 30)],
         "signal": lambda query: query,
+        "signals": lambda query: [query] + rule_signals(ddos_rules.RULES)(query),
+        "rules": ddos_rules.RULES,
+        "scenario_entity": ddos_rules.server,
         "derive": uc1_derive,
         "dashboard": "threshold-alert",
         "needs_every_query": False,
-        "split": {},
+        "split": {"app_state": "entity"},
     },
     "2": {
         "spec": "uc2_autoscaling.json",
         "arms": ["raw-eps0.01", "noraw-eps0.1", "noraw-eps0.05", "noraw-eps0.01", "noraw-eps0.005"],
+        "planeval_flags": ["--executor-max-bytes", str(2 << 30)],
         "signal": lambda query: "scale_decision",
+        "signals": lambda query: (["scale_decision"] if query in ("p95_cpu", "p95_memory") else [])
+        + rule_signals(scaling_rules.RULES)(query),
+        "rules": scaling_rules.RULES,
+        "scenario_entity": scaling_rules.container,
         "derive": uc2_derive,
         "dashboard": "decision",
         "needs_every_query": True,
-        "split": {"query_result": "container", "low_level": "container", "app_state": "container"},
+        "split": {"query_result": "container", "low_level": "container", "app_state": ("container", "entity")},
+    },
+    "3": {
+        "spec": "uc3_video.json",
+        "arms": ["noraw-ignore-eps0.1", "noraw-ignore-eps0.05", "noraw-ignore-eps0.01"],
+        "planeval_flags": ["--executor-max-bytes", str(1 << 30)],
+        "signal": lambda query: "video",
+        "signals": rule_signals(video_rules.RULES),
+        "rules": video_rules.RULES,
+        "scenario_entity": video_rules.subpopulation,
+        "derive": uc3_derive,
+        "dashboard": "rules",
+        "needs_every_query": True,
+        "split": {"query_result": "city", "low_level": "city", "app_state": "entity"},
     },
     "4": {
         "spec": "uc4_canary.json",
@@ -90,20 +145,43 @@ USE_CASES = {
         "spec": "uc5_top_clients.json",
         "arms": ["noraw-ignore-eps0.05", "noraw-ignore-eps0.01", "noraw-ignore-eps0.005", "noraw-ignore-eps0.001"],
         "signal": lambda query: "top_clients",
+        "signals": lambda query: (["top_clients"] if query == "top10_clients" else [])
+        + rule_signals(rate_limit_rules.RULES)(query),
+        "rules": rate_limit_rules.RULES,
         "derive": uc5_derive,
         "dashboard": "topk",
+        "bounds": False,
         "needs_every_query": True,
-        "split": {"app_state": "client_id"},
+        "split": {"app_state": ("client_id", "entity")},
     },
 }
 
 
+POLICY_TEXT = {
+    bounds.BOUND: "An answer whose error-bound interval leaves the check open takes no action",
+    bounds.RERUN: "An answer whose error-bound interval leaves the check open reruns the check's queries with "
+                  "the exact plan",
+}
+
+
 def run_binary(binary, spec, out, flags):
+    """Run planeval and return its output, with the process's peak resident memory and CPU time."""
     cmd = [binary, "--spec", spec, "--out", out] + flags
     print("$ " + " ".join(cmd), file=sys.stderr)
-    subprocess.run(cmd, check=True)
+    started = time.monotonic()
+    proc = subprocess.Popen(cmd)
+    _, status, usage = os.wait4(proc.pid, 0)
+    proc.returncode = os.waitstatus_to_exitcode(status)
+    if proc.returncode:
+        raise subprocess.CalledProcessError(proc.returncode, cmd)
     with open(out) as f:
-        return json.load(f)
+        document = json.load(f)
+    document["process"] = {
+        "peak_memory_bytes": usage.ru_maxrss * (1 if sys.platform == "darwin" else 1024),
+        "cpu_seconds": usage.ru_utime + usage.ru_stime,
+        "wall_seconds": time.monotonic() - started,
+    }
+    return document
 
 
 def describe_plan(plan):
@@ -221,12 +299,12 @@ def stage1(arm, exact_query, approx_query, derived):
     return out
 
 
-def rollout_errors(derived, errors, rules):
+def rollout_errors(derived, errors, rule_set):
     by_query = {}
     for r in errors:
         by_query.setdefault(r["labels"]["query"], {})[r["time"]] = r["value"]
     out = []
-    for name, rule in rules.items():
+    for name, rule in rule_set.items():
         times = sorted({r["time"] for r in derived
                         if r["kind"] == "app_state" and r["labels"].get("signal") == name})
         for r in derived:
@@ -277,6 +355,13 @@ def headline(app, s):
                 f"{counted(s['false_negative'], 'missed rollback')}; {counted(s['gaps'], 'gap')} in failed checks"
                 + signed_delay_text(s, "mean_absolute_rollback_delay", "mean absolute rollback delay",
                                     "early_rollbacks", "late_rollbacks"))
+    if app == rules.APP:
+        return (s["agreement"],
+                f"{s['true_positive']} true positive, {s['false_positive']} false positive and "
+                f"{s['false_negative']} false negative entity-evaluations over "
+                f"{counted(s['entities'], 'entity', 'entities')}; "
+                f"{s['missed_entries']} of {counted(s['entries'], 'episode')} missed; {counted(s['gaps'], 'gap')}"
+                + delay_text(s, "mean_onset_delay", "mean onset delay"))
     if app == topk_set.APP:
         size = s["mean_list_size"]
         return (s["mean_overlap"] / size,
@@ -294,12 +379,14 @@ def headline(app, s):
 def headlines(derived):
     by_signal = {}
     for r in derived:
-        if r["kind"] == "fidelity_summary" and r["metric"] != "disagreements":
+        if r["kind"] == "fidelity_summary" and r["metric"] != "disagreements" and "arm" not in r["labels"]:
             key = (r["labels"]["app"], r["labels"]["signal"])
             by_signal.setdefault(key, {})[r["metric"]] = r["value"]
     out = {}
     for (app, signal), summary in by_signal.items():
         agreement, text = headline(app, summary)
+        if "unsure_checks" in summary:
+            text += f"; {counted(summary['unsure_checks'], 'unsure check')}"
         out[signal] = {"application": app, "agreement": agreement, "fidelity": text}
     return out
 
@@ -313,12 +400,24 @@ def max_relative_errors(derived):
     return out
 
 
-def write_arm(data, case, prefix, arm, exact, approx, trial=1):
-    run_id = f"{prefix}-{arm}" if trial == 1 else f"{prefix}-{arm}-trial{trial}"
+def run_name(prefix, arm, trial, policy):
+    name = f"{prefix}-{arm}" if policy == bounds.PLAIN else f"{prefix}-{arm}-{policy}"
+    return name if trial == 1 else f"{name}-trial{trial}"
+
+
+def caught_text(by_arm):
+    return "; incidents caught " + ", ".join(
+        f"{arm} {by_arm[arm]['caught']} of {by_arm[arm]['incidents']}" for arm in ("exact", "approx") if arm in by_arm)
+
+
+def write_arm(data, case, prefix, arm, exact, approx, trial=1, policy=bounds.PLAIN, widen=None, spec=None):
+    run_id = run_name(prefix, arm, trial, policy)
     use_case = exact["use_case"]
     exact_by_id = {q["id"]: q for q in exact["queries"]}
     rows, errors, relative, costs, planned, plans, unsupported = [], [], [], [], [], {}, {}
     for q in approx["queries"]:
+        if bounds.is_bound_query(q["id"]):
+            continue
         if "unsupported" in q:
             unsupported[q["id"]] = short_reason(q["unsupported"])
             continue
@@ -339,13 +438,28 @@ def write_arm(data, case, prefix, arm, exact, approx, trial=1):
         "exact_plans": {q["id"]: describe_plan(q["plan"]) for q in exact["queries"] if "plan" in q},
         "promql": {q["id"]: q["promql"] for q in exact["queries"]},
         "planner_rev": approx["planner_rev"],
+        "process": {"exact": exact.get("process"), "approx": approx.get("process")},
         "dashboard": case["dashboard"],
         "signals": {q["id"]: case.get("signals", case["signal"])(q["id"]) for q in exact["queries"]},
     }
-    derived = case["derive"](rows, planned) + relative + errors
+    if "rules" in case:
+        details["rules"] = {name: rule["description"] for name, rule in case["rules"].items()}
+        details["signal_dashboards"] = {name: "rules" for name in case["rules"]}
+    if policy != bounds.PLAIN:
+        details["policy"] = POLICY_TEXT[policy]
+        details["bounded_queries"] = widen.bounded_queries()
+    derived = case["derive"](rows, planned, policy, widen) + relative + errors
+    if spec is not None:
+        scored_rows, scored = scenario.derive(run_id, spec, case.get("scenario_entity"), derived,
+                                              case.get("signals", case["signal"]))
+        derived += scored_rows
+        details["scenario"] = scored
     details["max_relative_error"] = max_relative_errors(derived)
     details["sketch_bounds"] = [r for q in planned for r in sketch_bounds(q)]
     details["fidelity"] = headlines(derived)
+    for signal, by_arm in details.get("scenario", {}).items():
+        if signal in details["fidelity"]:
+            details["fidelity"][signal]["fidelity"] += caught_text(by_arm)
     details["stage1"] = [stage1(approx["arm"], exact_by_id[q["id"]], q, derived) for q in planned]
     if "stage2" in case:
         details["stage2"] = case["stage2"](derived, errors)
@@ -364,25 +478,65 @@ def main(argv=None):
     parser.add_argument("--arm", action="append", help="repeatable; default every arm of the use case")
     parser.add_argument("--trials", type=int, default=1,
                         help="runs of each approximate arm, each with fresh sketch seeds")
+    parser.add_argument("--real", nargs="?", const="", metavar="DATASET",
+                        help="read the use case's recorded data from --data-root instead of generating it: its "
+                             "_real spec, or with DATASET (e.g. caida-2019) its _real_<DATASET> spec")
+    parser.add_argument("--data-root", default=data_root.default(),
+                        help=f"default ${data_root.ENV}, else datasets/ in the repository")
+    parser.add_argument("--policy", action="append", choices=bounds.POLICIES,
+                        help="repeatable; how a rule treats an answer whose error bound leaves its check open: "
+                             "plain ignores the bound, bound takes no action, rerun asks the exact plan; "
+                             "default every policy the use case supports")
     args = parser.parse_args(argv)
     case = USE_CASES[args.use_case]
-    prefix = f"uc{args.use_case}"
-    spec = os.path.join(REPO, "aqpbm-planeval", "workloads", case["spec"])
+    real = args.real is not None
+    suffix = f"real-{args.real}" if args.real else "real"
+    prefix = f"uc{args.use_case}-{suffix}" if real else f"uc{args.use_case}"
+    spec_name = case["spec"].replace(".json", f"_{suffix.replace('-', '_')}.json") if real else case["spec"]
+    spec = os.path.join(REPO, "aqpbm-planeval", "workloads", spec_name)
+    if not os.path.exists(spec):
+        parser.error(f"use case {args.use_case} has no {spec_name}")
     for arm in args.arm or []:
         if arm not in case["arms"]:
             parser.error(f"arm {arm} is not one of {case['arms']}")
     os.makedirs(args.raw_out, exist_ok=True)
     exact_out = os.path.join(args.raw_out, f"{prefix}-exact.json")
-    exact = run_binary(args.binary, spec, exact_out, [])
+    with open(spec) as f:
+        spec_doc = json.load(f)
+    if real:
+        for metric in spec_doc["metrics"]:
+            table = metric.get("import", {}).get("table")
+            if table:
+                data_root.existing(os.path.join(args.data_root, table["dataset"]), args.data_root)
+    extra = case.get("planeval_flags", []) + (["--data-root", args.data_root] if real else [])
+    exact = run_binary(args.binary, spec, exact_out, extra)
     for q in exact["queries"]:
         if "unsupported" in q:
             sys.exit(f"the exact plan of {q['id']} is unsupported: {q['unsupported']}")
+    policies = args.policy or (bounds.POLICIES if case.get("bounds", True) else (bounds.PLAIN,))
+    if not case.get("bounds", True) and set(policies) != {bounds.PLAIN}:
+        parser.error(f"use case {args.use_case} supports only the plain policy")
     for arm in args.arm or case["arms"]:
+        max_error = max_error_of(arm)
+        arm_spec = spec
+        if max_error is not None and set(policies) != {bounds.PLAIN}:
+            widened = bounds.with_bound_queries(spec_doc, max_error)
+            arm_spec = os.path.join(args.raw_out, f"{prefix}-{arm}-spec.json")
+            with open(arm_spec, "w") as f:
+                json.dump(widened, f)
         for trial in range(1, args.trials + 1):
             name = arm if trial == 1 else f"{arm}-trial{trial}"
-            approx = run_binary(args.binary, spec, os.path.join(args.raw_out, f"{prefix}-{name}.json"),
-                                arm_flags(arm) + ["--exact", exact_out])
-            write_arm(args.data, case, prefix, arm, exact, approx, trial)
+            approx = run_binary(args.binary, arm_spec, os.path.join(args.raw_out, f"{prefix}-{name}.json"),
+                                arm_flags(arm) + extra + ["--exact", exact_out])
+            approx["process"]["includes_bound_queries"] = arm_spec != spec
+            widen = bounds.Widen(approx, max_error) if max_error is not None else None
+            for policy in policies:
+                if policy != bounds.PLAIN and not (widen and widen.bounded_queries()):
+                    print(f"{run_name(prefix, arm, trial, policy)}: no plan has an error bound; not written",
+                          file=sys.stderr)
+                    continue
+                write_arm(args.data, case, prefix, arm, exact, approx, trial, policy,
+                          widen if policy != bounds.PLAIN else None, spec_doc)
 
 if __name__ == "__main__":
     main()

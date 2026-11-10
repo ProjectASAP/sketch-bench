@@ -432,7 +432,7 @@ def decision_dashboard():
                       in_run("container_in_run", "container", "container")], annotations)
 
 
-QUERY_COLORS = {"p99_canary": "orange", "p99_stable": "blue", "success_rate_canary": "green"}
+QUERY_COLORS = {"p99_canary": "orange", "p99_stable": "blue", "success_rate_canary": "green", "p95_canary": "purple"}
 DECISION_MARKS = {"failed check": ("#FF9830", 5), "rollback": ("red", 14), "promote": ("green", 14)}
 DECISION_LEVEL = {"exact": 101, "approx": 100}
 
@@ -457,6 +457,9 @@ def rule_descriptions():
         f"{r.ARGO_ROLLOUTS_COUNT} |",
         f"| cloudwatch | p99_canary | canary p99 > {r.MAX_P99} s | {r.BREACHING_POINTS} of the last "
         f"{r.EVALUATED_POINTS} checks failed, within {r.CLOUDWATCH_CHECKS} checks |",
+        f"| keptn | p95_canary | canary p95 > {r.KEPTN_RELATIVE} × the mean of the last {r.KEPTN_PASSING} passing "
+        f"checks, or ≥ {r.KEPTN_MAX_P95} s (a check every {every['keptn']} evaluations) | the check fails; "
+        "each check is its own evaluation |",
     ]
     return "\n".join(lines)
 
@@ -696,10 +699,91 @@ def topk_dashboard():
     return dashboard(uid, "Top clients", b, [run_variable(use_cases), client, shown])
 
 
+RULE_USE_CASES = ["video_experience", "ddos_syn_flood", "k8s_autoscaling", "top_clients"]
+
+
+def rules_dashboard():
+    uid = "rules"
+    app = 'labels.app="rule" and labels.signal="${signal}"'
+    overall = f'{app} and $not($exists(labels.entity))'
+    here = f'{app} and labels.entity="${{entity_in_run}}"'
+    summary = RUN + "fidelity_summary.json"
+    b = Board()
+    b.row("Runs", 0)
+    runs_panel(b, uid, RULE_USE_CASES, 0, 1, 12, 7)
+    plans_panel(b, 12, 1, 12, 7)
+
+    b.row("Rules in ${run}", 8)
+    columns = (("agreement", "agreement"), ("true_positive", "true positive"),
+               ("false_positive", "false positive"), ("false_negative", "false negative"),
+               ("entries", "exact episodes"), ("missed_entries", "missed episodes"), ("gaps", "gaps"),
+               ("mean_onset_delay", "mean onset delay (evaluations)"), ("entities", "entities"))
+    every_rule = ('( $m := $[labels.app="rule" and $not($exists(labels.entity))]; '
+                  '$m[metric="agreement"].( $s := labels.signal; '
+                  '$merge([{"signal": $s}, $m[labels.signal=$s]{metric: value}]) ) )')
+    b.panel({"type": "table", "title": "Every rule: exact against approx, over entity-evaluations",
+             "targets": [iq("A", summary, every_rule,
+                            [col("signal", "signal", "string")] + by_metric_columns(*columns))],
+             "transformations": order("signal", *[text for _, text in columns]),
+             "fieldConfig": {"defaults": {"custom": {"minWidth": 60}}, "overrides": [
+                 {"matcher": {"id": "byName", "options": "agreement"},
+                  "properties": [{"id": "unit", "value": "percentunit"}, {"id": "decimals", "value": 2}]}]},
+             "options": {"showHeader": True}}, 0, 9, 14, 8)
+    described = ('$[run_id="${run}"].details.rules ~> $each(function($v, $k) { {"signal": $k, "rule": $v} })')
+    b.panel({"type": "table", "title": "What each rule does",
+             "targets": [iq("A", INDEX, described, [col("signal", "signal", "string"), col("rule", "rule", "string")])],
+             "transformations": order("signal", "rule"),
+             "fieldConfig": {"defaults": {"custom": {"cellOptions": {"type": "auto", "wrapText": True}}},
+                             "overrides": []},
+             "options": {"showHeader": True}}, 14, 9, 10, 8)
+
+    b.row("Rule ${signal}: entities", 17)
+    b.panel({"type": "table", "title": "Entities with the most disagreements",
+             "targets": [iq("A", summary,
+                            f'$[{app} and metric="disagreements" and value > 0].'
+                            '{"entity": labels.entity, "disagreements": value}',
+                            [col("entity", "entity", "string"), col("disagreements", "disagreements", "number")])],
+             "transformations": sort_limit("disagreements", 20),
+             "fieldConfig": {"defaults": {"custom": {"minWidth": 60}}, "overrides": [
+                 {"matcher": {"id": "byName", "options": "entity"},
+                  "properties": [{"id": "links", "value": [{
+                      "title": "Show this entity",
+                      "url": f"/d/{uid}/{uid}?var-run=${{run}}&var-signal=${{signal}}"
+                             "&var-entity=${__data.fields.entity}&${__url_time_range}"}]}]}]},
+             "options": {"showHeader": True}}, 0, 18, 8, 8)
+    b.panel({"type": "table", "title": "Fidelity events",
+             "targets": [iq("A", RUN + "fidelity_event.json", f"$[{app}]",
+                            [T, col("labels.entity", "entity", "string"), col("metric", "event", "string"),
+                             col("value", "evaluations", "number")])],
+             "transformations": order("time", "entity", "event", "evaluations"),
+             "fieldConfig": {"defaults": {"custom": {"minWidth": 60}}, "overrides": []},
+             "options": {"showHeader": True}}, 8, 18, 10, 8)
+    b.panel(outcome_stat("Entity-evaluations by outcome", summary, overall), 18, 18, 6, 8)
+    strip = strip_panel("${signal} on ${entity_in_run}: state per evaluation, with what differs",
+                        [(f'{here} and metric="state" and labels.arm="exact"', "exact"),
+                         (f'{here} and metric="state" and labels.arm="approx"', "approx"),
+                         (f'{here} and metric="annotation"', "annotation")],
+                        {"active": {"color": "red", "text": "active"}, "idle": OFF},
+                        entity_file("app_state", "entity_in_run"))
+    strip.update(repeat="entity_in_run", repeatDirection="v")
+    b.panel(strip, 0, 26, 24, 5)
+
+    signal = variable("signal", summary, '$[labels.app="rule" and metric="agreement"].labels', "signal")
+    ranked = ('( $s := $sort($[labels.app="rule" and labels.signal="${signal}" and metric="disagreements"], '
+              'function($a, $b) { $a.value < $b.value or '
+              '($a.value = $b.value and $a.labels.entity > $b.labels.entity) }); $s.labels )')
+    entity = variable("entity", summary, ranked, "entity")
+    entity.update(sort=0, multi=True, includeAll=False)
+    shown = in_run("entity_in_run", "entity", "entity")
+    shown.update(multi=True, includeAll=True, current={"text": ["All"], "value": ["$__all"]})
+    return dashboard(uid, "Rules on entities", b, [run_variable(RULE_USE_CASES), signal, entity, shown])
+
+
 AGREEMENT = ("Defined per application. Threshold alert: evaluations where exact and approx agree on firing. "
              "Autoscaler: matched scaling actions over matched, false and missed ones. "
              "Rollout controller: rollouts decided the same. "
-             "Top clients: mean clients shared by the exact and approx top lists, as a fraction of the list size.")
+             "Top clients: mean clients shared by the exact and approx top lists, as a fraction of the list size. "
+             "Rule: entity-evaluations where exact and approx agree on whether the rule is active.")
 
 
 STAGE1 = ("run_id", "trial", "query", "error metric", "target", "failure probability", "max error", "mean error",
@@ -786,7 +870,8 @@ def overview_dashboard():
             '"why no approx plan": $lookup($e.details.unsupported, $q), '
             '"max relative error": $lookup($e.details.max_relative_error, $q), '
             '"signal": $s, "agreement": $f.agreement, "fidelity": $f.fidelity, '
-            '"dashboard": $e.details.dashboard} ) ) )')
+            '"dashboard": ( $d := $lookup($e.details.signal_dashboards, $s); $exists($d) ? $d : $e.details.dashboard )'
+            '} ) ) )')
     text = ("use_case", "run_id", "query", "approx plan", "why no approx plan", "signal", "fidelity", "dashboard")
     numbers = ("start", "end", "max relative error", "agreement")
     shown = ("use_case", "run_id", "query", "approx plan", "why no approx plan", "max relative error", "signal",
@@ -858,7 +943,7 @@ def overview_dashboard():
 
 def main():
     for board in (overview_dashboard(), alert_dashboard(), decision_dashboard(), rollout_dashboard(),
-                  topk_dashboard(), two_stages_dashboard()):
+                  topk_dashboard(), two_stages_dashboard(), rules_dashboard()):
         with open(os.path.join(OUT, board["uid"] + ".json"), "w") as f:
             json.dump(board, f, indent=2)
             f.write("\n")

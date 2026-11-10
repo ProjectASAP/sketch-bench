@@ -75,3 +75,5 @@ throughput/.mplconfig
 visualization/plots/.mplconfig/
 # 本地计划文件（不入库）
 PLAN.md
+
+datasets/

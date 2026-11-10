@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from approx_rows import row
+from bounds import PLAIN, all_of, any_of, gt, lt, settle
 from threshold_alert import EVENT_LABELS, NOTHING, annotations, delay_summary
 
 APP = "autoscaler"
@@ -10,11 +11,14 @@ MATCH_WINDOW = 2
 
 
 def decide(cpu, memory, rule):
-    if cpu > rule["cpu_up"] or memory > rule["memory_up"]:
-        return "up"
-    if cpu < rule["cpu_down"] and memory < rule["memory_down"]:
-        return "down"
-    return NOTHING
+    """up, down or NOTHING; None when an interval answer leaves the decision open."""
+    up = any_of(gt(cpu, rule["cpu_up"]), gt(memory, rule["memory_up"]))
+    if up is not False:
+        return "up" if up else None
+    down = all_of(lt(cpu, rule["cpu_down"]), lt(memory, rule["memory_down"]))
+    if down is None:
+        return None
+    return "down" if down else NOTHING
 
 
 def actions_of(decisions):
@@ -35,7 +39,7 @@ def match_actions(exact, approx, window=MATCH_WINDOW):
     return dict(sorted(matched.items())), missed, false
 
 
-def by_entity(query_rows, query, key):
+def by_entity(query_rows, query, key, widen=None):
     values, labels = {}, {}
     for r in query_rows:
         if r["labels"].get("query") != query:
@@ -46,22 +50,25 @@ def by_entity(query_rows, query, key):
             raise ValueError(f"query {query}: arm {arm!r} is neither exact nor approx")
         if r["time"] in arms[arm]:
             raise ValueError(f"query {query}: {entity} {arm} evaluated twice at {r['time']}")
-        arms[arm][r["time"]] = r["value"]
+        value = r["value"]
+        if widen is not None and arm == "approx":
+            value = widen(query, r["time"], r["labels"], value)
+        arms[arm][r["time"]] = value
         labels[entity] = {k: v for k, v in r["labels"].items() if k != "arm"}
     if not values:
         raise ValueError(f"query {query} has no evaluations")
     return values, labels
 
 
-def derive(query_rows, signal, cpu_query, memory_query, key, rule):
+def derive(query_rows, signal, cpu_query, memory_query, key, rule, policy=PLAIN, widen=None):
     if any(r["kind"] != "query_result" for r in query_rows):
         raise ValueError("derive reads query_result rows only")
     run_ids = {r["run_id"] for r in query_rows}
     if len(run_ids) != 1:
         raise ValueError(f"rows span runs {sorted(run_ids)}, not one")
     (run_id,) = run_ids
-    cpu, cpu_labels = by_entity(query_rows, cpu_query, key)
-    memory, _ = by_entity(query_rows, memory_query, key)
+    cpu, cpu_labels = by_entity(query_rows, cpu_query, key, widen)
+    memory, _ = by_entity(query_rows, memory_query, key, widen)
     if set(cpu) != set(memory):
         raise ValueError(f"queries {cpu_query} and {memory_query} answer for different {key} sets")
     use_case = next(iter(cpu_labels.values()))["use_case"]
@@ -69,7 +76,7 @@ def derive(query_rows, signal, cpu_query, memory_query, key, rule):
     pairs = {(e, a): 0 for e in DECISIONS for a in DECISIONS}
     totals = {action: {"true_positive": 0, "false_positive": 0, "false_negative": 0, "delays": []}
               for action in ACTIONS}
-    true_negative = 0
+    true_negative, unsure = 0, 0
     last = None
     disagreements = []
     out = []
@@ -81,6 +88,8 @@ def derive(query_rows, signal, cpu_query, memory_query, key, rule):
         last = max(last or times[-1], times[-1])
         decided = {arm: [decide(cpu[entity][arm][t], memory[entity][arm][t], rule) for t in times]
                    for arm in ("exact", "approx")}
+        decided["approx"], open_ = settle(decided["approx"], decided["exact"], policy, NOTHING)
+        unsure += open_
         acted = {arm: actions_of(decisions) for arm, decisions in decided.items()}
         here = {**app, key: entity}
         for arm in ("exact", "approx"):
@@ -134,5 +143,7 @@ def derive(query_rows, signal, cpu_query, memory_query, key, rule):
                     for metric in ("true_positive", "false_positive", "false_negative")]
         summary += [(f"{action}_{metric}", value, unit) for metric, value, unit in
                     delay_summary(total["delays"], "onset_delay", "actions", "early_actions", "late_actions")]
+    if policy != PLAIN:
+        summary.append(("unsure_checks", unsure, "evaluations"))
     out += [row(last, "fidelity_summary", run_id, app, metric, value, unit) for metric, value, unit in summary]
     return out

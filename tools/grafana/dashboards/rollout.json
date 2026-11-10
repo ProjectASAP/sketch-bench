@@ -1059,6 +1059,64 @@
               "type": "number"
             }
           ]
+        },
+        {
+          "refId": "p95_canary exact",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_latency\" and labels.query=\"p95_canary\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p95_canary exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p95_canary approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_latency\" and labels.query=\"p95_canary\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p95_canary approx",
+              "type": "number"
+            }
+          ]
         }
       ],
       "fieldConfig": {
@@ -1193,6 +1251,50 @@
                 "value": {
                   "mode": "fixed",
                   "fixedColor": "green"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p95_canary exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p95_canary approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
                 }
               },
               {
@@ -1410,6 +1512,64 @@
               "type": "number"
             }
           ]
+        },
+        {
+          "refId": "p95_canary exact",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_memory\" and labels.query=\"p95_canary\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p95_canary exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p95_canary approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_memory\" and labels.query=\"p95_canary\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p95_canary approx",
+              "type": "number"
+            }
+          ]
         }
       ],
       "fieldConfig": {
@@ -1557,6 +1717,50 @@
                 }
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p95_canary exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p95_canary approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
           }
         ]
       },
@@ -1601,7 +1805,7 @@
       "title": "Decision rules (selected: ${rule})",
       "options": {
         "mode": "markdown",
-        "content": "Every minute, each query is evaluated over the last 5 minutes. A rule turns the query results into a pass or fail per check, then decides rollback or promote per rollout. Exact and approx decide separately from their own results.\n\n| rule | queries | a check fails when | a rollout rolls back when, else promotes |\n|---|---|---|---|\n| ours | p99_canary, p99_stable | canary p99 / stable p99 > 1.1 | 3 failed checks in a row out of 10 |\n| flagger | p99_canary, success_rate_canary | canary p99 > 0.5 s or canary success rate < 99% | 10 failed checks in total; promotes after 25 passed checks (up to 34 checks) |\n| argo_rollouts | success_rate_canary | canary success rate < 95% (a check every 5 evaluations) | more than 3 failed checks out of 10 |\n| cloudwatch | p99_canary | canary p99 > 0.5 s | 4 of the last 5 checks failed, within 10 checks |"
+        "content": "Every minute, each query is evaluated over the last 5 minutes. A rule turns the query results into a pass or fail per check, then decides rollback or promote per rollout. Exact and approx decide separately from their own results.\n\n| rule | queries | a check fails when | a rollout rolls back when, else promotes |\n|---|---|---|---|\n| ours | p99_canary, p99_stable | canary p99 / stable p99 > 1.1 | 3 failed checks in a row out of 10 |\n| flagger | p99_canary, success_rate_canary | canary p99 > 0.5 s or canary success rate < 99% | 10 failed checks in total; promotes after 25 passed checks (up to 34 checks) |\n| argo_rollouts | success_rate_canary | canary success rate < 95% (a check every 5 evaluations) | more than 3 failed checks out of 10 |\n| cloudwatch | p99_canary | canary p99 > 0.5 s | 4 of the last 5 checks failed, within 10 checks |\n| keptn | p95_canary | canary p95 > 1.1 \u00d7 the mean of the last 3 passing checks, or \u2265 0.6 s (a check every 10 evaluations) | the check fails; each check is its own evaluation |"
       },
       "id": 11,
       "gridPos": {
@@ -2191,7 +2395,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[labels.query in $lookup({\"ours\": [\"p99_canary\", \"p99_stable\"], \"flagger\": [\"p99_canary\", \"success_rate_canary\"], \"argo_rollouts\": [\"success_rate_canary\"], \"cloudwatch\": [\"p99_canary\"]}, \"${rule}\")].{\"time\": time, \"value\": value, \"series\": labels.query & \" \" & labels.arm}; $exists($r) ? $r : [] )",
+          "root_selector": "( $r := $[labels.query in $lookup({\"ours\": [\"p99_canary\", \"p99_stable\"], \"flagger\": [\"p99_canary\", \"success_rate_canary\"], \"argo_rollouts\": [\"success_rate_canary\"], \"cloudwatch\": [\"p99_canary\"], \"keptn\": [\"p95_canary\"]}, \"${rule}\")].{\"time\": time, \"value\": value, \"series\": labels.query & \" \" & labels.arm}; $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "time",
@@ -2416,6 +2620,50 @@
                 "id": "custom.scaleDistribution",
                 "value": {
                   "type": "linear"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*p95_canary exact.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*p95_canary approx.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
                 }
               }
             ]

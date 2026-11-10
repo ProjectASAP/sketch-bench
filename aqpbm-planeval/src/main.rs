@@ -55,6 +55,20 @@ struct Args {
     )]
     exact: Option<PathBuf>,
 
+    #[arg(
+        long,
+        help = "Bytes the executor may hold while running one evaluation; omitted keeps the executor's default"
+    )]
+    executor_max_bytes: Option<usize>,
+
+    #[arg(
+        long,
+        env = "ASAP_DATASETS",
+        default_value = "datasets",
+        help = "Directory that imported tables' dataset paths are relative to"
+    )]
+    data_root: PathBuf,
+
     #[arg(long)]
     out: PathBuf,
 }
@@ -98,7 +112,7 @@ async fn main() -> Result<()> {
     };
     let exact = args.exact.as_deref().map(exact_answers).transpose()?;
     let generated = Instant::now();
-    let series = generate(&spec)?;
+    let series = generate(&spec, &args.data_root)?;
     let samples: usize = series.iter().map(|s| s.points.len()).sum();
     eprintln!(
         "generated {} samples in {} series in {:.1} s",
@@ -124,6 +138,9 @@ async fn main() -> Result<()> {
         eprintln!("{}: plan {}", query.id, plan_summary);
         let mut driver = Driver::new(planned.plan, args.check_reference)
             .with_context(|| format!("installing the plan of {}", query.id))?;
+        if let Some(max_bytes) = args.executor_max_bytes {
+            driver = driver.with_max_bytes(max_bytes);
+        }
         let started = Instant::now();
         let mut answered: Vec<AnswerAt> = Vec::new();
         let mut costs: Vec<Value> = Vec::new();

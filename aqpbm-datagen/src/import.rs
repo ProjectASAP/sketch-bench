@@ -228,6 +228,13 @@ fn load(spec: &ExternalTableDescription, data_root: &Path) -> Result<Option<Gene
 
     let window = window_ns(spec)?;
     let path = data_root.join(logical);
+    if !path.exists() {
+        bail!(
+            "dataset {} not found under data root {} (set it with --data-root or ASAP_DATASETS)",
+            spec.dataset,
+            data_root.display()
+        );
+    }
     let mut records = match &spec.source {
         ExternalSource::Boom => load_boom(spec, &path, window)?,
         ExternalSource::Google => load_google(spec, &path, window)?,
