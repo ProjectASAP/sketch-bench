@@ -2,7 +2,7 @@ apiVersion: 1
 providers:
   - name: sketch-bench
     type: file
-    disableDeletion: true
+    disableDeletion: false
     allowUiUpdates: false
     options:
       path: $GRAFANA_DASHBOARDS_DIR
