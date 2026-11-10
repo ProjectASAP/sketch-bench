@@ -4,9 +4,12 @@ import json
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                                "scripts"))
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(REPO, "scripts"))
+import ddos_rules
 import rollout
+import scaling_rules
+import video_rules
 
 DS = {"type": "yesoreyeram-infinity-datasource", "uid": "approx-rows"}
 DATA = "http://localhost:8000/runs/"
@@ -265,8 +268,7 @@ def sort_limit(field, limit):
             {"id": "limit", "options": {"limitField": limit}}]
 
 
-def alert_dashboard():
-    uid = "threshold-alert"
+def alert_dashboard(uid):
     use_cases = ["ddos_syn_flood"]
     sel = 'labels.signal="${signal}"'
     b = Board()
@@ -341,8 +343,7 @@ def alert_dashboard():
     return dashboard(uid, "Threshold alert", b, variables, annotations)
 
 
-def decision_dashboard():
-    uid = "decision"
+def decision_dashboard(uid):
     use_cases = ["k8s_autoscaling"]
     here = 'labels.container="${container}"'
     overall = 'labels.app="autoscaler" and $not($exists(labels.container))'
@@ -367,12 +368,13 @@ def decision_dashboard():
                                                   {"color": "red", "value": high}]}},
                                  "overrides": [by_ref("A", "blue", 2), by_ref("B", "orange")] + named("exact", "approx")},
                  "options": LEGEND}, 12 * i, 9, 12, 8)
-    b.panel({"type": "timeseries", "title": "Relative error of approx for ${container}",
-             "targets": [rows_of("A", entity_file("low_level", "container_in_run"), f'{here} and metric="relative_error"',
-                                 "relative_error", by="query")],
-             "fieldConfig": {"defaults": {**LINES, "unit": "percentunit", "displayName": "${__field.labels.query}"},
-                             "overrides": []},
-             "options": LEGEND}, 0, 17, 24, 6)
+    for i, (metric, title) in enumerate((("relative_error", "Relative error"), ("rank_error", "Rank error"))):
+        b.panel({"type": "timeseries", "title": title + " of approx for ${container}",
+                 "targets": [rows_of("A", entity_file("low_level", "container_in_run"), f'{here} and metric="{metric}"',
+                                     metric, by="query")],
+                 "fieldConfig": {"defaults": {**LINES, "unit": "percentunit", "displayName": "${__field.labels.query}"},
+                                 "overrides": []},
+                 "options": LEGEND}, 12 * i, 17, 12, 6)
 
     b.row("Application: autoscaler", 23)
     scaling = {"up": {"color": "red", "text": "scale up"}, "down": {"color": "blue", "text": "scale down"}}
@@ -521,8 +523,33 @@ def query_and_decision_panel(app):
             "options": {**LEGEND, "tooltip": {**LEGEND["tooltip"], "hideZeros": True}}}
 
 
-def rollout_dashboard():
-    uid = "rollout"
+COST_PANELS = (("query_latency", "Query latency per evaluation", "s", "Plan compile time excluded. "),
+               ("query_memory", "Bytes per evaluation: sketch state plus raw samples read", "bytes", ""))
+PALETTE = ("blue", "orange", "green", "purple", "red", "yellow")
+
+
+def cost_panel(colors, metric, title, unit, note):
+    targets, overrides = exact_solid_approx_dashed("low_level", colors, metric)
+    return {"type": "timeseries", "title": f"{title}: exact vs approx",
+            "description": note + "Trials of an arm share one exact run.", "targets": targets,
+            "fieldConfig": {"defaults": {**LINES, "unit": unit, "displayName": "${__field.name}",
+                                         "custom": {**LINES["custom"],
+                                                    "scaleDistribution": {"type": "log", "log": 10}}},
+                            "overrides": overrides},
+            "options": LEGEND}
+
+
+def cost_dashboard(uid, spec):
+    with open(os.path.join(REPO, "aqpbm-planeval", "workloads", spec)) as f:
+        colors = dict(zip((q["id"] for q in json.load(f)["queries"]), PALETTE))
+    b = Board()
+    b.row("Query cost", 0)
+    for i, cost in enumerate(COST_PANELS):
+        b.panel(cost_panel(colors, *cost), 12 * i, 1, 12, 8)
+    return dashboard(uid, "Query cost", b, [])
+
+
+def rollout_dashboard(uid):
     use_cases = ["canary_release"]
     app = 'labels.app="rollout_controller" and labels.signal="${rule}"'
     summary = RUN + "fidelity_summary.json"
@@ -545,17 +572,8 @@ def rollout_dashboard():
              "fieldConfig": {"defaults": {**LINES, "unit": "percentunit", "displayName": "${__field.name}"},
                              "overrides": [by_ref(q, QUERY_COLORS[q]) for q in ranked]},
              "options": LEGEND}, 0, 17, 12, 6)
-    for x, y, w, metric, title, unit, note in (
-            (12, 17, 12, "query_latency", "Query latency per evaluation", "s", "Plan compile time excluded. "),
-            (0, 23, 24, "query_memory", "Bytes per evaluation: sketch state plus raw samples read", "bytes", "")):
-        targets, overrides = exact_solid_approx_dashed("low_level", QUERY_COLORS, metric)
-        b.panel({"type": "timeseries", "title": f"{title}: exact vs approx",
-                 "description": note + "Trials of an arm share one exact run.", "targets": targets,
-                 "fieldConfig": {"defaults": {**LINES, "unit": unit, "displayName": "${__field.name}",
-                                              "custom": {**LINES["custom"],
-                                                         "scaleDistribution": {"type": "log", "log": 10}}},
-                                 "overrides": overrides},
-                 "options": LEGEND}, x, y, w, 6)
+    for (x, y, w), cost in zip(((12, 17, 12), (0, 23, 24)), COST_PANELS):
+        b.panel(cost_panel(QUERY_COLORS, *cost), x, y, w, 6)
 
     b.row("Application: rollout controller, rule ${rule}", 29)
     b.panel({"type": "text", "title": "Decision rules (selected: ${rule})",
@@ -617,8 +635,7 @@ def rollout_dashboard():
                      to="2026-01-01T04:10:00.000Z")
 
 
-def topk_dashboard():
-    uid = "topk"
+def topk_dashboard(uid):
     use_cases = ["top_clients"]
     app = 'labels.app="topk_set"'
     here = f'{app} and labels.client_id="${{client_in_run}}"'
@@ -699,18 +716,14 @@ def topk_dashboard():
     return dashboard(uid, "Top clients", b, [run_variable(use_cases), client, shown])
 
 
-RULE_USE_CASES = ["video_experience", "ddos_syn_flood", "k8s_autoscaling", "top_clients"]
-
-
-def rules_dashboard():
-    uid = "rules"
+def rules_dashboard(uid, use_cases):
     app = 'labels.app="rule" and labels.signal="${signal}"'
     overall = f'{app} and $not($exists(labels.entity))'
     here = f'{app} and labels.entity="${{entity_in_run}}"'
     summary = RUN + "fidelity_summary.json"
     b = Board()
     b.row("Runs", 0)
-    runs_panel(b, uid, RULE_USE_CASES, 0, 1, 12, 7)
+    runs_panel(b, uid, use_cases, 0, 1, 12, 7)
     plans_panel(b, 12, 1, 12, 7)
 
     b.row("Rules in ${run}", 8)
@@ -776,7 +789,7 @@ def rules_dashboard():
     entity.update(sort=0, multi=True, includeAll=False)
     shown = in_run("entity_in_run", "entity", "entity")
     shown.update(multi=True, includeAll=True, current={"text": ["All"], "value": ["$__all"]})
-    return dashboard(uid, "Rules on entities", b, [run_variable(RULE_USE_CASES), signal, entity, shown])
+    return dashboard(uid, "Rules on entities", b, [run_variable(use_cases), signal, entity, shown])
 
 
 AGREEMENT = ("Defined per application. Threshold alert: evaluations where exact and approx agree on firing. "
@@ -801,14 +814,11 @@ def rollouts_by_error(ref, use_case, outcomes, name, y):
     return iq(ref, INDEX, root, [col("max error", "max error", "number"), col(name, name, "number")])
 
 
-def two_stages_dashboard():
-    use_case = "canary_release"
-    b = Board()
-    b.row("Stage 1: sketch configuration to approx query result", 0)
+def stage1_panel(uid, use_case):
     stage1 = (f'$[use_case="{use_case}" and $exists(details.stage1)].( $e := $; $e.details.stage1.( '
               '$merge([$, {"run_id": $e.run_id, "trial": $e.details.trial}]) ) )')
     text = ("run_id", "query", "error metric")
-    b.panel({"type": "table",
+    return {"type": "table",
              "title": "Per run and query: measured error against the target, and the cost "
                       "(failure probability: the share of evaluations allowed over the target)",
              "targets": [iq("A", INDEX, stage1, [col(k, k, "string") for k in text]
@@ -827,8 +837,22 @@ def two_stages_dashboard():
                   "properties": [{"id": "unit", "value": "short"}]},
                  {"matcher": {"id": "byName", "options": "run_id"},
                   "properties": [{"id": "custom.width", "value": 200}, {"id": "links", "value": [{
-                      "title": "Open this run", "url": "/d/rollout/rollout?var-run=${__data.fields.run_id}"}]}]}]},
-             "options": {"showHeader": True}}, 0, 1, 24, 14)
+                      "title": "Open this run", "url": f"/d/{uid}/{uid}?var-run=${{__data.fields.run_id}}"}]}]}]},
+             "options": {"showHeader": True}}
+
+
+def stage1_dashboard(uid, use_case):
+    b = Board()
+    b.row("Stage 1: sketch configuration to approx query result", 0)
+    b.panel(stage1_panel(uid, use_case), 0, 1, 24, 14)
+    return dashboard(uid, "Stage 1", b, [])
+
+
+def two_stages_dashboard(uid):
+    use_case = "canary_release"
+    b = Board()
+    b.row("Stage 1: sketch configuration to approx query result", 0)
+    b.panel(stage1_panel(uid, use_case), 0, 1, 24, 14)
 
     b.row("Stage 2: approx query result to rollout decision, rule ${rule}", 15)
     b.panel({"type": "xychart",
@@ -861,8 +885,48 @@ def two_stages_dashboard():
     return dashboard("two-stages", "Canary release in two stages", b, [variable("rule", INDEX, rules, "rule"), query])
 
 
-def overview_dashboard():
-    rows = ('$[$exists(details.fidelity)].( $e := $; '
+def rule_error_dashboard(uid, rule_set, metrics, file_var=None, subpopulation=None):
+    queries = json.dumps({name: list(rule["queries"]) for name, rule in rule_set.items()})
+    sel = f'labels.query in $lookup({queries}, "${{signal}}")'
+    series = "labels.query"
+    if subpopulation:
+        key = "$join([" + ", ".join(f"labels.{d}" for d in subpopulation) + '], ".")'
+        sel += f" and {key} in [${{entity_in_run:doublequote}}]"
+        series = f'{key} & " " & labels.query'
+    path = "low_level" if file_var is None else entity_file("low_level", file_var)
+    b = Board()
+    b.row("Rule ${signal}: query error", 0)
+    for i, (metric, title) in enumerate(metrics):
+        target = iq("A", RUN + path + ".json",
+                    f'$[metric="{metric}" and {sel}].{{"time": time, "value": value, "series": {series}}}',
+                    [T, col("value", "value", "number"), col("series", "series", "string")])
+        target["format"] = "timeseries"
+        panel = {"type": "timeseries",
+                 "title": f"{title} of approx, queries of rule ${{signal}}"
+                          + (f" (${{{file_var}}})" if file_var else ""),
+                 "targets": [target],
+                 "fieldConfig": {"defaults": {**LINES, "unit": "percentunit", "displayName": "${__field.labels.series}"},
+                                 "overrides": []},
+                 "options": LEGEND}
+        if file_var:
+            panel.update(repeat=file_var, repeatDirection="v")
+        b.panel(panel, 0, 1 + 7 * i, 24, 7)
+    variables = []
+    if subpopulation:
+        cities = ('$map($distinct([${entity_in_run:doublequote}].$substringBefore($, ".")), '
+                  'function($v) { {"city": $v} })')
+        city = variable(file_var, INDEX, cities, "city")
+        city.update(hide=2, multi=True, includeAll=True, skipUrlSync=True,
+                    current={"text": ["All"], "value": ["$__all"]})
+        variables.append(city)
+    return dashboard(uid, "Rule query error", b, variables)
+
+
+ERRORS = (("relative_error", "Relative error"), ("rank_error", "Rank error"))
+
+
+def overview_dashboard(uid, use_case):
+    rows = (f'$[use_case="{use_case}" and $exists(details.fidelity)].( $e := $; '
             '$append($keys($e.details.plans), $keys($e.details.unsupported)).( $q := $; '
             '$lookup($e.details.signals, $q).( $s := $; $f := $lookup($e.details.fidelity, $s); '
             '{"run_id": $e.run_id, "use_case": $e.use_case, "start": $e.start, "end": $e.end, "query": $q, '
@@ -909,11 +973,11 @@ def overview_dashboard():
                  {"matcher": {"id": "byName", "options": "run_id"},
                   "properties": [{"id": "custom.width", "value": 170}, {"id": "links", "value": [{
                       "title": "Open this run",
-                      "url": "/d/${__data.fields.dashboard}/run?var-run=${__data.fields.run_id}"
+                      "url": f"/d/{uid}/{uid}?var-run=${{__data.fields.run_id}}"
                              "&var-signal=${__data.fields.signal}"
                              "&from=${__data.fields.start}&to=${__data.fields.end}"}]}]}]},
              "options": {"showHeader": True}}, 0, 0, 24, 30)
-    bounds = ('$[$exists(details.sketch_bounds)].( $e := $; $e.details.sketch_bounds.( '
+    bounds = (f'$[use_case="{use_case}" and $exists(details.sketch_bounds)].( $e := $; $e.details.sketch_bounds.( '
               '$merge([$, {"run_id": $e.run_id, '
               '"max relative error": $lookup($e.details.max_relative_error, query)}]) ) )')
     text = ("run_id", "query", "sketch", "statistic", "bound metric", "merged error")
@@ -941,11 +1005,75 @@ def overview_dashboard():
     return dashboard("overview", "Approximate query fidelity overview", b, [])
 
 
+USE_CASES = (
+    ("ddos-detection", "1 · DDoS detection", (
+        lambda uid: overview_dashboard(uid, "ddos_syn_flood"),
+        lambda uid: cost_dashboard(uid, "uc1_syn_flood.json"), lambda uid: stage1_dashboard(uid, "ddos_syn_flood"),
+        alert_dashboard, lambda uid: rules_dashboard(uid, ["ddos_syn_flood"]),
+        lambda uid: rule_error_dashboard(uid, ddos_rules.RULES, ERRORS[:1]))),
+    ("autoscaling", "2 · Autoscaling", (
+        lambda uid: overview_dashboard(uid, "k8s_autoscaling"),
+        lambda uid: cost_dashboard(uid, "uc2_autoscaling.json"), lambda uid: stage1_dashboard(uid, "k8s_autoscaling"),
+        decision_dashboard, lambda uid: rules_dashboard(uid, ["k8s_autoscaling"]),
+        lambda uid: rule_error_dashboard(uid, scaling_rules.RULES, ERRORS, "entity_in_run"))),
+    ("video-experience", "3 · Video experience", (
+        lambda uid: overview_dashboard(uid, "video_experience"),
+        lambda uid: cost_dashboard(uid, "uc3_video.json"), lambda uid: stage1_dashboard(uid, "video_experience"),
+        lambda uid: rules_dashboard(uid, ["video_experience"]),
+        lambda uid: rule_error_dashboard(uid, video_rules.RULES, ERRORS, "city", video_rules.DIMENSIONS))),
+    ("canary-release", "4 · Canary release", (
+        lambda uid: overview_dashboard(uid, "canary_release"), rollout_dashboard, two_stages_dashboard)),
+    ("rate-limiting", "5 · Top clients and rate limiting", (
+        lambda uid: overview_dashboard(uid, "top_clients"),
+        lambda uid: cost_dashboard(uid, "uc5_top_clients.json"), lambda uid: stage1_dashboard(uid, "top_clients"),
+        topk_dashboard,
+        lambda uid: rules_dashboard(uid, ["top_clients"]))),
+)
+
+
+def merged_variable(first, other):
+    if first == other or first["name"] != "signal":
+        return first
+    roots = [v["query"]["infinityQuery"]["root_selector"] for v in (first, other)]
+    out = json.loads(json.dumps(first))
+    out["query"]["infinityQuery"]["root_selector"] = "$append(" + ", ".join(roots) + ")"
+    return out
+
+
+def use_case_dashboard(uid, title, parts):
+    b = Board()
+    variables, annotations, y, end = {}, [], 0, "2026-01-01T01:00:00.000Z"
+    kept = set()
+    for build in parts:
+        part = build(uid)
+        end = max(end, part["time"]["to"])
+        panels = []
+        for p in part["panels"]:
+            key = (p["type"], p.get("title"))
+            if p.get("title") in ("Runs", "Plans in ${run}"):
+                if key in kept:
+                    continue
+                kept.add(key)
+            panels.append(p)
+        top = min(p["gridPos"]["y"] for p in panels)
+        for p in panels:
+            p["gridPos"]["y"] += y - top
+            p["id"] = len(b.panels) + 1
+            b.panels.append(p)
+        y = max(p["gridPos"]["y"] + p["gridPos"]["h"] for p in b.panels)
+        for v in part["templating"]["list"]:
+            variables[v["name"]] = merged_variable(variables[v["name"]], v) if v["name"] in variables else v
+        annotations += [a for a in part["annotations"]["list"] if not a.get("builtIn")]
+    return dashboard(uid, title, b, list(variables.values()), annotations, to=end)
+
+
 def main():
-    for board in (overview_dashboard(), alert_dashboard(), decision_dashboard(), rollout_dashboard(),
-                  topk_dashboard(), two_stages_dashboard(), rules_dashboard()):
-        with open(os.path.join(OUT, board["uid"] + ".json"), "w") as f:
-            json.dump(board, f, indent=2)
+    for name in os.listdir(OUT):
+        if name.endswith(".json"):
+            os.remove(os.path.join(OUT, name))
+    for uid, title, parts in USE_CASES:
+        with open(os.path.join(OUT, uid + ".json"), "w") as f:
+            json.dump(use_case_dashboard(uid, title, parts), f, indent=2)
             f.write("\n")
 
 
