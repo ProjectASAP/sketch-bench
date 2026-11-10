@@ -6,19 +6,19 @@
  "metrics": [
   {
    "name": "requests",
-   "sample_interval_ms": 4,
+   "sample_interval_ms": 1,
    "label_from_value": "client_id",
-   "planned_series_count": 100000,
+   "planned_series_count": 350523,
    "import": {
     "table": {
      "source": "custom",
-     "dataset": "converted/uc5/nasa_jul95_requests.csv.gz",
+     "dataset": "converted/uc5/caida_src_ip.csv.gz",
      "mode": "scalar",
      "value_column": "client_id",
      "timestamp_column": "timestamp",
      "timestamp_unit": "nanoseconds"
     },
-    "time_scale": 0.003
+    "time_scale": 148.0
    }
   }
  ],

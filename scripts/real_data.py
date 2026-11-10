@@ -109,40 +109,44 @@ def canary_latency(minute, latency, rng):
     return latency
 
 
-def canary(service="091794afdcf1abbaf62404337ff72a38df96c5d8af8bd0d1348b331e84ac89e5", stretch=50, share=0.05,
-           seed=11):
-    source = os.path.join(DATASETS, "alibaba-microservices-v2021/MSCallGraph/MSCallGraph_0.tar.gz")
+def canary(service="091794afdcf1abbaf62404337ff72a38df96c5d8af8bd0d1348b331e84ac89e5", files=24, timeline=250,
+           share=0.05, seed=11):
     rng = random.Random(seed)
     calls = []
-    with tarfile.open(source) as archive:
-        member = next(m for m in archive.getmembers() if m.name.endswith(".csv"))
-        reader = csv.reader(io.TextIOWrapper(archive.extractfile(member)))
-        header = next(reader)
-        ts, trace, rpc, dm, rt = (header.index(c) for c in ("timestamp", "traceid", "rpcid", "dm", "rt"))
-        for r in reader:
-            if r[dm] != service:
-                continue
-            try:
-                latency_ms = float(r[rt])
-            except ValueError:
-                continue
-            if latency_ms > 0:
-                calls.append((int(r[ts]), r[trace] + r[rpc], latency_ms / 1000))
+    for part in range(files):
+        source = os.path.join(DATASETS, f"alibaba-microservices-v2021/MSCallGraph/MSCallGraph_{part}.tar.gz")
+        with tarfile.open(source) as archive:
+            member = next(m for m in archive.getmembers() if m.name.endswith(".csv"))
+            reader = csv.reader(io.TextIOWrapper(archive.extractfile(member)))
+            header = next(reader)
+            ts, trace, rpc, dm, rt = (header.index(c) for c in ("timestamp", "traceid", "rpcid", "dm", "rt"))
+            for r in reader:
+                if r[dm] != service:
+                    continue
+                try:
+                    latency_ms = float(r[rt])
+                except ValueError:
+                    continue
+                if latency_ms > 0:
+                    key = (r[trace] + r[rpc]).encode()
+                    is_canary = int(hashlib.sha1(key).hexdigest()[:8], 16) < share * 2**32
+                    calls.append((int(r[ts]), is_canary, latency_ms / 1000))
     calls.sort()
     first = calls[0][0]
+    span = (calls[-1][0] - first) / 60000
+    stretch = timeline / span
     path, handle, out = writer("uc4/alibaba_2021_latency.csv.gz")
     out.writerow(["timestamp", "version", "value"])
     counts = {"stable": 0, "canary": 0}
-    for ms, key, latency in calls:
-        version = "canary" if int(hashlib.sha1(key.encode()).hexdigest()[:8], 16) < share * 2**32 else "stable"
-        if version == "canary":
+    for ms, is_canary, latency in calls:
+        version = "canary" if is_canary else "stable"
+        if is_canary:
             latency = canary_latency((ms - first) * stretch / 60000, latency, rng)
         out.writerow([ms * 10**6, version, latency])
         counts[version] += 1
     handle.close()
-    span = (calls[-1][0] - first) / 60000
-    print(f"{path}: {len(calls)} caller-side calls with rt > 0 ms to one service over {span:.2f} min "
-          f"({span * stretch:.0f} min stretched x{stretch}); {counts}; canary incidents as in the synthetic run")
+    print(f"{path}: {len(calls)} caller-side calls with rt > 0 ms to one service in {files} files over {span:.2f} min "
+          f"(stretch x{stretch:.3f} to {timeline} min); {counts}; canary incidents as in the synthetic run")
 
 
 LOG = re.compile(r'^(\S+) \S+ \S+ \[([^\]]+)\]')
@@ -168,7 +172,36 @@ def top_clients():
     print(f"{path}: {rows} requests from {len(ids)} hosts over {(last - first) / 86400e9:.2f} days")
 
 
-CASES = {"1": syn_flood, "2": autoscaling, "4": canary, "5": top_clients}
+def top_clients_caida(keep_every=3):
+    path, handle, out = writer("uc5/caida_src_ip.csv.gz")
+    out.writerow(["timestamp", "client_id"])
+    index, rows, sources, first, last = 0, 0, set(), None, None
+    with gzip.open(CAIDA, "rb") as f:
+        f.read(24)
+        while True:
+            header = f.read(16)
+            if len(header) < 16:
+                break
+            seconds, micros, captured, _ = struct.unpack("<IIII", header)
+            packet = f.read(captured)
+            if len(packet) < 20 or packet[0] >> 4 != 4:
+                continue
+            index += 1
+            if index % keep_every:
+                continue
+            ns = seconds * 10**9 + micros * 1000
+            first = ns if first is None else first
+            last = ns
+            source = struct.unpack(">I", packet[12:16])[0]
+            sources.add(source)
+            out.writerow([ns, source])
+            rows += 1
+    handle.close()
+    print(f"{path}: every {keep_every}th of {index} IPv4 packets, {rows} rows from {len(sources)} sources "
+          f"over {(last - first) / 1e9:.1f} s")
+
+
+CASES = {"1": syn_flood, "2": autoscaling, "4": canary, "5": top_clients, "5-caida": top_clients_caida}
 
 
 def main():

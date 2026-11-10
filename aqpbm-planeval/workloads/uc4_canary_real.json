@@ -6,7 +6,7 @@
  "metrics": [
   {
    "name": "request_latency",
-   "sample_interval_ms": 66,
+   "sample_interval_ms": 5,
    "non_negative": true,
    "planned_series_count": 2,
    "import": {
@@ -21,7 +21,7 @@
       "version"
      ]
     },
-    "time_scale": 50.0
+    "time_scale": 2.0834
    }
   },
   {
