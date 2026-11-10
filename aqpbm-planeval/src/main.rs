@@ -61,7 +61,11 @@ struct Args {
     )]
     executor_max_bytes: Option<usize>,
 
-    #[arg(long, default_value = ".", help = "Directory that imported tables' dataset paths are relative to")]
+    #[arg(
+        long,
+        default_value = ".",
+        help = "Directory that imported tables' dataset paths are relative to"
+    )]
     data_root: PathBuf,
 
     #[arg(long)]

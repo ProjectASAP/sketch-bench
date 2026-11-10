@@ -161,13 +161,17 @@ fn a_quantile_answer_is_scored_by_rank_within_its_window_and_series() {
 #[test]
 fn a_rate_phase_writes_more_samples_while_it_holds_and_none_change_elsewhere() {
     let mut spec = small_spec();
-    let baseline = generate(&spec, std::path::Path::new(".")).unwrap()[0].points.clone();
+    let baseline = generate(&spec, std::path::Path::new(".")).unwrap()[0]
+        .points
+        .clone();
     spec.metrics[0].series[0].phases = serde_json::from_value(serde_json::json!([
         {"start_offset_ms": 20000, "end_offset_ms": 30000, "ramp_ms": 0, "change": {"rate": {"factor": 4}}}
     ]))
     .unwrap();
     spec.check().unwrap();
-    let points = generate(&spec, std::path::Path::new(".")).unwrap()[0].points.clone();
+    let points = generate(&spec, std::path::Path::new(".")).unwrap()[0]
+        .points
+        .clone();
     let count = |points: &[(i64, f64)], from: i64, to: i64| {
         points
             .iter()

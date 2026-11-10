@@ -193,7 +193,12 @@ fn labels(metric: &MetricSpec, group: &SeriesGroup, index: usize) -> BTreeMap<St
     labels
 }
 
-fn imported(spec: &Spec, metric: &MetricSpec, import: &Import, data_root: &Path) -> Result<Vec<Series>> {
+fn imported(
+    spec: &Spec,
+    metric: &MetricSpec,
+    import: &Import,
+    data_root: &Path,
+) -> Result<Vec<Series>> {
     let table = import
         .table
         .load(data_root)

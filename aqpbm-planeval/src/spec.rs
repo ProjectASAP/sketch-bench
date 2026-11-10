@@ -169,7 +169,10 @@ impl Spec {
                 );
             }
             if metric.import.is_some() && metric.planned_series_count.is_none() {
-                bail!("metric {} is imported, so it needs planned_series_count", metric.name);
+                bail!(
+                    "metric {} is imported, so it needs planned_series_count",
+                    metric.name
+                );
             }
             if metric.import.as_ref().is_some_and(|i| i.time_scale <= 0.0) {
                 bail!("metric {} needs a positive time_scale", metric.name);
