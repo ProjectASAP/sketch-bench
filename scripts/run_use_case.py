@@ -9,6 +9,7 @@ import sys
 import time
 
 import bounds
+import data_root
 import ddos_rules
 import decision
 import rollout
@@ -477,19 +478,24 @@ def main(argv=None):
     parser.add_argument("--arm", action="append", help="repeatable; default every arm of the use case")
     parser.add_argument("--trials", type=int, default=1,
                         help="runs of each approximate arm, each with fresh sketch seeds")
-    parser.add_argument("--real", action="store_true",
-                        help="read the use case's recorded data (its _real spec) from --data-root instead of "
-                             "generating it")
-    parser.add_argument("--data-root", default=os.path.expanduser("~/ProjectASAP/datasets"))
+    parser.add_argument("--real", nargs="?", const="", metavar="DATASET",
+                        help="read the use case's recorded data from --data-root instead of generating it: its "
+                             "_real spec, or with DATASET (e.g. caida-2019) its _real_<DATASET> spec")
+    parser.add_argument("--data-root", default=data_root.default(),
+                        help=f"default ${data_root.ENV}, else datasets/ in the repository")
     parser.add_argument("--policy", action="append", choices=bounds.POLICIES,
                         help="repeatable; how a rule treats an answer whose error bound leaves its check open: "
                              "plain ignores the bound, bound takes no action, rerun asks the exact plan; "
                              "default every policy the use case supports")
     args = parser.parse_args(argv)
     case = USE_CASES[args.use_case]
-    prefix = f"uc{args.use_case}-real" if args.real else f"uc{args.use_case}"
-    spec_name = case["spec"].replace(".json", "_real.json") if args.real else case["spec"]
+    real = args.real is not None
+    suffix = f"real-{args.real}" if args.real else "real"
+    prefix = f"uc{args.use_case}-{suffix}" if real else f"uc{args.use_case}"
+    spec_name = case["spec"].replace(".json", f"_{suffix.replace('-', '_')}.json") if real else case["spec"]
     spec = os.path.join(REPO, "aqpbm-planeval", "workloads", spec_name)
+    if not os.path.exists(spec):
+        parser.error(f"use case {args.use_case} has no {spec_name}")
     for arm in args.arm or []:
         if arm not in case["arms"]:
             parser.error(f"arm {arm} is not one of {case['arms']}")
@@ -497,7 +503,12 @@ def main(argv=None):
     exact_out = os.path.join(args.raw_out, f"{prefix}-exact.json")
     with open(spec) as f:
         spec_doc = json.load(f)
-    extra = case.get("planeval_flags", []) + (["--data-root", args.data_root] if args.real else [])
+    if real:
+        for metric in spec_doc["metrics"]:
+            table = metric.get("import", {}).get("table")
+            if table:
+                data_root.existing(os.path.join(args.data_root, table["dataset"]), args.data_root)
+    extra = case.get("planeval_flags", []) + (["--data-root", args.data_root] if real else [])
     exact = run_binary(args.binary, spec, exact_out, extra)
     for q in exact["queries"]:
         if "unsupported" in q:
