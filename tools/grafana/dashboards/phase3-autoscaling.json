@@ -1,0 +1,4937 @@
+{
+  "uid": "phase3-autoscaling",
+  "title": "Phase 3 \u00b7 2 \u00b7 Autoscaling",
+  "tags": [
+    "approx-rows"
+  ],
+  "timezone": "utc",
+  "editable": false,
+  "schemaVersion": 41,
+  "time": {
+    "from": "2026-01-01T00:00:00.000Z",
+    "to": "2026-01-01T01:00:00.000Z"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "run",
+        "label": "run",
+        "type": "query",
+        "datasource": {
+          "type": "yesoreyeram-infinity-datasource",
+          "uid": "approx-rows"
+        },
+        "refresh": 1,
+        "query": {
+          "queryType": "infinity",
+          "query": "",
+          "refId": "variable",
+          "infinityQuery": {
+            "refId": "variable",
+            "datasource": {
+              "type": "yesoreyeram-infinity-datasource",
+              "uid": "approx-rows"
+            },
+            "type": "json",
+            "source": "url",
+            "parser": "backend",
+            "format": "table",
+            "url": "http://localhost:8000/phase3/runs/index.json",
+            "url_options": {
+              "method": "GET",
+              "data": ""
+            },
+            "root_selector": "( $r := $[use_case in [\"k8s_autoscaling\"]]; $exists($r) ? $r : [] )",
+            "columns": [
+              {
+                "selector": "run_id",
+                "text": "run_id",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "container",
+        "label": "container",
+        "type": "query",
+        "datasource": {
+          "type": "yesoreyeram-infinity-datasource",
+          "uid": "approx-rows"
+        },
+        "refresh": 1,
+        "query": {
+          "queryType": "infinity",
+          "query": "",
+          "refId": "variable",
+          "infinityQuery": {
+            "refId": "variable",
+            "datasource": {
+              "type": "yesoreyeram-infinity-datasource",
+              "uid": "approx-rows"
+            },
+            "type": "json",
+            "source": "url",
+            "parser": "backend",
+            "format": "table",
+            "url": "http://localhost:8000/phase3/runs/${run}/fidelity_summary.json",
+            "url_options": {
+              "method": "GET",
+              "data": ""
+            },
+            "root_selector": "( $r := ( $s := $sort($[metric=\"disagreements\"], function($a, $b) { $a.value < $b.value or ($a.value = $b.value and $a.labels.container > $b.labels.container) }); $s.labels ); $exists($r) ? $r : [] )",
+            "columns": [
+              {
+                "selector": "container",
+                "text": "container",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "sort": 0
+      },
+      {
+        "name": "container_in_run",
+        "label": "container_in_run",
+        "type": "query",
+        "datasource": {
+          "type": "yesoreyeram-infinity-datasource",
+          "uid": "approx-rows"
+        },
+        "refresh": 1,
+        "query": {
+          "queryType": "infinity",
+          "query": "",
+          "refId": "variable",
+          "infinityQuery": {
+            "refId": "variable",
+            "datasource": {
+              "type": "yesoreyeram-infinity-datasource",
+              "uid": "approx-rows"
+            },
+            "type": "json",
+            "source": "url",
+            "parser": "backend",
+            "format": "table",
+            "url": "http://localhost:8000/phase3/runs/${run}/fidelity_summary.json",
+            "url_options": {
+              "method": "GET",
+              "data": ""
+            },
+            "root_selector": "( $r := ( $m := $[metric=\"disagreements\" and labels.container in [${container:doublequote}]].labels; $a := $[metric=\"disagreements\"].labels; $exists($m) ? $m : $a[0] ); $exists($r) ? $r : [] )",
+            "columns": [
+              {
+                "selector": "container",
+                "text": "container_in_run",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "hide": 2,
+        "skipUrlSync": true
+      },
+      {
+        "name": "signal",
+        "label": "signal",
+        "type": "query",
+        "datasource": {
+          "type": "yesoreyeram-infinity-datasource",
+          "uid": "approx-rows"
+        },
+        "refresh": 1,
+        "query": {
+          "queryType": "infinity",
+          "query": "",
+          "refId": "variable",
+          "infinityQuery": {
+            "refId": "variable",
+            "datasource": {
+              "type": "yesoreyeram-infinity-datasource",
+              "uid": "approx-rows"
+            },
+            "type": "json",
+            "source": "url",
+            "parser": "backend",
+            "format": "table",
+            "url": "http://localhost:8000/phase3/runs/${run}/fidelity_summary.json",
+            "url_options": {
+              "method": "GET",
+              "data": ""
+            },
+            "root_selector": "( $r := $[labels.app=\"rule\" and metric=\"agreement\"].labels; $exists($r) ? $r : [] )",
+            "columns": [
+              {
+                "selector": "signal",
+                "text": "signal",
+                "type": "string"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "entity",
+        "label": "entity",
+        "type": "query",
+        "datasource": {
+          "type": "yesoreyeram-infinity-datasource",
+          "uid": "approx-rows"
+        },
+        "refresh": 1,
+        "query": {
+          "queryType": "infinity",
+          "query": "",
+          "refId": "variable",
+          "infinityQuery": {
+            "refId": "variable",
+            "datasource": {
+              "type": "yesoreyeram-infinity-datasource",
+              "uid": "approx-rows"
+            },
+            "type": "json",
+            "source": "url",
+            "parser": "backend",
+            "format": "table",
+            "url": "http://localhost:8000/phase3/runs/${run}/fidelity_summary.json",
+            "url_options": {
+              "method": "GET",
+              "data": ""
+            },
+            "root_selector": "( $r := ( $s := $sort($[labels.app=\"rule\" and labels.signal=\"${signal}\" and metric=\"disagreements\"], function($a, $b) { $a.value < $b.value or ($a.value = $b.value and $a.labels.entity > $b.labels.entity) }); $s.labels ); $exists($r) ? $r : [] )",
+            "columns": [
+              {
+                "selector": "entity",
+                "text": "entity",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "sort": 0,
+        "multi": true,
+        "includeAll": false
+      },
+      {
+        "name": "entity_in_run",
+        "label": "entity_in_run",
+        "type": "query",
+        "datasource": {
+          "type": "yesoreyeram-infinity-datasource",
+          "uid": "approx-rows"
+        },
+        "refresh": 1,
+        "query": {
+          "queryType": "infinity",
+          "query": "",
+          "refId": "variable",
+          "infinityQuery": {
+            "refId": "variable",
+            "datasource": {
+              "type": "yesoreyeram-infinity-datasource",
+              "uid": "approx-rows"
+            },
+            "type": "json",
+            "source": "url",
+            "parser": "backend",
+            "format": "table",
+            "url": "http://localhost:8000/phase3/runs/${run}/fidelity_summary.json",
+            "url_options": {
+              "method": "GET",
+              "data": ""
+            },
+            "root_selector": "( $r := ( $m := $[metric=\"disagreements\" and labels.entity in [${entity:doublequote}]].labels; $a := $[metric=\"disagreements\"].labels; $exists($m) ? $m : $a[0] ); $exists($r) ? $r : [] )",
+            "columns": [
+              {
+                "selector": "entity",
+                "text": "entity_in_run",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "hide": 2,
+        "skipUrlSync": true,
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "Annotations & Alerts",
+        "builtIn": 1,
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "type": "dashboard"
+      },
+      {
+        "name": "fidelity events",
+        "enable": true,
+        "iconColor": "purple",
+        "datasource": {
+          "type": "yesoreyeram-infinity-datasource",
+          "uid": "approx-rows"
+        },
+        "target": {
+          "refId": "Anno",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/fidelity_event.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.container=\"${container}\"].{\"time\": time, \"text\": labels.action & \" \" & metric & \": \" & $string(value) & \" evaluations\"}; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "text",
+              "text": "text",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "VictoriaMetrics vs ASAPQuery-backend",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "VictoriaMetrics, which keeps every raw sample, vs ASAPQuery-backend planned to keep none: writes, memory, disk and query latency",
+      "description": "VictoriaMetrics answers are the exact arm, ASAPQuery-backend answers the approx arm. One sender writes both in time order; at each evaluation time it makes the samples written so far visible (a watermark for ASAPQuery-backend, a flush for VictoriaMetrics) and asks the queries due then, one instant query each. Write seconds include the visibility calls. Peak resident bytes and CPU seconds cover the whole process; disk bytes is the data directory at the end, and ASAPQuery-backend keeps everything in memory.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/index.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := ( $runs := $[use_case=\"k8s_autoscaling\" and $exists(details.systems)]; $reduce($runs, function($acc, $e) { $append($acc, $each($e.details.systems, function($v, $k) { $merge([$v, {\"run_id\": $e.run_id, \"system\": $k, \"write mode\": $lookup($e.details, \"write mode\"), \"unsupported\": ( $u := $keys($v.unsupported); $exists($u) ? $join($u, \", \") : \"\" ), \"failed evaluations\": ( $f := $lookup($v, \"failed evaluations\"); $count($keys($f)) > 0 ? $string($f) : \"\" ), \"samples dropped\": ( $d := $lookup($v, \"samples dropped\"); $count($keys($d)) > 0 ? $string($d) : \"\" )}]) })) }, []) ); $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "run_id",
+              "text": "run_id",
+              "type": "string"
+            },
+            {
+              "selector": "system",
+              "text": "system",
+              "type": "string"
+            },
+            {
+              "selector": "write mode",
+              "text": "write mode",
+              "type": "string"
+            },
+            {
+              "selector": "unsupported",
+              "text": "unsupported",
+              "type": "string"
+            },
+            {
+              "selector": "failed evaluations",
+              "text": "failed evaluations",
+              "type": "string"
+            },
+            {
+              "selector": "samples dropped",
+              "text": "samples dropped",
+              "type": "string"
+            },
+            {
+              "selector": "insert samples per second",
+              "text": "insert samples per second",
+              "type": "number"
+            },
+            {
+              "selector": "write seconds",
+              "text": "write seconds",
+              "type": "number"
+            },
+            {
+              "selector": "visibility seconds",
+              "text": "visibility seconds",
+              "type": "number"
+            },
+            {
+              "selector": "peak resident bytes",
+              "text": "peak resident bytes",
+              "type": "number"
+            },
+            {
+              "selector": "resident bytes at end",
+              "text": "resident bytes at end",
+              "type": "number"
+            },
+            {
+              "selector": "disk bytes",
+              "text": "disk bytes",
+              "type": "number"
+            },
+            {
+              "selector": "cpu seconds",
+              "text": "cpu seconds",
+              "type": "number"
+            },
+            {
+              "selector": "mean query ms",
+              "text": "mean query ms",
+              "type": "number"
+            },
+            {
+              "selector": "median query ms",
+              "text": "median query ms",
+              "type": "number"
+            },
+            {
+              "selector": "p99 query ms",
+              "text": "p99 query ms",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "run_id": 0,
+              "system": 1,
+              "write mode": 2,
+              "insert samples per second": 3,
+              "write seconds": 4,
+              "visibility seconds": 5,
+              "peak resident bytes": 6,
+              "resident bytes at end": 7,
+              "disk bytes": 8,
+              "cpu seconds": 9,
+              "mean query ms": 10,
+              "median query ms": 11,
+              "p99 query ms": 12,
+              "unsupported": 13,
+              "failed evaluations": 14,
+              "samples dropped": 15
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "run_id"
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "minWidth": 95,
+            "cellOptions": {
+              "type": "auto",
+              "wrapText": true
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "insert samples per second"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "write seconds"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "visibility seconds"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "peak resident bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "resident bytes at end"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "disk bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cpu seconds"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "mean query ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "median query ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p99 query ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^(system|write mode)$"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 150
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "run_id"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 230
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open this run",
+                    "url": "/d/phase3-autoscaling/phase3-autoscaling?var-run=${__data.fields.run_id}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true
+      },
+      "id": 2,
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 24,
+        "h": 14
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "table",
+      "title": "VictoriaMetrics answers checked against the in-process exact plan over the same samples",
+      "description": "A difference here comes from how VictoriaMetrics evaluates the query, not from approximation.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/index.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := ( $runs := $[use_case=\"k8s_autoscaling\" and $exists(details.victoriametrics_vs_truth)]; $reduce($runs, function($acc, $e) { $append($acc, $each($e.details.victoriametrics_vs_truth, function($v, $k) { $merge([$v, {\"run_id\": $e.run_id, \"query\": $k}]) })) }, []) ); $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "run_id",
+              "text": "run_id",
+              "type": "string"
+            },
+            {
+              "selector": "query",
+              "text": "query",
+              "type": "string"
+            },
+            {
+              "selector": "max relative error",
+              "text": "max relative error",
+              "type": "number"
+            },
+            {
+              "selector": "answers differing",
+              "text": "answers differing",
+              "type": "number"
+            },
+            {
+              "selector": "answers",
+              "text": "answers",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "run_id": 0,
+              "query": 1,
+              "max relative error": 2,
+              "answers differing": 3,
+              "answers": 4
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "run_id"
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "minWidth": 60
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max relative error"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true
+      },
+      "id": 3,
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Every run and query: plan, query error, and what the application saw",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/index.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[use_case=\"k8s_autoscaling\" and $exists(details.fidelity)].( $e := $; $append($keys($e.details.plans), $keys($e.details.unsupported)).( $q := $; $lookup($e.details.signals, $q).( $s := $; $f := $lookup($e.details.fidelity, $s); {\"run_id\": $e.run_id, \"use_case\": $e.use_case, \"start\": $e.start, \"end\": $e.end, \"query\": $q, \"approx plan\": $lookup($e.details.plans, $q), \"why no approx plan\": $lookup($e.details.unsupported, $q), \"max relative error\": $lookup($e.details.max_relative_error, $q), \"signal\": $s, \"agreement\": $f.agreement, \"fidelity\": $f.fidelity, \"dashboard\": ( $d := $lookup($e.details.signal_dashboards, $s); $exists($d) ? $d : $e.details.dashboard )} ) ) ); $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "use_case",
+              "text": "use_case",
+              "type": "string"
+            },
+            {
+              "selector": "run_id",
+              "text": "run_id",
+              "type": "string"
+            },
+            {
+              "selector": "query",
+              "text": "query",
+              "type": "string"
+            },
+            {
+              "selector": "approx plan",
+              "text": "approx plan",
+              "type": "string"
+            },
+            {
+              "selector": "why no approx plan",
+              "text": "why no approx plan",
+              "type": "string"
+            },
+            {
+              "selector": "signal",
+              "text": "signal",
+              "type": "string"
+            },
+            {
+              "selector": "fidelity",
+              "text": "fidelity",
+              "type": "string"
+            },
+            {
+              "selector": "dashboard",
+              "text": "dashboard",
+              "type": "string"
+            },
+            {
+              "selector": "start",
+              "text": "start",
+              "type": "number"
+            },
+            {
+              "selector": "end",
+              "text": "end",
+              "type": "number"
+            },
+            {
+              "selector": "max relative error",
+              "text": "max relative error",
+              "type": "number"
+            },
+            {
+              "selector": "agreement",
+              "text": "agreement",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "use_case": 0,
+              "run_id": 1,
+              "query": 2,
+              "approx plan": 3,
+              "why no approx plan": 4,
+              "max relative error": 5,
+              "signal": 6,
+              "agreement": 7,
+              "fidelity": 8
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "run_id"
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "minWidth": 60,
+            "cellOptions": {
+              "type": "auto",
+              "wrapText": true
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^(dashboard|start|end|use_case)$"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max relative error"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "agreement"
+            },
+            "properties": [
+              {
+                "id": "description",
+                "value": "Defined per application. Threshold alert: evaluations where exact and approx agree on firing. Autoscaler: matched scaling actions over matched, false and missed ones. Rollout controller: rollouts decided the same. Top clients: mean clients shared by the exact and approx top lists, as a fraction of the list size. Rule: entity-evaluations where exact and approx agree on whether the rule is active."
+              },
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 1
+              },
+              {
+                "id": "custom.width",
+                "value": 110
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "continuous-RdYlGr"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "special",
+                    "options": {
+                      "match": "null+nan",
+                      "result": {
+                        "text": "no plan",
+                        "color": "transparent",
+                        "index": 0
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "approx plan"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 210
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "why no approx plan"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 150
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "query|signal"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 115
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "run_id"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 170
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open this run",
+                    "url": "/d/phase3-autoscaling/phase3-autoscaling?var-run=${__data.fields.run_id}&var-signal=${__data.fields.signal}&from=${__data.fields.start}&to=${__data.fields.end}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true
+      },
+      "id": 4,
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 24,
+        "h": 30
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "id": 5,
+      "type": "row",
+      "title": "Query cost",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 53,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Query latency per evaluation: exact vs approx",
+      "description": "Plan compile time excluded. Trials of an arm share one exact run.",
+      "targets": [
+        {
+          "refId": "p95_cpu exact",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_latency\" and labels.query=\"p95_cpu\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p95_cpu exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p95_cpu approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_latency\" and labels.query=\"p95_cpu\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p95_cpu approx",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p95_memory exact",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_latency\" and labels.query=\"p95_memory\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p95_memory exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p95_memory approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_latency\" and labels.query=\"p95_memory\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p95_memory approx",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p50_cpu_1h exact",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_latency\" and labels.query=\"p50_cpu_1h\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p50_cpu_1h exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p50_cpu_1h approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_latency\" and labels.query=\"p50_cpu_1h\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p50_cpu_1h approx",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p95_cpu_1h exact",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_latency\" and labels.query=\"p95_cpu_1h\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p95_cpu_1h exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p95_cpu_1h approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_latency\" and labels.query=\"p95_cpu_1h\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p95_cpu_1h approx",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p99_memory_1h exact",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_latency\" and labels.query=\"p99_memory_1h\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p99_memory_1h exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p99_memory_1h approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_latency\" and labels.query=\"p99_memory_1h\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p99_memory_1h approx",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "max_memory_1h exact",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_latency\" and labels.query=\"max_memory_1h\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "max_memory_1h exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "max_memory_1h approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_latency\" and labels.query=\"max_memory_1h\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "max_memory_1h approx",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "showPoints": "never",
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
+            }
+          },
+          "unit": "s",
+          "displayName": "${__field.name}"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p95_cpu exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p95_cpu approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p95_memory exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p95_memory approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p50_cpu_1h exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p50_cpu_1h approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p95_cpu_1h exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p95_cpu_1h approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p99_memory_1h exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p99_memory_1h approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "max_memory_1h exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "max_memory_1h approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "id": 6,
+      "gridPos": {
+        "x": 0,
+        "y": 54,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Bytes per evaluation: sketch state plus raw samples read: exact vs approx",
+      "description": "Trials of an arm share one exact run.",
+      "targets": [
+        {
+          "refId": "p95_cpu exact",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_memory\" and labels.query=\"p95_cpu\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p95_cpu exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p95_cpu approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_memory\" and labels.query=\"p95_cpu\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p95_cpu approx",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p95_memory exact",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_memory\" and labels.query=\"p95_memory\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p95_memory exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p95_memory approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_memory\" and labels.query=\"p95_memory\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p95_memory approx",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p50_cpu_1h exact",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_memory\" and labels.query=\"p50_cpu_1h\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p50_cpu_1h exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p50_cpu_1h approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_memory\" and labels.query=\"p50_cpu_1h\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p50_cpu_1h approx",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p95_cpu_1h exact",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_memory\" and labels.query=\"p95_cpu_1h\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p95_cpu_1h exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p95_cpu_1h approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_memory\" and labels.query=\"p95_cpu_1h\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p95_cpu_1h approx",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p99_memory_1h exact",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_memory\" and labels.query=\"p99_memory_1h\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p99_memory_1h exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "p99_memory_1h approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_memory\" and labels.query=\"p99_memory_1h\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "p99_memory_1h approx",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "max_memory_1h exact",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_memory\" and labels.query=\"max_memory_1h\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "max_memory_1h exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "max_memory_1h approx",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"query_memory\" and labels.query=\"max_memory_1h\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "max_memory_1h approx",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "showPoints": "never",
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
+            }
+          },
+          "unit": "bytes",
+          "displayName": "${__field.name}"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p95_cpu exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p95_cpu approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p95_memory exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p95_memory approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p50_cpu_1h exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p50_cpu_1h approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p95_cpu_1h exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p95_cpu_1h approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p99_memory_1h exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "p99_memory_1h approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "max_memory_1h exact"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "max_memory_1h approx"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "id": 7,
+      "gridPos": {
+        "x": 12,
+        "y": 54,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "Runs",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 62,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "Runs",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/index.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[use_case in [\"k8s_autoscaling\"]]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "run_id",
+              "text": "run_id",
+              "type": "string"
+            },
+            {
+              "selector": "use_case",
+              "text": "use_case",
+              "type": "string"
+            },
+            {
+              "selector": "start",
+              "text": "start",
+              "type": "number"
+            },
+            {
+              "selector": "end",
+              "text": "end",
+              "type": "number"
+            },
+            {
+              "selector": "details.arm.max_error",
+              "text": "max_error",
+              "type": "string"
+            },
+            {
+              "selector": "details.arm.raw_data_retained",
+              "text": "raw_data_retained",
+              "type": "string"
+            },
+            {
+              "selector": "details.arm.ignore_guarantees",
+              "text": "ignore_guarantees",
+              "type": "string"
+            },
+            {
+              "selector": "details.planner_rev",
+              "text": "planner_rev",
+              "type": "string"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "start|end"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "run_id"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open this run",
+                    "url": "/d/phase3-autoscaling/phase3-autoscaling?var-run=${__data.fields.run_id}&from=${__data.fields.start}&to=${__data.fields.end}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "run_id": 0,
+              "max_error": 1,
+              "raw_data_retained": 2,
+              "ignore_guarantees": 3,
+              "use_case": 4,
+              "start": 5,
+              "end": 6,
+              "planner_rev": 7
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true
+      },
+      "id": 9,
+      "gridPos": {
+        "x": 0,
+        "y": 63,
+        "w": 12,
+        "h": 7
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Plans in ${run}",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/index.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := ( $e := $[run_id=\"${run}\"]; $append($e.details.plans ~> $each(function($v, $k) { {\"query\": $k, \"approx plan\": $v, \"exact plan\": $lookup($e.details.exact_plans, $k), \"promql\": $lookup($e.details.promql, $k)} }), $e.details.unsupported ~> $each(function($v, $k) { {\"query\": $k, \"why no approx plan\": $v, \"promql\": $lookup($e.details.promql, $k)} })) ); $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "query",
+              "text": "query",
+              "type": "string"
+            },
+            {
+              "selector": "approx plan",
+              "text": "approx plan",
+              "type": "string"
+            },
+            {
+              "selector": "exact plan",
+              "text": "exact plan",
+              "type": "string"
+            },
+            {
+              "selector": "why no approx plan",
+              "text": "why no approx plan",
+              "type": "string"
+            },
+            {
+              "selector": "promql",
+              "text": "promql",
+              "type": "string"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "query": 0,
+              "approx plan": 1,
+              "exact plan": 2,
+              "why no approx plan": 3,
+              "promql": 4
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "cellOptions": {
+              "type": "auto",
+              "wrapText": true
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "id": 10,
+      "gridPos": {
+        "x": 12,
+        "y": 63,
+        "w": 12,
+        "h": 7
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "id": 11,
+      "type": "row",
+      "title": "Query result for ${container}",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 70,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "p95 CPU of ${container}: exact vs approx",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/query_result/${container_in_run}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.container=\"${container}\" and labels.query=\"p95_cpu\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/query_result/${container_in_run}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.container=\"${container}\" and labels.query=\"p95_cpu\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "approx",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "showPoints": "never",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0.4
+              },
+              {
+                "color": "red",
+                "value": 0.8
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "exact"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "exact"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "approx"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "approx"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "id": 12,
+      "gridPos": {
+        "x": 0,
+        "y": 71,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "p95 memory of ${container}: exact vs approx",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/query_result/${container_in_run}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.container=\"${container}\" and labels.query=\"p95_memory\" and labels.arm=\"exact\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "exact",
+              "type": "number"
+            }
+          ]
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/query_result/${container_in_run}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.container=\"${container}\" and labels.query=\"p95_memory\" and labels.arm=\"approx\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "approx",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "showPoints": "never",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 750000000.0
+              },
+              {
+                "color": "red",
+                "value": 1500000000.0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "exact"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "exact"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "approx"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "approx"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "id": 13,
+      "gridPos": {
+        "x": 12,
+        "y": 71,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Relative error of approx for ${container}",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "timeseries",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level/${container_in_run}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"relative_error\"].{\"time\": time, \"value\": value, \"query\": labels.query}; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "relative_error",
+              "type": "number"
+            },
+            {
+              "selector": "query",
+              "text": "query",
+              "type": "string"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "unit": "percentunit",
+          "displayName": "${__field.labels.query}"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "id": 14,
+      "gridPos": {
+        "x": 0,
+        "y": 79,
+        "w": 12,
+        "h": 6
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Rank error of approx for ${container}",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "timeseries",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level/${container_in_run}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"rank_error\"].{\"time\": time, \"value\": value, \"query\": labels.query}; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "rank_error",
+              "type": "number"
+            },
+            {
+              "selector": "query",
+              "text": "query",
+              "type": "string"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "unit": "percentunit",
+          "displayName": "${__field.labels.query}"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "id": 15,
+      "gridPos": {
+        "x": 12,
+        "y": 79,
+        "w": 12,
+        "h": 6
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "id": 16,
+      "type": "row",
+      "title": "Application: autoscaler",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 85,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "state-timeline",
+      "title": "${container}: scaling action per evaluation, with what differs",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/app_state/${container_in_run}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"action\" and labels.arm=\"exact\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "exact action",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/app_state/${container_in_run}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"action\" and labels.arm=\"approx\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "approx action",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/app_state/${container_in_run}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"annotation\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "annotation",
+              "type": "string"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 0
+          },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "transparent"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "none": {
+                  "color": "transparent",
+                  "text": " ",
+                  "index": 0
+                },
+                "onset delay": {
+                  "color": "#FADE2A",
+                  "index": 1
+                },
+                "gap": {
+                  "color": "#8F3BB8",
+                  "index": 2
+                },
+                "end delay": {
+                  "color": "#19B5B5",
+                  "index": 3
+                },
+                "false positive": {
+                  "color": "#FF9830",
+                  "index": 4
+                },
+                "false negative": {
+                  "color": "#D3369E",
+                  "index": 5
+                },
+                "missed episode": {
+                  "color": "#F5A3C7",
+                  "index": 6
+                },
+                "decision delay": {
+                  "color": "#A0703C",
+                  "index": 7
+                },
+                "up": {
+                  "color": "red",
+                  "text": "scale up",
+                  "index": 8
+                },
+                "down": {
+                  "color": "blue",
+                  "text": "scale down",
+                  "index": 9
+                }
+              }
+            },
+            {
+              "type": "regex",
+              "options": {
+                "pattern": ".+, .+",
+                "result": {
+                  "color": "#9E9E9E",
+                  "index": 10
+                }
+              }
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "exact action"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "exact action"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "approx action"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "approx action"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "annotation"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "annotation"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "mergeValues": false,
+        "showValue": "auto",
+        "rowHeight": 0.8,
+        "alignValue": "center",
+        "legend": {
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "id": 17,
+      "gridPos": {
+        "x": 0,
+        "y": 86,
+        "w": 24,
+        "h": 6
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "state-timeline",
+      "title": "${container}: scaling decision per evaluation",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/app_state/${container_in_run}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"decision\" and labels.arm=\"exact\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "exact decision",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/app_state/${container_in_run}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.container=\"${container}\" and metric=\"decision\" and labels.arm=\"approx\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "approx decision",
+              "type": "string"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 0
+          },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "transparent"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "none": {
+                  "color": "green",
+                  "text": "no change",
+                  "index": 0
+                },
+                "onset delay": {
+                  "color": "#FADE2A",
+                  "index": 1
+                },
+                "gap": {
+                  "color": "#8F3BB8",
+                  "index": 2
+                },
+                "end delay": {
+                  "color": "#19B5B5",
+                  "index": 3
+                },
+                "false positive": {
+                  "color": "#FF9830",
+                  "index": 4
+                },
+                "false negative": {
+                  "color": "#D3369E",
+                  "index": 5
+                },
+                "missed episode": {
+                  "color": "#F5A3C7",
+                  "index": 6
+                },
+                "decision delay": {
+                  "color": "#A0703C",
+                  "index": 7
+                },
+                "up": {
+                  "color": "red",
+                  "text": "scale up",
+                  "index": 8
+                },
+                "down": {
+                  "color": "blue",
+                  "text": "scale down",
+                  "index": 9
+                }
+              }
+            },
+            {
+              "type": "regex",
+              "options": {
+                "pattern": ".+, .+",
+                "result": {
+                  "color": "#9E9E9E",
+                  "index": 10
+                }
+              }
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "exact decision"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "exact decision"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "approx decision"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "approx decision"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "mergeValues": false,
+        "showValue": "auto",
+        "rowHeight": 0.8,
+        "alignValue": "center",
+        "legend": {
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "id": 18,
+      "gridPos": {
+        "x": 0,
+        "y": 92,
+        "w": 24,
+        "h": 5
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "id": 19,
+      "type": "row",
+      "title": "Fidelity over all containers",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 97,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Scaling outcomes",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/fidelity_summary.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := ( $m := $[labels.app=\"autoscaler\" and $not($exists(labels.container))]; $exists($m) ? ( $s := $m{metric: value}; $s ) : [] ); $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "true_positive",
+              "text": "true positive (actions)",
+              "type": "number"
+            },
+            {
+              "selector": "false_positive",
+              "text": "false positive (actions)",
+              "type": "number"
+            },
+            {
+              "selector": "false_negative",
+              "text": "false negative (actions)",
+              "type": "number"
+            },
+            {
+              "selector": "true_negative",
+              "text": "true negative (container-evaluations)",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "true positive (actions)": 0,
+              "false positive (actions)": 1,
+              "false negative (actions)": 2,
+              "true negative (container-evaluations)": 3
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "none",
+        "graphMode": "none",
+        "orientation": "horizontal",
+        "justifyMode": "auto"
+      },
+      "id": 20,
+      "gridPos": {
+        "x": 0,
+        "y": 98,
+        "w": 6,
+        "h": 7
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Scaling actions by kind",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/fidelity_summary.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := ( $m := $[labels.app=\"autoscaler\" and $not($exists(labels.container))]; $exists($m) ? ( $s := $m{metric: value}; [\"up\", \"down\"].( $a := $; {\"action\": $a, \"matched\": $lookup($s, $a & \"_true_positive\"), \"early\": $lookup($s, $a & \"_early_actions\"), \"late\": $lookup($s, $a & \"_late_actions\"), \"false\": $lookup($s, $a & \"_false_positive\"), \"missed\": $lookup($s, $a & \"_false_negative\"), \"mean absolute onset delay\": $lookup($s, $a & \"_mean_absolute_onset_delay\")} ) ) : [] ); $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "action",
+              "text": "action",
+              "type": "string"
+            },
+            {
+              "selector": "matched",
+              "text": "matched",
+              "type": "number"
+            },
+            {
+              "selector": "early",
+              "text": "early",
+              "type": "number"
+            },
+            {
+              "selector": "late",
+              "text": "late",
+              "type": "number"
+            },
+            {
+              "selector": "false",
+              "text": "false",
+              "type": "number"
+            },
+            {
+              "selector": "missed",
+              "text": "missed",
+              "type": "number"
+            },
+            {
+              "selector": "mean absolute onset delay",
+              "text": "mean absolute onset delay",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "action": 0,
+              "matched": 1,
+              "early": 2,
+              "late": 3,
+              "false": 4,
+              "missed": 5,
+              "mean absolute onset delay": 6
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "minWidth": 60
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "id": 21,
+      "gridPos": {
+        "x": 6,
+        "y": 98,
+        "w": 7,
+        "h": 7
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Decisions, exact by approx (container-evaluations)",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/fidelity_summary.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := ( $m := $[labels.app=\"autoscaler\" and $not($exists(labels.container))]; $exists($m) ? ( $s := $m{metric: value}; [\"up\", \"down\", \"none\"].( $e := $; {\"exact\": $e, \"approx up\": $lookup($s, \"exact_\" & $e & \"_approx_up\"), \"approx down\": $lookup($s, \"exact_\" & $e & \"_approx_down\"), \"approx none\": $lookup($s, \"exact_\" & $e & \"_approx_none\")} ) ) : [] ); $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "exact",
+              "text": "exact",
+              "type": "string"
+            },
+            {
+              "selector": "approx up",
+              "text": "approx up",
+              "type": "number"
+            },
+            {
+              "selector": "approx down",
+              "text": "approx down",
+              "type": "number"
+            },
+            {
+              "selector": "approx none",
+              "text": "approx none",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "exact": 0,
+              "approx up": 1,
+              "approx down": 2,
+              "approx none": 3
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "minWidth": 60
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "id": 22,
+      "gridPos": {
+        "x": 13,
+        "y": 98,
+        "w": 6,
+        "h": 7
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Containers with the most action disagreements",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/fidelity_summary.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"disagreements\" and value > 0].{\"container\": labels.container, \"disagreements\": value}; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "container",
+              "text": "container",
+              "type": "string"
+            },
+            {
+              "selector": "disagreements",
+              "text": "disagreements",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "disagreements",
+                "desc": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "limit",
+          "options": {
+            "limitField": 20
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "minWidth": 60
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "container"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Show this container",
+                    "url": "/d/phase3-autoscaling/phase3-autoscaling?var-run=${run}&var-container=${__data.fields.container}&${__url_time_range}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true
+      },
+      "id": 23,
+      "gridPos": {
+        "x": 19,
+        "y": 98,
+        "w": 5,
+        "h": 7
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Fidelity events of ${container}",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/fidelity_event.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.container=\"${container}\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "labels.action",
+              "text": "action",
+              "type": "string"
+            },
+            {
+              "selector": "metric",
+              "text": "event",
+              "type": "string"
+            },
+            {
+              "selector": "value",
+              "text": "evaluations",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "time": 0,
+              "action": 1,
+              "event": 2,
+              "evaluations": 3
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "minWidth": 60
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "id": 24,
+      "gridPos": {
+        "x": 0,
+        "y": 105,
+        "w": 24,
+        "h": 6
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "id": 25,
+      "type": "row",
+      "title": "Rules in ${run}",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 111,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "Every rule: exact against approx, over entity-evaluations",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/fidelity_summary.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := ( $m := $[labels.app=\"rule\" and $not($exists(labels.entity))]; $m[metric=\"agreement\"].( $s := labels.signal; $merge([{\"signal\": $s}, $m[labels.signal=$s]{metric: value}]) ) ); $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "signal",
+              "text": "signal",
+              "type": "string"
+            },
+            {
+              "selector": "agreement",
+              "text": "agreement",
+              "type": "number"
+            },
+            {
+              "selector": "true_positive",
+              "text": "true positive",
+              "type": "number"
+            },
+            {
+              "selector": "false_positive",
+              "text": "false positive",
+              "type": "number"
+            },
+            {
+              "selector": "false_negative",
+              "text": "false negative",
+              "type": "number"
+            },
+            {
+              "selector": "entries",
+              "text": "exact episodes",
+              "type": "number"
+            },
+            {
+              "selector": "missed_entries",
+              "text": "missed episodes",
+              "type": "number"
+            },
+            {
+              "selector": "gaps",
+              "text": "gaps",
+              "type": "number"
+            },
+            {
+              "selector": "mean_onset_delay",
+              "text": "mean onset delay (evaluations)",
+              "type": "number"
+            },
+            {
+              "selector": "entities",
+              "text": "entities",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "signal": 0,
+              "agreement": 1,
+              "true positive": 2,
+              "false positive": 3,
+              "false negative": 4,
+              "exact episodes": 5,
+              "missed episodes": 6,
+              "gaps": 7,
+              "mean onset delay (evaluations)": 8,
+              "entities": 9
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "minWidth": 60
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "agreement"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true
+      },
+      "id": 26,
+      "gridPos": {
+        "x": 0,
+        "y": 112,
+        "w": 14,
+        "h": 8
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "table",
+      "title": "What each rule does",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/index.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[run_id=\"${run}\"].details.rules ~> $each(function($v, $k) { {\"signal\": $k, \"rule\": $v} }); $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "signal",
+              "text": "signal",
+              "type": "string"
+            },
+            {
+              "selector": "rule",
+              "text": "rule",
+              "type": "string"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "signal": 0,
+              "rule": 1
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "cellOptions": {
+              "type": "auto",
+              "wrapText": true
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "id": 27,
+      "gridPos": {
+        "x": 14,
+        "y": 112,
+        "w": 10,
+        "h": 8
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "id": 28,
+      "type": "row",
+      "title": "Rule ${signal}: entities",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 120,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "Entities with the most disagreements",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/fidelity_summary.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.app=\"rule\" and labels.signal=\"${signal}\" and metric=\"disagreements\" and value > 0].{\"entity\": labels.entity, \"disagreements\": value}; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "entity",
+              "text": "entity",
+              "type": "string"
+            },
+            {
+              "selector": "disagreements",
+              "text": "disagreements",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "disagreements",
+                "desc": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "limit",
+          "options": {
+            "limitField": 20
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "minWidth": 60
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "entity"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Show this entity",
+                    "url": "/d/phase3-autoscaling/phase3-autoscaling?var-run=${run}&var-signal=${signal}&var-entity=${__data.fields.entity}&${__url_time_range}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true
+      },
+      "id": 29,
+      "gridPos": {
+        "x": 0,
+        "y": 121,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "table",
+      "title": "Fidelity events",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/fidelity_event.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.app=\"rule\" and labels.signal=\"${signal}\"]; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "labels.entity",
+              "text": "entity",
+              "type": "string"
+            },
+            {
+              "selector": "metric",
+              "text": "event",
+              "type": "string"
+            },
+            {
+              "selector": "value",
+              "text": "evaluations",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "time": 0,
+              "entity": 1,
+              "event": 2,
+              "evaluations": 3
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "minWidth": 60
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "id": 30,
+      "gridPos": {
+        "x": 8,
+        "y": 121,
+        "w": 10,
+        "h": 8
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Entity-evaluations by outcome",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/fidelity_summary.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := ( $m := $[labels.app=\"rule\" and labels.signal=\"${signal}\" and $not($exists(labels.entity))]; $exists($m) ? ( $s := $m{metric: value}; $s ) : [] ); $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "true_positive",
+              "text": "true positive",
+              "type": "number"
+            },
+            {
+              "selector": "false_positive",
+              "text": "false positive",
+              "type": "number"
+            },
+            {
+              "selector": "false_negative",
+              "text": "false negative",
+              "type": "number"
+            },
+            {
+              "selector": "true_negative",
+              "text": "true negative",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "true positive": 0,
+              "false positive": 1,
+              "false negative": 2,
+              "true negative": 3
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "none",
+        "graphMode": "none",
+        "orientation": "horizontal",
+        "justifyMode": "auto"
+      },
+      "id": 31,
+      "gridPos": {
+        "x": 18,
+        "y": 121,
+        "w": 6,
+        "h": 8
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "state-timeline",
+      "title": "${signal} on ${entity_in_run}: state per evaluation, with what differs",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/app_state/${entity_in_run}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.app=\"rule\" and labels.signal=\"${signal}\" and labels.entity=\"${entity_in_run}\" and metric=\"state\" and labels.arm=\"exact\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "exact",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/app_state/${entity_in_run}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.app=\"rule\" and labels.signal=\"${signal}\" and labels.entity=\"${entity_in_run}\" and metric=\"state\" and labels.arm=\"approx\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "approx",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/phase3/runs/${run}/app_state/${entity_in_run}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[labels.app=\"rule\" and labels.signal=\"${signal}\" and labels.entity=\"${entity_in_run}\" and metric=\"annotation\"]; $exists($r) ? $r : ( $exists($$[0]) ? [{\"time\": $$[0].time}] : [] ) )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "annotation",
+              "type": "string"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 80,
+            "lineWidth": 0
+          },
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "transparent"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "none": {
+                  "color": "transparent",
+                  "text": " ",
+                  "index": 0
+                },
+                "onset delay": {
+                  "color": "#FADE2A",
+                  "index": 1
+                },
+                "gap": {
+                  "color": "#8F3BB8",
+                  "index": 2
+                },
+                "end delay": {
+                  "color": "#19B5B5",
+                  "index": 3
+                },
+                "false positive": {
+                  "color": "#FF9830",
+                  "index": 4
+                },
+                "false negative": {
+                  "color": "#D3369E",
+                  "index": 5
+                },
+                "missed episode": {
+                  "color": "#F5A3C7",
+                  "index": 6
+                },
+                "decision delay": {
+                  "color": "#A0703C",
+                  "index": 7
+                },
+                "active": {
+                  "color": "red",
+                  "text": "active",
+                  "index": 8
+                },
+                "idle": {
+                  "color": "transparent",
+                  "text": " ",
+                  "index": 9
+                }
+              }
+            },
+            {
+              "type": "regex",
+              "options": {
+                "pattern": ".+, .+",
+                "result": {
+                  "color": "#9E9E9E",
+                  "index": 10
+                }
+              }
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "exact"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "exact"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "approx"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "approx"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "annotation"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "annotation"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "mergeValues": false,
+        "showValue": "auto",
+        "rowHeight": 0.8,
+        "alignValue": "center",
+        "legend": {
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "repeat": "entity_in_run",
+      "repeatDirection": "v",
+      "id": 32,
+      "gridPos": {
+        "x": 0,
+        "y": 129,
+        "w": 24,
+        "h": 5
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "id": 33,
+      "type": "row",
+      "title": "Rule ${signal}: query error",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 134,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Relative error of approx, queries of rule ${signal} (${entity_in_run})",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "timeseries",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level/${entity_in_run}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"relative_error\" and labels.query in $lookup({\"ec2_scale_out\": [\"p95_cpu\"], \"ec2_scale_in\": [\"p95_cpu\"], \"vpa\": [\"p50_cpu_1h\", \"p95_cpu_1h\", \"max_memory_1h\"], \"grafana_labs\": [\"p95_cpu_1h\"], \"azure_advisor\": [\"p95_cpu_1h\", \"p99_memory_1h\"]}, \"${signal}\")].{\"time\": time, \"value\": value, \"series\": labels.query}; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "value",
+              "type": "number"
+            },
+            {
+              "selector": "series",
+              "text": "series",
+              "type": "string"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "unit": "percentunit",
+          "displayName": "${__field.labels.series}"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "repeat": "entity_in_run",
+      "repeatDirection": "v",
+      "id": 34,
+      "gridPos": {
+        "x": 0,
+        "y": 135,
+        "w": 24,
+        "h": 7
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Rank error of approx, queries of rule ${signal} (${entity_in_run})",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "timeseries",
+          "url": "http://localhost:8000/phase3/runs/${run}/low_level/${entity_in_run}.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[metric=\"rank_error\" and labels.query in $lookup({\"ec2_scale_out\": [\"p95_cpu\"], \"ec2_scale_in\": [\"p95_cpu\"], \"vpa\": [\"p50_cpu_1h\", \"p95_cpu_1h\", \"max_memory_1h\"], \"grafana_labs\": [\"p95_cpu_1h\"], \"azure_advisor\": [\"p95_cpu_1h\", \"p99_memory_1h\"]}, \"${signal}\")].{\"time\": time, \"value\": value, \"series\": labels.query}; $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "time",
+              "text": "time",
+              "type": "timestamp_epoch"
+            },
+            {
+              "selector": "value",
+              "text": "value",
+              "type": "number"
+            },
+            {
+              "selector": "series",
+              "text": "series",
+              "type": "string"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "unit": "percentunit",
+          "displayName": "${__field.labels.series}"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "repeat": "entity_in_run",
+      "repeatDirection": "v",
+      "id": 35,
+      "gridPos": {
+        "x": 0,
+        "y": 142,
+        "w": 24,
+        "h": 7
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    }
+  ]
+}

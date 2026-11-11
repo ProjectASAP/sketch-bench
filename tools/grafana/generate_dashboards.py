@@ -13,6 +13,7 @@ import video_rules
 
 DS = {"type": "yesoreyeram-infinity-datasource", "uid": "approx-rows"}
 DATA = "http://localhost:8000/runs/"
+PHASE3_DATA = "http://localhost:8000/phase3/runs/"
 RUN = DATA + "${run}/"
 INDEX = DATA + "index.json"
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboards")
@@ -925,7 +926,7 @@ def rule_error_dashboard(uid, rule_set, metrics, file_var=None, subpopulation=No
 ERRORS = (("relative_error", "Relative error"), ("rank_error", "Rank error"))
 
 
-def overview_dashboard(uid, use_case):
+def overview_dashboard(uid, use_case, sketch_bounds=True):
     rows = (f'$[use_case="{use_case}" and $exists(details.fidelity)].( $e := $; '
             '$append($keys($e.details.plans), $keys($e.details.unsupported)).( $q := $; '
             '$lookup($e.details.signals, $q).( $s := $; $f := $lookup($e.details.fidelity, $s); '
@@ -977,6 +978,8 @@ def overview_dashboard(uid, use_case):
                              "&var-signal=${__data.fields.signal}"
                              "&from=${__data.fields.start}&to=${__data.fields.end}"}]}]}]},
              "options": {"showHeader": True}}, 0, 0, 24, 30)
+    if not sketch_bounds:
+        return dashboard("overview", "Approximate query fidelity overview", b, [])
     bounds = (f'$[use_case="{use_case}" and $exists(details.sketch_bounds)].( $e := $; $e.details.sketch_bounds.( '
               '$merge([$, {"run_id": $e.run_id, '
               '"max relative error": $lookup($e.details.max_relative_error, query)}]) ) )')
@@ -1005,6 +1008,68 @@ def overview_dashboard(uid, use_case):
     return dashboard("overview", "Approximate query fidelity overview", b, [])
 
 
+SYSTEM_TEXT = ("run_id", "system", "write mode", "unsupported", "failed evaluations", "samples dropped")
+SYSTEM_NUMBERS = (("insert samples per second", "short"), ("write seconds", "s"), ("visibility seconds", "s"),
+                  ("peak resident bytes", "bytes"),
+                  ("resident bytes at end", "bytes"), ("disk bytes", "bytes"), ("cpu seconds", "s"),
+                  ("mean query ms", "ms"), ("median query ms", "ms"), ("p99 query ms", "ms"))
+TRUTH_NUMBERS = ("max relative error", "answers differing", "answers")
+
+
+def systems_dashboard(uid, use_case):
+    each = (f'( $runs := $[use_case="{use_case}" and $exists(details.systems)]; '
+            '$reduce($runs, function($acc, $e) { $append($acc, $each($e.details.systems, function($v, $k) { '
+            '$merge([$v, {"run_id": $e.run_id, "system": $k, '
+            '"write mode": $lookup($e.details, "write mode"), '
+            '"unsupported": ( $u := $keys($v.unsupported); $exists($u) ? $join($u, ", ") : "" ), '
+            '"failed evaluations": ( $f := $lookup($v, "failed evaluations"); $count($keys($f)) > 0 ? $string($f) : "" ), '
+            '"samples dropped": ( $d := $lookup($v, "samples dropped"); $count($keys($d)) > 0 ? $string($d) : "" )'
+            '}]) })) }, []) )')
+    b = Board()
+    b.row("VictoriaMetrics vs ASAPQuery-backend", 0)
+    b.panel({"type": "table",
+             "title": "VictoriaMetrics, which keeps every raw sample, vs ASAPQuery-backend planned to keep none: "
+                      "writes, memory, disk and query latency",
+             "description": "VictoriaMetrics answers are the exact arm, ASAPQuery-backend answers the approx arm. "
+                            "One sender writes both in time order; at each evaluation time it makes the samples "
+                            "written so far visible (a watermark for ASAPQuery-backend, a flush for "
+                            "VictoriaMetrics) and asks the queries due then, one instant query each. Write seconds "
+                            "include the visibility calls. Peak resident bytes and CPU seconds cover the whole "
+                            "process; disk bytes is the data directory at the end, and ASAPQuery-backend keeps "
+                            "everything in memory.",
+             "targets": [iq("A", INDEX, each, [col(k, k, "string") for k in SYSTEM_TEXT]
+                            + [col(k, k, "number") for k, _ in SYSTEM_NUMBERS])],
+             "transformations": order(*SYSTEM_TEXT[:3], *(k for k, _ in SYSTEM_NUMBERS), *SYSTEM_TEXT[3:])
+             + [{"id": "sortBy", "options": {"sort": [{"field": "run_id"}]}}],
+             "fieldConfig": {"defaults": {"custom": {"minWidth": 95, "cellOptions": {"type": "auto", "wrapText": True}}},
+                             "overrides": [{"matcher": {"id": "byName", "options": k},
+                                            "properties": [{"id": "unit", "value": unit}]}
+                                           for k, unit in SYSTEM_NUMBERS]
+                             + [{"matcher": {"id": "byRegexp", "options": "^(system|write mode)$"},
+                                 "properties": [{"id": "custom.width", "value": 150}]}]
+                             + [{"matcher": {"id": "byName", "options": "run_id"},
+                                 "properties": [{"id": "custom.width", "value": 230}, {"id": "links", "value": [{
+                                     "title": "Open this run",
+                                     "url": f"/d/{uid}/{uid}?var-run=${{__data.fields.run_id}}"}]}]}]},
+             "options": {"showHeader": True}}, 0, 1, 24, 14)
+    truth = (f'( $runs := $[use_case="{use_case}" and $exists(details.victoriametrics_vs_truth)]; '
+             '$reduce($runs, function($acc, $e) { $append($acc, $each($e.details.victoriametrics_vs_truth, '
+             'function($v, $k) { $merge([$v, {"run_id": $e.run_id, "query": $k}]) })) }, []) )')
+    b.panel({"type": "table",
+             "title": "VictoriaMetrics answers checked against the in-process exact plan over the same samples",
+             "description": "A difference here comes from how VictoriaMetrics evaluates the query, not from "
+                            "approximation.",
+             "targets": [iq("A", INDEX, truth, [col("run_id", "run_id", "string"), col("query", "query", "string")]
+                            + [col(k, k, "number") for k in TRUTH_NUMBERS])],
+             "transformations": order("run_id", "query", *TRUTH_NUMBERS)
+             + [{"id": "sortBy", "options": {"sort": [{"field": "run_id"}]}}],
+             "fieldConfig": {"defaults": {"custom": {"minWidth": 60}}, "overrides": [
+                 {"matcher": {"id": "byName", "options": "max relative error"},
+                  "properties": [{"id": "unit", "value": "percentunit"}, {"id": "decimals", "value": 2}]}]},
+             "options": {"showHeader": True}}, 0, 15, 24, 8)
+    return dashboard(uid, "VictoriaMetrics vs ASAPQuery-backend", b, [])
+
+
 USE_CASES = (
     ("ddos-detection", "1 · DDoS detection", (
         lambda uid: overview_dashboard(uid, "ddos_syn_flood"),
@@ -1022,12 +1087,40 @@ USE_CASES = (
         lambda uid: rules_dashboard(uid, ["video_experience"]),
         lambda uid: rule_error_dashboard(uid, video_rules.RULES, ERRORS, "city", video_rules.DIMENSIONS))),
     ("canary-release", "4 · Canary release", (
-        lambda uid: overview_dashboard(uid, "canary_release"), rollout_dashboard, two_stages_dashboard)),
+        lambda uid: overview_dashboard(uid, "canary_release"),
+        rollout_dashboard, two_stages_dashboard)),
     ("rate-limiting", "5 · Top clients and rate limiting", (
         lambda uid: overview_dashboard(uid, "top_clients"),
         lambda uid: cost_dashboard(uid, "uc5_top_clients.json"), lambda uid: stage1_dashboard(uid, "top_clients"),
         topk_dashboard,
         lambda uid: rules_dashboard(uid, ["top_clients"]))),
+)
+
+
+
+def phase3_parts(use_case):
+    return (lambda uid: systems_dashboard(uid, use_case),
+            lambda uid: overview_dashboard(uid, use_case, sketch_bounds=False))
+
+
+PHASE3_USE_CASES = (
+    ("phase3-ddos-detection", "Phase 3 · 1 · DDoS detection", phase3_parts("ddos_syn_flood") + (
+        lambda uid: cost_dashboard(uid, "uc1_syn_flood.json"),
+        alert_dashboard, lambda uid: rules_dashboard(uid, ["ddos_syn_flood"]),
+        lambda uid: rule_error_dashboard(uid, ddos_rules.RULES, ERRORS[:1]))),
+    ("phase3-autoscaling", "Phase 3 · 2 · Autoscaling", phase3_parts("k8s_autoscaling") + (
+        lambda uid: cost_dashboard(uid, "uc2_autoscaling.json"),
+        decision_dashboard, lambda uid: rules_dashboard(uid, ["k8s_autoscaling"]),
+        lambda uid: rule_error_dashboard(uid, scaling_rules.RULES, ERRORS, "entity_in_run"))),
+    ("phase3-video-experience", "Phase 3 · 3 · Video experience", phase3_parts("video_experience") + (
+        lambda uid: cost_dashboard(uid, "uc3_video.json"),
+        lambda uid: rules_dashboard(uid, ["video_experience"]),
+        lambda uid: rule_error_dashboard(uid, video_rules.RULES, ERRORS, "city", video_rules.DIMENSIONS))),
+    ("phase3-canary-release", "Phase 3 · 4 · Canary release", phase3_parts("canary_release") + (
+        rollout_dashboard,)),
+    ("phase3-rate-limiting", "Phase 3 · 5 · Top clients and rate limiting", phase3_parts("top_clients") + (
+        lambda uid: cost_dashboard(uid, "uc5_top_clients.json"),
+        topk_dashboard, lambda uid: rules_dashboard(uid, ["top_clients"]))),
 )
 
 
@@ -1071,9 +1164,12 @@ def main():
     for name in os.listdir(OUT):
         if name.endswith(".json"):
             os.remove(os.path.join(OUT, name))
-    for uid, title, parts in USE_CASES:
+    boards = [(uid, use_case_dashboard(uid, title, parts)) for uid, title, parts in USE_CASES]
+    boards += [(uid, json.loads(json.dumps(use_case_dashboard(uid, title, parts)).replace(DATA, PHASE3_DATA)))
+               for uid, title, parts in PHASE3_USE_CASES]
+    for uid, board in boards:
         with open(os.path.join(OUT, uid + ".json"), "w") as f:
-            json.dump(use_case_dashboard(uid, title, parts), f, indent=2)
+            json.dump(board, f, indent=2)
             f.write("\n")
 
 
