@@ -1014,13 +1014,14 @@ TRUTH_NUMBERS = ("max relative error", "answers differing", "answers")
 
 
 def systems_dashboard(uid, use_case):
-    each = (f'$[use_case="{use_case}" and $exists(details.systems)].( $e := $; '
-            '$e.details.systems ~> $each(function($v, $k) { $merge([$v, {"run_id": $e.run_id, "system": $k, '
+    each = (f'( $runs := $[use_case="{use_case}" and $exists(details.systems)]; '
+            '$reduce($runs, function($acc, $e) { $append($acc, $each($e.details.systems, function($v, $k) { '
+            '$merge([$v, {"run_id": $e.run_id, "system": $k, '
             '"write mode": $lookup($e.details, "write mode"), '
             '"unsupported": ( $u := $keys($v.unsupported); $exists($u) ? $join($u, ", ") : "" ), '
             '"failed evaluations": ( $f := $lookup($v, "failed evaluations"); $count($keys($f)) > 0 ? $string($f) : "" ), '
             '"samples dropped": ( $d := $lookup($v, "samples dropped"); $count($keys($d)) > 0 ? $string($d) : "" )'
-            '}]) }) )')
+            '}]) })) }, []) )')
     b = Board()
     b.row("VictoriaMetrics vs ASAPQuery-backend", 0)
     b.panel({"type": "table",
@@ -1037,18 +1038,20 @@ def systems_dashboard(uid, use_case):
                             + [col(k, k, "number") for k, _ in SYSTEM_NUMBERS])],
              "transformations": order(*SYSTEM_TEXT[:3], *(k for k, _ in SYSTEM_NUMBERS), *SYSTEM_TEXT[3:])
              + [{"id": "sortBy", "options": {"sort": [{"field": "run_id"}]}}],
-             "fieldConfig": {"defaults": {"custom": {"minWidth": 60, "cellOptions": {"type": "auto", "wrapText": True}}},
+             "fieldConfig": {"defaults": {"custom": {"minWidth": 95, "cellOptions": {"type": "auto", "wrapText": True}}},
                              "overrides": [{"matcher": {"id": "byName", "options": k},
                                             "properties": [{"id": "unit", "value": unit}]}
                                            for k, unit in SYSTEM_NUMBERS]
+                             + [{"matcher": {"id": "byRegexp", "options": "^(system|write mode)$"},
+                                 "properties": [{"id": "custom.width", "value": 150}]}]
                              + [{"matcher": {"id": "byName", "options": "run_id"},
                                  "properties": [{"id": "custom.width", "value": 230}, {"id": "links", "value": [{
                                      "title": "Open this run",
                                      "url": f"/d/{uid}/{uid}?var-run=${{__data.fields.run_id}}"}]}]}]},
-             "options": {"showHeader": True}}, 0, 1, 24, 10)
-    truth = (f'$[use_case="{use_case}" and $exists(details.victoriametrics_vs_truth)].( $e := $; '
-             '$e.details.victoriametrics_vs_truth ~> $each(function($v, $k) { $merge([$v, '
-             '{"run_id": $e.run_id, "query": $k}]) }) )')
+             "options": {"showHeader": True}}, 0, 1, 24, 14)
+    truth = (f'( $runs := $[use_case="{use_case}" and $exists(details.victoriametrics_vs_truth)]; '
+             '$reduce($runs, function($acc, $e) { $append($acc, $each($e.details.victoriametrics_vs_truth, '
+             'function($v, $k) { $merge([$v, {"run_id": $e.run_id, "query": $k}]) })) }, []) )')
     b.panel({"type": "table",
              "title": "VictoriaMetrics answers checked against the in-process exact plan over the same samples",
              "description": "A difference here comes from how VictoriaMetrics evaluates the query, not from "
@@ -1060,7 +1063,7 @@ def systems_dashboard(uid, use_case):
              "fieldConfig": {"defaults": {"custom": {"minWidth": 60}}, "overrides": [
                  {"matcher": {"id": "byName", "options": "max relative error"},
                   "properties": [{"id": "unit", "value": "percentunit"}, {"id": "decimals", "value": 2}]}]},
-             "options": {"showHeader": True}}, 0, 11, 24, 7)
+             "options": {"showHeader": True}}, 0, 15, 24, 8)
     return dashboard(uid, "VictoriaMetrics vs ASAPQuery-backend", b, [])
 
 

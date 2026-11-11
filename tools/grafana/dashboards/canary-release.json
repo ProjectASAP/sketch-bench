@@ -669,7 +669,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[use_case=\"canary_release\" and $exists(details.systems)].( $e := $; $e.details.systems ~> $each(function($v, $k) { $merge([$v, {\"run_id\": $e.run_id, \"system\": $k, \"write mode\": $lookup($e.details, \"write mode\"), \"unsupported\": ( $u := $keys($v.unsupported); $exists($u) ? $join($u, \", \") : \"\" ), \"failed evaluations\": ( $f := $lookup($v, \"failed evaluations\"); $count($keys($f)) > 0 ? $string($f) : \"\" ), \"samples dropped\": ( $d := $lookup($v, \"samples dropped\"); $count($keys($d)) > 0 ? $string($d) : \"\" )}]) }) ); $exists($r) ? $r : [] )",
+          "root_selector": "( $r := ( $runs := $[use_case=\"canary_release\" and $exists(details.systems)]; $reduce($runs, function($acc, $e) { $append($acc, $each($e.details.systems, function($v, $k) { $merge([$v, {\"run_id\": $e.run_id, \"system\": $k, \"write mode\": $lookup($e.details, \"write mode\"), \"unsupported\": ( $u := $keys($v.unsupported); $exists($u) ? $join($u, \", \") : \"\" ), \"failed evaluations\": ( $f := $lookup($v, \"failed evaluations\"); $count($keys($f)) > 0 ? $string($f) : \"\" ), \"samples dropped\": ( $d := $lookup($v, \"samples dropped\"); $count($keys($d)) > 0 ? $string($d) : \"\" )}]) })) }, []) ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "run_id",
@@ -794,7 +794,7 @@
       "fieldConfig": {
         "defaults": {
           "custom": {
-            "minWidth": 60,
+            "minWidth": 95,
             "cellOptions": {
               "type": "auto",
               "wrapText": true
@@ -924,6 +924,18 @@
           },
           {
             "matcher": {
+              "id": "byRegexp",
+              "options": "^(system|write mode)$"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 150
+              }
+            ]
+          },
+          {
+            "matcher": {
               "id": "byName",
               "options": "run_id"
             },
@@ -953,7 +965,7 @@
         "x": 0,
         "y": 46,
         "w": 24,
-        "h": 10
+        "h": 14
       },
       "datasource": {
         "type": "yesoreyeram-infinity-datasource",
@@ -980,7 +992,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[use_case=\"canary_release\" and $exists(details.victoriametrics_vs_truth)].( $e := $; $e.details.victoriametrics_vs_truth ~> $each(function($v, $k) { $merge([$v, {\"run_id\": $e.run_id, \"query\": $k}]) }) ); $exists($r) ? $r : [] )",
+          "root_selector": "( $r := ( $runs := $[use_case=\"canary_release\" and $exists(details.victoriametrics_vs_truth)]; $reduce($runs, function($acc, $e) { $append($acc, $each($e.details.victoriametrics_vs_truth, function($v, $k) { $merge([$v, {\"run_id\": $e.run_id, \"query\": $k}]) })) }, []) ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "run_id",
@@ -1067,9 +1079,9 @@
       "id": 5,
       "gridPos": {
         "x": 0,
-        "y": 56,
+        "y": 60,
         "w": 24,
-        "h": 7
+        "h": 8
       },
       "datasource": {
         "type": "yesoreyeram-infinity-datasource",
@@ -1083,7 +1095,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 63,
+        "y": 68,
         "w": 24,
         "h": 1
       },
@@ -1212,7 +1224,7 @@
       "id": 7,
       "gridPos": {
         "x": 0,
-        "y": 64,
+        "y": 69,
         "w": 12,
         "h": 7
       },
@@ -1303,7 +1315,7 @@
       "id": 8,
       "gridPos": {
         "x": 12,
-        "y": 64,
+        "y": 69,
         "w": 12,
         "h": 7
       },
@@ -1319,7 +1331,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 71,
+        "y": 76,
         "w": 24,
         "h": 1
       },
@@ -1560,7 +1572,7 @@
       "id": 10,
       "gridPos": {
         "x": 0,
-        "y": 72,
+        "y": 77,
         "w": 16,
         "h": 8
       },
@@ -1702,7 +1714,7 @@
       "id": 11,
       "gridPos": {
         "x": 16,
-        "y": 72,
+        "y": 77,
         "w": 8,
         "h": 8
       },
@@ -1838,7 +1850,7 @@
       "id": 12,
       "gridPos": {
         "x": 0,
-        "y": 80,
+        "y": 85,
         "w": 12,
         "h": 6
       },
@@ -2291,7 +2303,7 @@
       "id": 13,
       "gridPos": {
         "x": 12,
-        "y": 80,
+        "y": 85,
         "w": 12,
         "h": 6
       },
@@ -2744,7 +2756,7 @@
       "id": 14,
       "gridPos": {
         "x": 0,
-        "y": 86,
+        "y": 91,
         "w": 24,
         "h": 6
       },
@@ -2760,7 +2772,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 92,
+        "y": 97,
         "w": 24,
         "h": 1
       },
@@ -2776,7 +2788,7 @@
       "id": 16,
       "gridPos": {
         "x": 0,
-        "y": 93,
+        "y": 98,
         "w": 24,
         "h": 6
       },
@@ -3000,7 +3012,7 @@
       "id": 17,
       "gridPos": {
         "x": 0,
-        "y": 99,
+        "y": 104,
         "w": 24,
         "h": 7
       },
@@ -3319,7 +3331,7 @@
       "id": 18,
       "gridPos": {
         "x": 0,
-        "y": 106,
+        "y": 111,
         "w": 24,
         "h": 9
       },
@@ -3335,7 +3347,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 115,
+        "y": 120,
         "w": 24,
         "h": 1
       },
@@ -4047,7 +4059,7 @@
       "id": 20,
       "gridPos": {
         "x": 0,
-        "y": 116,
+        "y": 121,
         "w": 24,
         "h": 12
       },
@@ -4063,7 +4075,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 128,
+        "y": 133,
         "w": 24,
         "h": 1
       },
@@ -4154,7 +4166,7 @@
       "id": 22,
       "gridPos": {
         "x": 0,
-        "y": 129,
+        "y": 134,
         "w": 6,
         "h": 8
       },
@@ -4277,7 +4289,7 @@
       "id": 23,
       "gridPos": {
         "x": 6,
-        "y": 129,
+        "y": 134,
         "w": 6,
         "h": 8
       },
@@ -4400,7 +4412,7 @@
       "id": 24,
       "gridPos": {
         "x": 12,
-        "y": 129,
+        "y": 134,
         "w": 7,
         "h": 8
       },
@@ -4476,7 +4488,7 @@
       "id": 25,
       "gridPos": {
         "x": 19,
-        "y": 129,
+        "y": 134,
         "w": 5,
         "h": 8
       },
@@ -4492,7 +4504,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 137,
+        "y": 142,
         "w": 24,
         "h": 1
       },
@@ -4762,7 +4774,7 @@
       "id": 27,
       "gridPos": {
         "x": 0,
-        "y": 138,
+        "y": 143,
         "w": 24,
         "h": 14
       },
@@ -4778,7 +4790,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 152,
+        "y": 157,
         "w": 24,
         "h": 1
       },
@@ -5036,7 +5048,7 @@
       "id": 29,
       "gridPos": {
         "x": 0,
-        "y": 153,
+        "y": 158,
         "w": 12,
         "h": 12
       },

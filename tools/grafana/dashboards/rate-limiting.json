@@ -806,7 +806,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[use_case=\"top_clients\" and $exists(details.systems)].( $e := $; $e.details.systems ~> $each(function($v, $k) { $merge([$v, {\"run_id\": $e.run_id, \"system\": $k, \"write mode\": $lookup($e.details, \"write mode\"), \"unsupported\": ( $u := $keys($v.unsupported); $exists($u) ? $join($u, \", \") : \"\" ), \"failed evaluations\": ( $f := $lookup($v, \"failed evaluations\"); $count($keys($f)) > 0 ? $string($f) : \"\" ), \"samples dropped\": ( $d := $lookup($v, \"samples dropped\"); $count($keys($d)) > 0 ? $string($d) : \"\" )}]) }) ); $exists($r) ? $r : [] )",
+          "root_selector": "( $r := ( $runs := $[use_case=\"top_clients\" and $exists(details.systems)]; $reduce($runs, function($acc, $e) { $append($acc, $each($e.details.systems, function($v, $k) { $merge([$v, {\"run_id\": $e.run_id, \"system\": $k, \"write mode\": $lookup($e.details, \"write mode\"), \"unsupported\": ( $u := $keys($v.unsupported); $exists($u) ? $join($u, \", \") : \"\" ), \"failed evaluations\": ( $f := $lookup($v, \"failed evaluations\"); $count($keys($f)) > 0 ? $string($f) : \"\" ), \"samples dropped\": ( $d := $lookup($v, \"samples dropped\"); $count($keys($d)) > 0 ? $string($d) : \"\" )}]) })) }, []) ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "run_id",
@@ -931,7 +931,7 @@
       "fieldConfig": {
         "defaults": {
           "custom": {
-            "minWidth": 60,
+            "minWidth": 95,
             "cellOptions": {
               "type": "auto",
               "wrapText": true
@@ -1061,6 +1061,18 @@
           },
           {
             "matcher": {
+              "id": "byRegexp",
+              "options": "^(system|write mode)$"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 150
+              }
+            ]
+          },
+          {
+            "matcher": {
               "id": "byName",
               "options": "run_id"
             },
@@ -1090,7 +1102,7 @@
         "x": 0,
         "y": 46,
         "w": 24,
-        "h": 10
+        "h": 14
       },
       "datasource": {
         "type": "yesoreyeram-infinity-datasource",
@@ -1117,7 +1129,7 @@
             "method": "GET",
             "data": ""
           },
-          "root_selector": "( $r := $[use_case=\"top_clients\" and $exists(details.victoriametrics_vs_truth)].( $e := $; $e.details.victoriametrics_vs_truth ~> $each(function($v, $k) { $merge([$v, {\"run_id\": $e.run_id, \"query\": $k}]) }) ); $exists($r) ? $r : [] )",
+          "root_selector": "( $r := ( $runs := $[use_case=\"top_clients\" and $exists(details.victoriametrics_vs_truth)]; $reduce($runs, function($acc, $e) { $append($acc, $each($e.details.victoriametrics_vs_truth, function($v, $k) { $merge([$v, {\"run_id\": $e.run_id, \"query\": $k}]) })) }, []) ); $exists($r) ? $r : [] )",
           "columns": [
             {
               "selector": "run_id",
@@ -1204,9 +1216,9 @@
       "id": 5,
       "gridPos": {
         "x": 0,
-        "y": 56,
+        "y": 60,
         "w": 24,
-        "h": 7
+        "h": 8
       },
       "datasource": {
         "type": "yesoreyeram-infinity-datasource",
@@ -1220,7 +1232,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 63,
+        "y": 68,
         "w": 24,
         "h": 1
       },
@@ -1466,7 +1478,7 @@
       "id": 7,
       "gridPos": {
         "x": 0,
-        "y": 64,
+        "y": 69,
         "w": 12,
         "h": 8
       },
@@ -1715,7 +1727,7 @@
       "id": 8,
       "gridPos": {
         "x": 12,
-        "y": 64,
+        "y": 69,
         "w": 12,
         "h": 8
       },
@@ -1731,7 +1743,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 72,
+        "y": 77,
         "w": 24,
         "h": 1
       },
@@ -2001,7 +2013,7 @@
       "id": 10,
       "gridPos": {
         "x": 0,
-        "y": 73,
+        "y": 78,
         "w": 24,
         "h": 14
       },
@@ -2017,7 +2029,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 87,
+        "y": 92,
         "w": 24,
         "h": 1
       },
@@ -2146,7 +2158,7 @@
       "id": 12,
       "gridPos": {
         "x": 0,
-        "y": 88,
+        "y": 93,
         "w": 12,
         "h": 7
       },
@@ -2237,7 +2249,7 @@
       "id": 13,
       "gridPos": {
         "x": 12,
-        "y": 88,
+        "y": 93,
         "w": 12,
         "h": 7
       },
@@ -2253,7 +2265,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 95,
+        "y": 100,
         "w": 24,
         "h": 1
       },
@@ -2371,7 +2383,7 @@
       "id": 15,
       "gridPos": {
         "x": 0,
-        "y": 96,
+        "y": 101,
         "w": 14,
         "h": 9
       },
@@ -2443,7 +2455,7 @@
       "id": 16,
       "gridPos": {
         "x": 14,
-        "y": 96,
+        "y": 101,
         "w": 10,
         "h": 9
       },
@@ -2459,7 +2471,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 105,
+        "y": 110,
         "w": 24,
         "h": 1
       },
@@ -2615,7 +2627,7 @@
       "id": 18,
       "gridPos": {
         "x": 0,
-        "y": 106,
+        "y": 111,
         "w": 18,
         "h": 7
       },
@@ -2709,7 +2721,7 @@
       "id": 19,
       "gridPos": {
         "x": 18,
-        "y": 106,
+        "y": 111,
         "w": 6,
         "h": 7
       },
@@ -2938,7 +2950,7 @@
       "id": 20,
       "gridPos": {
         "x": 0,
-        "y": 113,
+        "y": 118,
         "w": 24,
         "h": 5
       },
@@ -2954,7 +2966,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 118,
+        "y": 123,
         "w": 24,
         "h": 1
       },
@@ -3045,7 +3057,7 @@
       "id": 22,
       "gridPos": {
         "x": 0,
-        "y": 119,
+        "y": 124,
         "w": 6,
         "h": 8
       },
@@ -3162,7 +3174,7 @@
       "id": 23,
       "gridPos": {
         "x": 6,
-        "y": 119,
+        "y": 124,
         "w": 6,
         "h": 8
       },
@@ -3262,7 +3274,7 @@
       "id": 24,
       "gridPos": {
         "x": 12,
-        "y": 119,
+        "y": 124,
         "w": 6,
         "h": 8
       },
@@ -3344,7 +3356,7 @@
       "id": 25,
       "gridPos": {
         "x": 18,
-        "y": 119,
+        "y": 124,
         "w": 6,
         "h": 8
       },
@@ -3360,7 +3372,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 127,
+        "y": 132,
         "w": 24,
         "h": 1
       },
@@ -3492,7 +3504,7 @@
       "id": 27,
       "gridPos": {
         "x": 0,
-        "y": 128,
+        "y": 133,
         "w": 14,
         "h": 8
       },
@@ -3565,7 +3577,7 @@
       "id": 28,
       "gridPos": {
         "x": 14,
-        "y": 128,
+        "y": 133,
         "w": 10,
         "h": 8
       },
@@ -3581,7 +3593,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 136,
+        "y": 141,
         "w": 24,
         "h": 1
       },
@@ -3672,7 +3684,7 @@
       "id": 30,
       "gridPos": {
         "x": 0,
-        "y": 137,
+        "y": 142,
         "w": 8,
         "h": 8
       },
@@ -3754,7 +3766,7 @@
       "id": 31,
       "gridPos": {
         "x": 8,
-        "y": 137,
+        "y": 142,
         "w": 10,
         "h": 8
       },
@@ -3848,7 +3860,7 @@
       "id": 32,
       "gridPos": {
         "x": 18,
-        "y": 137,
+        "y": 142,
         "w": 6,
         "h": 8
       },
@@ -4077,7 +4089,7 @@
       "id": 33,
       "gridPos": {
         "x": 0,
-        "y": 145,
+        "y": 150,
         "w": 24,
         "h": 5
       },
