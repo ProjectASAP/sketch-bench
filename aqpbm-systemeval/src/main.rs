@@ -1,5 +1,6 @@
 mod query;
 mod remote_write;
+mod system;
 mod write;
 
 use std::collections::BTreeMap;
@@ -10,26 +11,12 @@ use anyhow::{Context, Result};
 use aqpbm_usecase::data::generate;
 use aqpbm_usecase::score::read_answers;
 use aqpbm_usecase::spec::Spec;
-use clap::{Parser, ValueEnum};
+use clap::builder::PossibleValuesParser;
+use clap::Parser;
 use serde_json::json;
 
 use crate::query::{ask, Collected};
 use crate::write::{Options, Writer};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum System {
-    AsapqueryBackend,
-    Victoriametrics,
-}
-
-impl System {
-    fn name(self) -> &'static str {
-        match self {
-            System::AsapqueryBackend => "ASAPQuery-backend",
-            System::Victoriametrics => "VictoriaMetrics",
-        }
-    }
-}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -41,8 +28,8 @@ struct Args {
     #[arg(long)]
     spec: PathBuf,
 
-    #[arg(long, value_enum)]
-    system: System,
+    #[arg(long, value_parser = PossibleValuesParser::new(system::ids()))]
+    system: String,
 
     #[arg(long, help = "Base URL of the system, e.g. http://127.0.0.1:8428")]
     url: String,
@@ -90,6 +77,7 @@ struct Args {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    let system = system::by_id(&args.system).expect("clap accepts only listed systems");
     let spec = Spec::read(&args.spec)?;
     let generated = Instant::now();
     let series = generate(&spec, &args.data_root)?;
@@ -117,7 +105,7 @@ fn main() -> Result<()> {
         flush_ms: args.flush_ms,
     };
     let base = args.url.trim_end_matches('/');
-    let mut writer = Writer::new(&series, args.system, base, spec.start_ms, &options);
+    let mut writer = Writer::new(&series, system, base, spec.start_ms, &options);
     let agent = ureq::AgentBuilder::new().build();
     let mut collected: Vec<Collected> = asked.iter().map(|_| Collected::default()).collect();
     let started = Instant::now();
@@ -135,7 +123,7 @@ fn main() -> Result<()> {
     let write = writer.summary()?;
     eprintln!(
         "{}: {} samples at {:.0} samples/s, {} evaluation times, {:.1} s",
-        args.system.name(),
+        system.name(),
         writer.samples(),
         write["samples_per_second"].as_f64().unwrap_or_default(),
         due.len(),
@@ -154,7 +142,7 @@ fn main() -> Result<()> {
     }
     let document = json!({
         "use_case": spec.use_case,
-        "system": args.system.name(),
+        "system": system.name(),
         "samples": writer.samples(),
         "run_seconds": run_seconds,
         "write": write,

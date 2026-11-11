@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::Result;
 use aqpbm_usecase::data::Series;
 use serde_json::{json, Value};
 
 use crate::remote_write::{encode, Label, Sample, TimeSeries, WriteRequest};
-use crate::System;
+use crate::system::{Sent, System};
 
 pub struct Options {
     pub batch_samples: usize,
@@ -15,7 +15,7 @@ pub struct Options {
 }
 
 pub struct Writer<'a> {
-    system: System,
+    system: &'a dyn System,
     base: String,
     agent: ureq::Agent,
     options: &'a Options,
@@ -47,7 +47,7 @@ fn labels_of(series: &Series) -> Vec<Label> {
 impl<'a> Writer<'a> {
     pub fn new(
         series: &[Series],
-        system: System,
+        system: &'a dyn System,
         base: &str,
         start_ms: i64,
         options: &'a Options,
@@ -133,28 +133,10 @@ impl<'a> Writer<'a> {
     }
 
     fn send(&mut self, body: &[u8]) -> Result<()> {
-        let url = format!("{}/api/v1/write", self.base);
         let started = Instant::now();
-        loop {
-            let response = self
-                .agent
-                .post(&url)
-                .set("Content-Encoding", "snappy")
-                .set("Content-Type", "application/x-protobuf")
-                .set("X-Prometheus-Remote-Write-Version", "0.1.0")
-                .send_bytes(body);
-            match response {
-                Ok(_) => break,
-                Err(ureq::Error::Status(429 | 503, _)) => {
-                    self.retries += 1;
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-                Err(ureq::Error::Status(code, response)) => {
-                    let text = response.into_string().unwrap_or_default();
-                    bail!("{url} answered {code}: {text}");
-                }
-                Err(error) => return Err(error).with_context(|| format!("writing to {url}")),
-            }
+        while let Sent::Busy = self.system.write(&self.agent, &self.base, body)? {
+            self.retries += 1;
+            std::thread::sleep(Duration::from_millis(10));
         }
         self.send_seconds += started.elapsed().as_secs_f64();
         Ok(())
@@ -176,40 +158,15 @@ impl<'a> Writer<'a> {
     pub fn make_visible(&mut self, through_ms: i64) -> Result<()> {
         self.pace(through_ms);
         let started = Instant::now();
-        match self.system {
-            System::AsapqueryBackend => {
-                let url = format!(
-                    "{}/api/v1/precompute/watermark?time_ms={through_ms}",
-                    self.base
-                );
-                self.agent
-                    .post(&url)
-                    .call()
-                    .with_context(|| format!("closing panes through {through_ms}"))?;
-            }
-            System::Victoriametrics => {
-                self.agent
-                    .get(&format!("{}/internal/force_flush", self.base))
-                    .call()
-                    .context("flushing VictoriaMetrics")?;
-            }
-        }
+        self.system
+            .make_visible(&self.agent, &self.base, through_ms)?;
         self.barrier_seconds += started.elapsed().as_secs_f64();
         self.barriers += 1;
         Ok(())
     }
 
     pub fn summary(&self) -> Result<Value> {
-        let status = match self.system {
-            System::AsapqueryBackend => Some(serde_json::from_str::<Value>(
-                &self
-                    .agent
-                    .get(&format!("{}/api/v1/status/asap", self.base))
-                    .call()?
-                    .into_string()?,
-            )?),
-            System::Victoriametrics => None,
-        };
+        let status = self.system.status(&self.agent, &self.base)?;
         let write_seconds = self.send_seconds + self.barrier_seconds;
         Ok(json!({
             "samples": self.next,
