@@ -3,7 +3,6 @@ pub mod cli;
 pub mod erp_cmd;
 pub mod external;
 pub mod flatten_cmd;
-pub mod flatten_record;
 pub mod repeat;
 pub mod report_sink;
 pub mod sketchbench;

@@ -13,7 +13,8 @@ use std::path::Path;
 
 use crate::cli::SketchbenchArgs;
 use crate::report_sink::ReportSink;
-use crate::{external, flatten_record, repeat, trials};
+use crate::{external, repeat, trials};
+use aqpbm_core::benchmark_result::flatten_record;
 // The registry — which sketches exist, how to build them, which ground-truth calculator scores
 // them — is sketch-domain knowledge and lives in `sketch-bench`. The CLI does
 // not know the set; it asks.

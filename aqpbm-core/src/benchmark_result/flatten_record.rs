@@ -3,7 +3,7 @@
 //! measurement is
 //! named by both. Grouping records by identity is the caller's job.
 
-use aqpbm_core::{
+use crate::benchmark_result::schema::{
     BenchSection, InsertMetrics, MergeMetrics, MergeSplit, MergedRecord, PrepareMetrics,
     QueryMetrics, Record,
 };
@@ -225,7 +225,7 @@ pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aqpbm_core::benchmark_result::schema::{LatencySummary, Mode, RunStats};
+    use crate::benchmark_result::schema::{LatencySummary, Mode, RunStats};
     use aqpbm_datagen::{ColumnSpec, DataDistribution, TableDescription, UniformParameter};
 
     fn stats(mean: f64) -> RunStats {
