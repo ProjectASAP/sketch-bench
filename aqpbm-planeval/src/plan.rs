@@ -8,7 +8,7 @@ use asap_planner::{
 use serde_json::{json, Value};
 
 use crate::sketch_analytics::{analytics, statistics};
-use crate::spec::{QuerySpec, Spec};
+use aqpbm_usecase::spec::{QuerySpec, Spec};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Arm {

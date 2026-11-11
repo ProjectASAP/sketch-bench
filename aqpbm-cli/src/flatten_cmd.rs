@@ -15,7 +15,7 @@ use clap::Parser;
 
 use aqpbm_core::benchmark_result::Record;
 
-use crate::flatten_record;
+use aqpbm_core::benchmark_result::flatten_record;
 
 #[derive(Parser, Debug)]
 pub struct FlattenArgs {

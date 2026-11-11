@@ -1,0 +1,15 @@
+[package]
+name = "aqpbm-usecase"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Use-case specs: the recurring queries, the samples they run over, each query's declared truth, and the scoring of answers against it."
+
+[dependencies]
+aqpbm-core.workspace = true
+aqpbm-datagen = { workspace = true, features = ["import"] }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rand.workspace = true
+rand_xoshiro.workspace = true

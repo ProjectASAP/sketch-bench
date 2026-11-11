@@ -1,0 +1,43 @@
+{
+ "use_case": "top_clients",
+ "start_ms": 1767225600000,
+ "duration_ms": 585000,
+ "seed": 51,
+ "metrics": [
+  {
+   "name": "requests",
+   "sample_interval_ms": 1,
+   "label_from_value": "client_id",
+   "planned_series_count": 290679,
+   "import": {
+    "table": {
+     "source": "custom",
+     "dataset": "converted/uc5/caida_2019_src_ip.csv.gz",
+     "mode": "scalar",
+     "value_column": "client_id",
+     "timestamp_column": "timestamp",
+     "timestamp_unit": "nanoseconds"
+    },
+    "time_scale": 1
+   }
+  }
+ ],
+ "queries": [
+  {
+   "id": "top10_clients",
+   "promql": "topk(10, sum by (client_id) (count_over_time(requests[5m])))",
+   "window_ms": 300000,
+   "interval_ms": 60000,
+   "unit": "requests",
+   "truth": {"statistic": {"top_k": {"k": 10, "by": "client_id"}}, "metric": "requests"}
+  },
+  {
+   "id": "top10_clients_1m",
+   "promql": "topk(10, sum by (client_id) (count_over_time(requests[1m])))",
+   "window_ms": 60000,
+   "interval_ms": 60000,
+   "unit": "requests",
+   "truth": {"statistic": {"top_k": {"k": 10, "by": "client_id"}}, "metric": "requests"}
+  }
+ ]
+}

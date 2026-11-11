@@ -3,11 +3,13 @@
 //! written in. See `docs/aqpbm-core.md` §Results.
 
 pub mod bench_report;
+pub mod flatten_record;
 pub mod fold;
 pub mod schema;
 pub mod welford;
 
 pub use bench_report::BenchReport;
+pub use flatten_record::flatten_record;
 pub use fold::MemoryMaxima;
 pub use schema::{
     BenchSection, CpuTime, ExternalWorkload, InsertMetrics, Language, LatencySummary, MergeMetrics,

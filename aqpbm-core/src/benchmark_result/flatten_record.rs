@@ -1,0 +1,496 @@
+//! What `--flat` does: fold one invocation's records into one row. The row holds
+//! one slot per operation and a metric is a field inside a slot, because a
+//! measurement is
+//! named by both. Grouping records by identity is the caller's job.
+
+use crate::benchmark_result::schema::{
+    BenchSection, InsertMetrics, MergeMetrics, MergeSplit, MergedRecord, PrepareMetrics,
+    QueryMetrics, Record,
+};
+
+/// Which slot a `Record` lands in, per its own `bench.operation` field. Every
+/// name `--operations` can produce is matched explicitly; anything else — no
+/// `bench`, no `operation`, or an unknown one — is an error rather than a guess.
+fn operation_of(record: &Record) -> Result<&'static str, String> {
+    let bench = record.bench.as_ref().ok_or_else(|| {
+        format!(
+            "flatten_record: {}/{} record has no bench section, so its pass is unknown",
+            record.sketch, record.library
+        )
+    })?;
+    match bench.operation.as_deref() {
+        Some("insert") => Ok("insert"),
+        Some("query") => Ok("query"),
+        Some("merge") => Ok("merge"),
+        Some("prepare") => Ok("prepare"),
+        Some(other) => Err(format!(
+            "flatten_record: {}/{} record has unrecognized bench.operation '{other}'",
+            record.sketch, record.library
+        )),
+        None => Err(format!(
+            "flatten_record: {}/{} record has bench section but no bench.operation set",
+            record.sketch, record.library
+        )),
+    }
+}
+
+/// Fold the `Record`s sharing one (sketch, impl, sketch_config, dataset) identity
+/// into a single [`MergedRecord`] — one record per measurement, grouped by the caller.
+/// Every `BenchSection` field is bound by name, so an unplaced one fails the build.
+pub fn flatten_record(records: &[Record]) -> Result<MergedRecord, String> {
+    let base = records
+        .first()
+        .expect("flatten_record requires at least one record");
+
+    let mut out = MergedRecord {
+        schema_version: base.schema_version,
+        sketch: base.sketch.clone(),
+        library: base.library.clone(),
+        language: base.language,
+        mode: base.mode,
+        runs: base.runs,
+        source: base.source,
+        sketch_config: base.sketch_config.clone(),
+        input_dataset: base.input_dataset.clone(),
+        trial: None,
+        trial_mode: None,
+        memory_bytes: None,
+        heap_bytes_net: None,
+        heap_bytes_peak: None,
+        insert: InsertMetrics::default(),
+        query: QueryMetrics::default(),
+        merge: MergeMetrics::default(),
+        prepare: PrepareMetrics::default(),
+    };
+
+    for record in records {
+        let operation = operation_of(record)?;
+        let Some(bench) = record.bench.as_ref() else {
+            continue;
+        };
+
+        // Named field-by-field, not `..`: a field added to `BenchSection`
+        // that isn't listed here fails the build instead of being
+        // silently dropped. See the doc comment above.
+        let BenchSection {
+            metric: _,
+            operation: _,
+            throughput_items_per_sec,
+            latency_ns,
+            cpu_time_ms,
+            wall_time_ms,
+            rss_peak_kb,
+            heap_allocated_kb,
+            memory_bytes,
+            heap_bytes_net,
+            heap_bytes_peak,
+            accuracy,
+            merge_folds_per_sec,
+            merge_shards,
+            merge_split,
+            merge_supported,
+            trial,
+            trial_mode,
+        } = bench;
+
+        // A sketch has one size however many measurements took it, so the
+        // first value wins and none is favoured. `heap_bytes_net` stays
+        // separate from `memory_bytes`: see the field doc on
+        // `MergedRecord::heap_bytes_net`.
+        if let Some(mb) = memory_bytes {
+            out.memory_bytes.get_or_insert(*mb);
+        }
+        if let Some(hb) = heap_bytes_net {
+            out.heap_bytes_net.get_or_insert(*hb);
+        }
+        if let Some(hp) = heap_bytes_peak {
+            out.heap_bytes_peak.get_or_insert(*hp);
+        }
+        // `cpu_time_ms`/`wall_time_ms`/`rss_peak_kb`/`heap_allocated_kb` are
+        // secondary: they ride along with every square of an operation
+        // regardless of which metric drove it (see `MetricsMask::SECONDARY`),
+        // so `(insert, throughput)` and `(insert, latency)` both legitimately
+        // carry their own `wall_time_ms`. Neither corrects the other — first
+        // one measured wins, silently, same as `memory_bytes` above.
+        macro_rules! keep_shared {
+            ($slot:expr, $v:expr) => {
+                if let Some(v) = $v {
+                    $slot.get_or_insert(v.clone());
+                }
+            };
+        }
+        // `merge_shards`/`merge_split`/`merge_supported` describe the merge setup, which
+        // every merge square of one invocation stamps — equal values agree,
+        // different ones mean two setups were folded together.
+        macro_rules! keep_same {
+            ($slot:expr, $v:expr, $field:literal) => {
+                if let Some(v) = $v {
+                    if $slot.is_some_and(|s| s != v) {
+                        return Err(format!(
+                            "flatten_record: {}/{} {operation} has two different values for {}",
+                            record.sketch, record.library, $field
+                        ));
+                    }
+                    $slot = Some(v);
+                }
+            };
+        }
+        // `throughput_items_per_sec`, `latency_ns`, `accuracy` and
+        // `merge_folds_per_sec` are each owned by exactly one metric-pass per
+        // operation — nothing legitimately produces a second value for one
+        // of these within a slot. A second value is a genuine duplicate, so
+        // it is refused by field name rather than silently resolved.
+        macro_rules! keep_owned {
+            ($slot:expr, $v:expr, $field:literal) => {
+                if $v.is_some() {
+                    if $slot.is_some() {
+                        return Err(format!(
+                            "flatten_record: {}/{} {operation} has two values for {}",
+                            record.sketch, record.library, $field
+                        ));
+                    }
+                    $slot = $v.clone();
+                }
+            };
+        }
+        keep_same!(out.trial, *trial, "trial");
+        keep_same!(out.trial_mode, *trial_mode, "trial_mode");
+        match operation {
+            "insert" => {
+                out.insert.timestamp = Some(record.timestamp);
+                keep_owned!(
+                    out.insert.throughput_items_per_sec,
+                    *throughput_items_per_sec,
+                    "throughput_items_per_sec"
+                );
+                keep_owned!(out.insert.latency_ns, *latency_ns, "latency_ns");
+                keep_shared!(out.insert.cpu_time_ms, cpu_time_ms);
+                keep_shared!(out.insert.wall_time_ms, wall_time_ms);
+                keep_shared!(out.insert.rss_peak_kb, rss_peak_kb);
+                keep_shared!(out.insert.heap_allocated_kb, heap_allocated_kb);
+            }
+            "query" => {
+                out.query.timestamp = Some(record.timestamp);
+                keep_owned!(
+                    out.query.throughput_items_per_sec,
+                    *throughput_items_per_sec,
+                    "throughput_items_per_sec"
+                );
+                keep_owned!(out.query.latency_ns, *latency_ns, "latency_ns");
+                keep_owned!(out.query.accuracy, accuracy.clone(), "accuracy");
+                keep_shared!(out.query.cpu_time_ms, cpu_time_ms);
+                keep_shared!(out.query.wall_time_ms, wall_time_ms);
+                keep_shared!(out.query.rss_peak_kb, rss_peak_kb);
+                keep_shared!(out.query.heap_allocated_kb, heap_allocated_kb);
+            }
+            "merge" => {
+                out.merge.timestamp = Some(record.timestamp);
+                keep_owned!(
+                    out.merge.merge_folds_per_sec,
+                    *merge_folds_per_sec,
+                    "merge_folds_per_sec"
+                );
+                keep_same!(out.merge.merge_shards, *merge_shards, "merge_shards");
+                // A record from before `merge_split` existed split contiguously.
+                keep_same!(
+                    out.merge.merge_split,
+                    merge_split.or(Some(MergeSplit::Contiguous)),
+                    "merge_split"
+                );
+                keep_same!(
+                    out.merge.merge_supported,
+                    *merge_supported,
+                    "merge_supported"
+                );
+                keep_owned!(out.merge.accuracy, accuracy.clone(), "accuracy");
+                keep_shared!(out.merge.cpu_time_ms, cpu_time_ms);
+                keep_shared!(out.merge.wall_time_ms, wall_time_ms);
+                keep_shared!(out.merge.rss_peak_kb, rss_peak_kb);
+                keep_shared!(out.merge.heap_allocated_kb, heap_allocated_kb);
+            }
+            "prepare" => {
+                out.prepare.timestamp = Some(record.timestamp);
+                keep_shared!(out.prepare.cpu_time_ms, cpu_time_ms);
+                keep_shared!(out.prepare.wall_time_ms, wall_time_ms);
+                keep_shared!(out.prepare.rss_peak_kb, rss_peak_kb);
+                keep_shared!(out.prepare.heap_allocated_kb, heap_allocated_kb);
+            }
+            _ => unreachable!("operation_of only returns insert/query/merge/prepare"),
+        }
+    }
+
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::benchmark_result::schema::{LatencySummary, Mode, RunStats};
+    use aqpbm_datagen::{ColumnSpec, DataDistribution, TableDescription, UniformParameter};
+
+    fn stats(mean: f64) -> RunStats {
+        RunStats {
+            mean,
+            stddev: 0.0,
+            ci95: None,
+            n: 1,
+            samples: vec![mean],
+        }
+    }
+
+    fn latency(count: u64) -> LatencySummary {
+        LatencySummary {
+            p50: 10,
+            p95: 20,
+            p99: 30,
+            p999: 40,
+            max: 50,
+            count,
+        }
+    }
+
+    fn record(operation: &str, metric: &str, bench: BenchSection) -> Record {
+        let wd = TableDescription::single(
+            "key",
+            ColumnSpec {
+                distribution: DataDistribution::Uniform(UniformParameter {
+                    lower_bound: 0.0,
+                    upper_bound: 100.0,
+                    seed: 1,
+                }),
+                shift: None,
+                cardinality: None,
+                special_rule: aqpbm_datagen::RULE_NONE,
+                data_type: "i64".into(),
+                string: None,
+                child_of: None,
+                fan_out: None,
+                scale_by: None,
+                scale_range: None,
+                key_offset: None,
+            },
+            1000,
+        );
+        let mut rec = Record::new("cms", "oxide", wd, Mode::Bench, 1);
+        rec.bench = Some(BenchSection {
+            operation: Some(operation.into()),
+            metric: Some(metric.into()),
+            ..bench
+        });
+        rec
+    }
+
+    /// Two measurements of one metric over two operations. Keyed on the metric they
+    /// were the same slot, and the second silently blanked the first.
+    #[test]
+    fn one_metric_over_two_operations_keeps_both_numbers() {
+        let rows = vec![
+            record(
+                "insert",
+                "throughput",
+                BenchSection {
+                    throughput_items_per_sec: Some(stats(900.0)),
+                    ..Default::default()
+                },
+            ),
+            record(
+                "query",
+                "throughput",
+                BenchSection {
+                    throughput_items_per_sec: Some(stats(700.0)),
+                    ..Default::default()
+                },
+            ),
+        ];
+        let out = flatten_record(&rows).expect("both measurements are named");
+        assert_eq!(out.insert.throughput_items_per_sec.unwrap().mean, 900.0);
+        assert_eq!(out.query.throughput_items_per_sec.unwrap().mean, 700.0);
+    }
+
+    /// Both latencies are `latency_ns` in their own record, so the flattened
+    /// row is where they must stop being one field. `count` tells them apart:
+    /// inserts are counted per item, probes per question.
+    #[test]
+    fn insert_and_query_latency_are_two_fields() {
+        let rows = vec![
+            record(
+                "insert",
+                "latency",
+                BenchSection {
+                    latency_ns: Some(latency(30_000)),
+                    ..Default::default()
+                },
+            ),
+            record(
+                "query",
+                "latency",
+                BenchSection {
+                    latency_ns: Some(latency(2_381)),
+                    ..Default::default()
+                },
+            ),
+        ];
+        let out = flatten_record(&rows).expect("both measurements are named");
+        assert_eq!(out.insert.latency_ns.unwrap().count, 30_000);
+        assert_eq!(out.query.latency_ns.unwrap().count, 2_381);
+    }
+
+    /// Two measurements of one operation. Both carry a `wall_time_ms`, and the one
+    /// arriving second must not blank the field the first filled.
+    #[test]
+    fn two_squares_of_one_operation_share_a_slot_without_erasing() {
+        let rows = vec![
+            record(
+                "merge",
+                "latency",
+                BenchSection {
+                    wall_time_ms: Some(stats(0.15)),
+                    merge_shards: Some(4),
+                    ..Default::default()
+                },
+            ),
+            record(
+                "merge",
+                "throughput",
+                BenchSection {
+                    merge_folds_per_sec: Some(stats(19_496.0)),
+                    ..Default::default()
+                },
+            ),
+        ];
+        let out = flatten_record(&rows).expect("both measurements are named");
+        assert_eq!(out.merge.wall_time_ms.unwrap().mean, 0.15);
+        assert_eq!(out.merge.merge_folds_per_sec.unwrap().mean, 19_496.0);
+        assert_eq!(out.merge.merge_shards, Some(4));
+    }
+
+    /// The deferred build has its own slot, so a caller asking only about
+    /// inserting does not read it off the insert record.
+    #[test]
+    fn prepare_carries_its_own_time() {
+        let rows = vec![record(
+            "prepare",
+            "latency",
+            BenchSection {
+                wall_time_ms: Some(stats(0.005)),
+                ..Default::default()
+            },
+        )];
+        let out = flatten_record(&rows).expect("the measurement is named");
+        assert_eq!(out.prepare.wall_time_ms.unwrap().mean, 0.005);
+    }
+
+    /// A record whose operation this function does not place is an error, not
+    /// a guess: a silently dropped measurement reads as one nobody asked for.
+    #[test]
+    fn an_unplaceable_operation_is_refused_by_name() {
+        let rows = vec![record("teleport", "latency", BenchSection::default())];
+        let err = flatten_record(&rows).expect_err("no slot holds it");
+        assert!(err.contains("teleport"), "{err}");
+    }
+
+    /// `cpu_time_ms`/`wall_time_ms`/`rss_peak_kb`/`heap_allocated_kb` ride
+    /// along with every square regardless of which metric drove it — an
+    /// ordinary run crossing `insert` with both `throughput` and `latency`
+    /// has both squares set `wall_time_ms`. That's expected, not a
+    /// duplicate, so the first one measured wins silently.
+    #[test]
+    fn shared_timing_fields_on_two_squares_of_one_operation_first_wins() {
+        let rows = vec![
+            record(
+                "insert",
+                "throughput",
+                BenchSection {
+                    wall_time_ms: Some(stats(1.0)),
+                    ..Default::default()
+                },
+            ),
+            record(
+                "insert",
+                "latency",
+                BenchSection {
+                    wall_time_ms: Some(stats(2.0)),
+                    ..Default::default()
+                },
+            ),
+        ];
+        let out = flatten_record(&rows).expect("shared fields never collide");
+        assert_eq!(out.insert.wall_time_ms.unwrap().mean, 1.0);
+    }
+
+    /// A cost pass and an accuracy pass over one merge both stamp the merge
+    /// setup. The same setup twice is one setup; two different ones are not.
+    #[test]
+    fn merge_setup_on_two_squares_must_agree() {
+        let merge = |metric, shards| {
+            record(
+                "merge",
+                metric,
+                BenchSection {
+                    merge_shards: Some(shards),
+                    merge_supported: Some(true),
+                    ..Default::default()
+                },
+            )
+        };
+        let out = flatten_record(&[merge("throughput", 4), merge("accuracy", 4)])
+            .expect("the same setup agrees");
+        assert_eq!(out.merge.merge_shards, Some(4));
+        let err = flatten_record(&[merge("throughput", 4), merge("accuracy", 16)])
+            .expect_err("two setups in one row");
+        assert!(err.contains("merge_shards"), "{err}");
+    }
+
+    /// Two splits are two setups; a record without the field split
+    /// contiguously, so it agrees with a contiguous one.
+    #[test]
+    fn merge_split_on_two_squares_must_agree() {
+        let merge = |metric, split| {
+            record(
+                "merge",
+                metric,
+                BenchSection {
+                    merge_split: split,
+                    ..Default::default()
+                },
+            )
+        };
+        let out = flatten_record(&[merge("throughput", None)]).expect("one setup");
+        assert_eq!(out.merge.merge_split, Some(MergeSplit::Contiguous));
+        let err = flatten_record(&[
+            merge("throughput", Some(MergeSplit::Interleaved)),
+            merge("accuracy", None),
+        ])
+        .expect_err("two splits in one row");
+        assert!(err.contains("merge_split"), "{err}");
+    }
+
+    /// `throughput_items_per_sec` is owned by exactly one metric-pass per
+    /// operation — nothing legitimately produces it twice for `insert`. A
+    /// second value here is a genuine duplicate, refused by field name
+    /// rather than the second value silently overwriting or being silently
+    /// dropped.
+    #[test]
+    fn two_squares_colliding_on_an_owned_field_is_an_error() {
+        let rows = vec![
+            record(
+                "insert",
+                "throughput",
+                BenchSection {
+                    throughput_items_per_sec: Some(stats(900.0)),
+                    ..Default::default()
+                },
+            ),
+            record(
+                "insert",
+                "throughput",
+                BenchSection {
+                    throughput_items_per_sec: Some(stats(901.0)),
+                    ..Default::default()
+                },
+            ),
+        ];
+        let err = flatten_record(&rows).expect_err("both squares set throughput_items_per_sec");
+        assert!(err.contains("throughput_items_per_sec"), "{err}");
+    }
+}

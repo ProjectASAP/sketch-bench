@@ -1,0 +1,44 @@
+{
+ "use_case": "top_clients",
+ "start_ms": 1767225600000,
+ "duration_ms": 7200000,
+ "seed": 51,
+ "metrics": [
+  {
+   "name": "requests",
+   "sample_interval_ms": 258,
+   "label_from_value": "client_id",
+   "planned_series_count": 1577,
+   "import": {
+    "table": {
+     "source": "custom",
+     "dataset": "converted/uc5/nasa_jul95_requests.csv.gz",
+     "mode": "scalar",
+     "value_column": "client_id",
+     "timestamp_column": "timestamp",
+     "timestamp_unit": "nanoseconds"
+    },
+    "time_scale": 1,
+    "origin_ns": 805638047000000000
+   }
+  }
+ ],
+ "queries": [
+  {
+   "id": "top10_clients",
+   "promql": "topk(10, sum by (client_id) (count_over_time(requests[5m])))",
+   "window_ms": 300000,
+   "interval_ms": 60000,
+   "unit": "requests",
+   "truth": {"statistic": {"top_k": {"k": 10, "by": "client_id"}}, "metric": "requests"}
+  },
+  {
+   "id": "top10_clients_1m",
+   "promql": "topk(10, sum by (client_id) (count_over_time(requests[1m])))",
+   "window_ms": 60000,
+   "interval_ms": 60000,
+   "unit": "requests",
+   "truth": {"statistic": {"top_k": {"k": 10, "by": "client_id"}}, "metric": "requests"}
+  }
+ ]
+}

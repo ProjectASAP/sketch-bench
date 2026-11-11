@@ -3,14 +3,17 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use serde_json::{json, Value};
 
-use aqpbm_planeval::accuracy::AnswerAt;
-use aqpbm_planeval::data::generate;
 use aqpbm_planeval::plan::{plan, summary, Arm};
 use aqpbm_planeval::run::Driver;
-use aqpbm_planeval::score::{read_answers, score};
-use aqpbm_planeval::spec::Spec;
+use aqpbm_usecase::accuracy::AnswerAt;
+use aqpbm_usecase::data::generate;
+use aqpbm_usecase::output::{
+    PlanevalCost, PlanevalOutput, PlanevalQuery, PlannedQuery, UnsupportedQuery,
+    OUTPUT_SCHEMA_VERSION,
+};
+use aqpbm_usecase::score::{read_answers, score};
+use aqpbm_usecase::spec::Spec;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -101,8 +104,11 @@ async fn main() -> Result<()> {
             Ok(planned) => planned,
             Err(reason) => {
                 eprintln!("{}: unsupported: {reason}", query.id);
-                queries
-                    .push(json!({"id": query.id, "promql": query.promql, "unsupported": reason}));
+                queries.push(PlanevalQuery::Unsupported(UnsupportedQuery {
+                    id: query.id.clone(),
+                    promql: query.promql.clone(),
+                    unsupported: reason,
+                }));
                 continue;
             }
         };
@@ -115,7 +121,7 @@ async fn main() -> Result<()> {
         }
         let started = Instant::now();
         let mut answered: Vec<AnswerAt> = Vec::new();
-        let mut costs: Vec<Value> = Vec::new();
+        let mut costs: Vec<PlanevalCost> = Vec::new();
         let mut disagreements = 0usize;
         let mut views_refreshed = 0usize;
         let times = spec.evaluation_times(query);
@@ -130,15 +136,15 @@ async fn main() -> Result<()> {
                 }
             }
             let cost = &evaluation.cost;
-            costs.push(json!({
-                "time": t,
-                "refresh_seconds": cost.refresh_seconds,
-                "samples_ingested": cost.samples_ingested,
-                "query_seconds": cost.query_seconds,
-                "compile_seconds": cost.compile_seconds,
-                "samples_read_at_query": cost.samples_read_at_query,
-                "state_bytes": cost.state_bytes,
-            }));
+            costs.push(PlanevalCost {
+                time: t,
+                refresh_seconds: cost.refresh_seconds,
+                samples_ingested: cost.samples_ingested,
+                query_seconds: cost.query_seconds,
+                compile_seconds: cost.compile_seconds,
+                samples_read_at_query: cost.samples_read_at_query,
+                state_bytes: cost.state_bytes,
+            });
             answered.extend(
                 evaluation
                     .answers
@@ -147,15 +153,7 @@ async fn main() -> Result<()> {
             );
         }
         let elapsed = started.elapsed().as_secs_f64();
-        let scored = score(
-            &spec,
-            query,
-            &arm,
-            &series,
-            &times,
-            &answered,
-            exact.as_ref(),
-        )?;
+        let scored = score(query, &series, &times, &answered, exact.as_ref())?;
         eprintln!(
             "{}: {} evaluations in {:.1} s, {} view refreshes{}",
             query.id,
@@ -168,28 +166,29 @@ async fn main() -> Result<()> {
                 String::new()
             }
         );
-        queries.push(json!({
-            "id": query.id,
-            "promql": query.promql,
-            "unit": query.unit,
-            "threshold": query.threshold,
-            "plan": plan_summary,
-            "evaluations": times.len(),
-            "evaluation_seconds": elapsed,
-            "views_refreshed": views_refreshed,
-            "reference_disagreements": args.check_reference.then_some(disagreements),
-            "answers": scored.answers,
-            "computed_truth": scored.computed_truth,
-            "costs": costs,
+        queries.push(PlanevalQuery::Ran(PlannedQuery {
+            id: query.id.clone(),
+            promql: query.promql.clone(),
+            unit: query.unit.clone(),
+            threshold: query.threshold,
+            plan: plan_summary,
+            evaluations: times.len(),
+            evaluation_seconds: elapsed,
+            views_refreshed,
+            reference_disagreements: args.check_reference.then_some(disagreements),
+            answers: scored.answers,
+            computed_truth: scored.computed_truth,
+            costs,
         }));
     }
-    let document = json!({
-        "use_case": spec.use_case,
-        "arm": arm.describe(),
-        "planner_rev": env!("ASAP_PLANNER_REV"),
-        "samples": samples,
-        "queries": queries,
-    });
+    let document = PlanevalOutput {
+        schema_version: OUTPUT_SCHEMA_VERSION,
+        use_case: spec.use_case.clone(),
+        arm: arm.describe(),
+        planner_rev: env!("ASAP_PLANNER_REV").to_string(),
+        samples,
+        queries,
+    };
     std::fs::write(&args.out, serde_json::to_string(&document)?)
         .with_context(|| format!("writing {}", args.out.display()))?;
     Ok(())

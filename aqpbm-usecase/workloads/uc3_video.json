@@ -1,0 +1,5886 @@
+{
+ "use_case": "video_experience",
+ "start_ms": 1767225600000,
+ "duration_ms": 7200000,
+ "seed": 31,
+ "metrics": [
+  {
+   "name": "bitrate",
+   "sample_interval_ms": 720,
+   "floor": true,
+   "series": [
+    {
+     "sample_interval_ms": 136,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1000
+     }
+    },
+    {
+     "sample_interval_ms": 222,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1010
+     }
+    },
+    {
+     "sample_interval_ms": 222,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1020
+     }
+    },
+    {
+     "sample_interval_ms": 359,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1030
+     }
+    },
+    {
+     "sample_interval_ms": 238,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1040
+     }
+    },
+    {
+     "sample_interval_ms": 387,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1050
+     }
+    },
+    {
+     "sample_interval_ms": 387,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1060
+     }
+    },
+    {
+     "sample_interval_ms": 625,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1070
+     }
+    },
+    {
+     "sample_interval_ms": 329,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1080
+     }
+    },
+    {
+     "sample_interval_ms": 535,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1090
+     }
+    },
+    {
+     "sample_interval_ms": 535,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1100
+     }
+    },
+    {
+     "sample_interval_ms": 869,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1110
+     }
+    },
+    {
+     "sample_interval_ms": 255,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1120
+     }
+    },
+    {
+     "sample_interval_ms": 413,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1130
+     }
+    },
+    {
+     "sample_interval_ms": 413,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1140
+     }
+    },
+    {
+     "sample_interval_ms": 674,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1150
+     }
+    },
+    {
+     "sample_interval_ms": 444,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1160
+     }
+    },
+    {
+     "sample_interval_ms": 722,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1170
+     }
+    },
+    {
+     "sample_interval_ms": 722,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1180
+     }
+    },
+    {
+     "sample_interval_ms": 1176,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1190
+     }
+    },
+    {
+     "sample_interval_ms": 612,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1200
+     },
+     "phases": [
+      {
+       "start_offset_ms": 4200000,
+       "end_offset_ms": 5100000,
+       "ramp_ms": 120000,
+       "change": {
+        "mix": {
+         "share": 0.5,
+         "distribution": {
+          "kind": "uniform",
+          "lower_bound": 8,
+          "upper_bound": 11,
+          "seed": 302
+         }
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 1000,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1210
+     },
+     "phases": [
+      {
+       "start_offset_ms": 4200000,
+       "end_offset_ms": 5100000,
+       "ramp_ms": 120000,
+       "change": {
+        "mix": {
+         "share": 0.5,
+         "distribution": {
+          "kind": "uniform",
+          "lower_bound": 8,
+          "upper_bound": 11,
+          "seed": 302
+         }
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 1000,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1220
+     },
+     "phases": [
+      {
+       "start_offset_ms": 4200000,
+       "end_offset_ms": 5100000,
+       "ramp_ms": 120000,
+       "change": {
+        "mix": {
+         "share": 0.5,
+         "distribution": {
+          "kind": "uniform",
+          "lower_bound": 8,
+          "upper_bound": 11,
+          "seed": 302
+         }
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 1621,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1230
+     },
+     "phases": [
+      {
+       "start_offset_ms": 4200000,
+       "end_offset_ms": 5100000,
+       "ramp_ms": 120000,
+       "change": {
+        "mix": {
+         "share": 0.5,
+         "distribution": {
+          "kind": "uniform",
+          "lower_bound": 8,
+          "upper_bound": 11,
+          "seed": 302
+         }
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 368,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1240
+     }
+    },
+    {
+     "sample_interval_ms": 594,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1250
+     }
+    },
+    {
+     "sample_interval_ms": 594,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1260
+     }
+    },
+    {
+     "sample_interval_ms": 967,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1270
+     }
+    },
+    {
+     "sample_interval_ms": 638,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1280
+     }
+    },
+    {
+     "sample_interval_ms": 1034,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1290
+     }
+    },
+    {
+     "sample_interval_ms": 1034,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1300
+     }
+    },
+    {
+     "sample_interval_ms": 1666,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1310
+     }
+    },
+    {
+     "sample_interval_ms": 882,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1320
+     }
+    },
+    {
+     "sample_interval_ms": 1428,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1330
+     }
+    },
+    {
+     "sample_interval_ms": 1428,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1340
+     }
+    },
+    {
+     "sample_interval_ms": 2307,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1350
+     }
+    },
+    {
+     "sample_interval_ms": 476,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1360
+     }
+    },
+    {
+     "sample_interval_ms": 769,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1370
+     }
+    },
+    {
+     "sample_interval_ms": 769,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1380
+     }
+    },
+    {
+     "sample_interval_ms": 1250,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1390
+     }
+    },
+    {
+     "sample_interval_ms": 833,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1400
+     }
+    },
+    {
+     "sample_interval_ms": 1333,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1410
+     }
+    },
+    {
+     "sample_interval_ms": 1333,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1420
+     }
+    },
+    {
+     "sample_interval_ms": 2222,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1430
+     }
+    },
+    {
+     "sample_interval_ms": 1153,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1440
+     }
+    },
+    {
+     "sample_interval_ms": 1875,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1450
+     }
+    },
+    {
+     "sample_interval_ms": 1875,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1460
+     }
+    },
+    {
+     "sample_interval_ms": 3000,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1470
+     }
+    },
+    {
+     "sample_interval_ms": 582,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1480
+     }
+    },
+    {
+     "sample_interval_ms": 937,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1490
+     }
+    },
+    {
+     "sample_interval_ms": 937,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1500
+     }
+    },
+    {
+     "sample_interval_ms": 1538,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1510
+     }
+    },
+    {
+     "sample_interval_ms": 1016,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1520
+     }
+    },
+    {
+     "sample_interval_ms": 1666,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1530
+     }
+    },
+    {
+     "sample_interval_ms": 1666,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1540
+     }
+    },
+    {
+     "sample_interval_ms": 2727,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1550
+     }
+    },
+    {
+     "sample_interval_ms": 1395,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1560
+     }
+    },
+    {
+     "sample_interval_ms": 2307,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1570
+     }
+    },
+    {
+     "sample_interval_ms": 2307,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1580
+     }
+    },
+    {
+     "sample_interval_ms": 3750,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1590
+     }
+    },
+    {
+     "sample_interval_ms": 681,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1600
+     }
+    },
+    {
+     "sample_interval_ms": 1111,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1610
+     }
+    },
+    {
+     "sample_interval_ms": 1111,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1620
+     }
+    },
+    {
+     "sample_interval_ms": 1818,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1630
+     }
+    },
+    {
+     "sample_interval_ms": 1200,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1640
+     }
+    },
+    {
+     "sample_interval_ms": 1935,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1650
+     }
+    },
+    {
+     "sample_interval_ms": 1935,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1660
+     }
+    },
+    {
+     "sample_interval_ms": 3157,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1670
+     }
+    },
+    {
+     "sample_interval_ms": 1666,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1680
+     }
+    },
+    {
+     "sample_interval_ms": 2727,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1690
+     }
+    },
+    {
+     "sample_interval_ms": 2727,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1700
+     }
+    },
+    {
+     "sample_interval_ms": 4285,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "zipf",
+      "skewness": 1.0,
+      "population_size": 10,
+      "seed": 1710
+     }
+    }
+   ]
+  },
+  {
+   "name": "buffering",
+   "sample_interval_ms": 720,
+   "non_negative": true,
+   "series": [
+    {
+     "sample_interval_ms": 136,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1001
+     }
+    },
+    {
+     "sample_interval_ms": 222,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1011
+     }
+    },
+    {
+     "sample_interval_ms": 222,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1021
+     },
+     "phases": [
+      {
+       "start_offset_ms": 2400000,
+       "end_offset_ms": 3300000,
+       "ramp_ms": 120000,
+       "change": {
+        "mix": {
+         "share": 0.4,
+         "distribution": {
+          "kind": "uniform",
+          "lower_bound": 5,
+          "upper_bound": 20,
+          "seed": 301
+         }
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 359,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1031
+     },
+     "phases": [
+      {
+       "start_offset_ms": 2400000,
+       "end_offset_ms": 3300000,
+       "ramp_ms": 120000,
+       "change": {
+        "mix": {
+         "share": 0.4,
+         "distribution": {
+          "kind": "uniform",
+          "lower_bound": 5,
+          "upper_bound": 20,
+          "seed": 301
+         }
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 238,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1041
+     }
+    },
+    {
+     "sample_interval_ms": 387,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1051
+     }
+    },
+    {
+     "sample_interval_ms": 387,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1061
+     },
+     "phases": [
+      {
+       "start_offset_ms": 2400000,
+       "end_offset_ms": 3300000,
+       "ramp_ms": 120000,
+       "change": {
+        "mix": {
+         "share": 0.4,
+         "distribution": {
+          "kind": "uniform",
+          "lower_bound": 5,
+          "upper_bound": 20,
+          "seed": 301
+         }
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 625,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1071
+     },
+     "phases": [
+      {
+       "start_offset_ms": 2400000,
+       "end_offset_ms": 3300000,
+       "ramp_ms": 120000,
+       "change": {
+        "mix": {
+         "share": 0.4,
+         "distribution": {
+          "kind": "uniform",
+          "lower_bound": 5,
+          "upper_bound": 20,
+          "seed": 301
+         }
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 329,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1081
+     }
+    },
+    {
+     "sample_interval_ms": 535,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1091
+     }
+    },
+    {
+     "sample_interval_ms": 535,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1101
+     },
+     "phases": [
+      {
+       "start_offset_ms": 2400000,
+       "end_offset_ms": 3300000,
+       "ramp_ms": 120000,
+       "change": {
+        "mix": {
+         "share": 0.4,
+         "distribution": {
+          "kind": "uniform",
+          "lower_bound": 5,
+          "upper_bound": 20,
+          "seed": 301
+         }
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 869,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1111
+     },
+     "phases": [
+      {
+       "start_offset_ms": 2400000,
+       "end_offset_ms": 3300000,
+       "ramp_ms": 120000,
+       "change": {
+        "mix": {
+         "share": 0.4,
+         "distribution": {
+          "kind": "uniform",
+          "lower_bound": 5,
+          "upper_bound": 20,
+          "seed": 301
+         }
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 255,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1121
+     }
+    },
+    {
+     "sample_interval_ms": 413,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1131
+     }
+    },
+    {
+     "sample_interval_ms": 413,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1141
+     }
+    },
+    {
+     "sample_interval_ms": 674,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1151
+     }
+    },
+    {
+     "sample_interval_ms": 444,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1161
+     }
+    },
+    {
+     "sample_interval_ms": 722,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1171
+     }
+    },
+    {
+     "sample_interval_ms": 722,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1181
+     }
+    },
+    {
+     "sample_interval_ms": 1176,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1191
+     }
+    },
+    {
+     "sample_interval_ms": 612,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1201
+     }
+    },
+    {
+     "sample_interval_ms": 1000,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1211
+     }
+    },
+    {
+     "sample_interval_ms": 1000,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1221
+     }
+    },
+    {
+     "sample_interval_ms": 1621,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1231
+     }
+    },
+    {
+     "sample_interval_ms": 368,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1241
+     }
+    },
+    {
+     "sample_interval_ms": 594,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1251
+     }
+    },
+    {
+     "sample_interval_ms": 594,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1261
+     }
+    },
+    {
+     "sample_interval_ms": 967,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1271
+     }
+    },
+    {
+     "sample_interval_ms": 638,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1281
+     }
+    },
+    {
+     "sample_interval_ms": 1034,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1291
+     }
+    },
+    {
+     "sample_interval_ms": 1034,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1301
+     }
+    },
+    {
+     "sample_interval_ms": 1666,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1311
+     }
+    },
+    {
+     "sample_interval_ms": 882,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1321
+     }
+    },
+    {
+     "sample_interval_ms": 1428,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1331
+     }
+    },
+    {
+     "sample_interval_ms": 1428,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1341
+     }
+    },
+    {
+     "sample_interval_ms": 2307,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1351
+     }
+    },
+    {
+     "sample_interval_ms": 476,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1361
+     }
+    },
+    {
+     "sample_interval_ms": 769,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1371
+     }
+    },
+    {
+     "sample_interval_ms": 769,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1381
+     }
+    },
+    {
+     "sample_interval_ms": 1250,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1391
+     }
+    },
+    {
+     "sample_interval_ms": 833,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1401
+     }
+    },
+    {
+     "sample_interval_ms": 1333,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1411
+     }
+    },
+    {
+     "sample_interval_ms": 1333,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1421
+     }
+    },
+    {
+     "sample_interval_ms": 2222,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1431
+     }
+    },
+    {
+     "sample_interval_ms": 1153,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1441
+     }
+    },
+    {
+     "sample_interval_ms": 1875,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1451
+     }
+    },
+    {
+     "sample_interval_ms": 1875,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1461
+     }
+    },
+    {
+     "sample_interval_ms": 3000,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1471
+     }
+    },
+    {
+     "sample_interval_ms": 582,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1481
+     }
+    },
+    {
+     "sample_interval_ms": 937,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1491
+     }
+    },
+    {
+     "sample_interval_ms": 937,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1501
+     }
+    },
+    {
+     "sample_interval_ms": 1538,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1511
+     }
+    },
+    {
+     "sample_interval_ms": 1016,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1521
+     }
+    },
+    {
+     "sample_interval_ms": 1666,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1531
+     }
+    },
+    {
+     "sample_interval_ms": 1666,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1541
+     }
+    },
+    {
+     "sample_interval_ms": 2727,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1551
+     }
+    },
+    {
+     "sample_interval_ms": 1395,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1561
+     }
+    },
+    {
+     "sample_interval_ms": 2307,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1571
+     }
+    },
+    {
+     "sample_interval_ms": 2307,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1581
+     }
+    },
+    {
+     "sample_interval_ms": 3750,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1591
+     }
+    },
+    {
+     "sample_interval_ms": 681,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1601
+     }
+    },
+    {
+     "sample_interval_ms": 1111,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1611
+     }
+    },
+    {
+     "sample_interval_ms": 1111,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1621
+     }
+    },
+    {
+     "sample_interval_ms": 1818,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1631
+     }
+    },
+    {
+     "sample_interval_ms": 1200,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1641
+     }
+    },
+    {
+     "sample_interval_ms": 1935,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1651
+     }
+    },
+    {
+     "sample_interval_ms": 1935,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1661
+     }
+    },
+    {
+     "sample_interval_ms": 3157,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1671
+     }
+    },
+    {
+     "sample_interval_ms": 1666,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1681
+     }
+    },
+    {
+     "sample_interval_ms": 2727,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1691
+     }
+    },
+    {
+     "sample_interval_ms": 2727,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1701
+     }
+    },
+    {
+     "sample_interval_ms": 4285,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "normal",
+      "mean": 0.3,
+      "standard_deviation": 0.6,
+      "seed": 1711
+     }
+    }
+   ]
+  },
+  {
+   "name": "play_time",
+   "sample_interval_ms": 720,
+   "series": [
+    {
+     "sample_interval_ms": 136,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1002
+     }
+    },
+    {
+     "sample_interval_ms": 222,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1012
+     }
+    },
+    {
+     "sample_interval_ms": 222,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1022
+     }
+    },
+    {
+     "sample_interval_ms": 359,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1032
+     }
+    },
+    {
+     "sample_interval_ms": 238,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1042
+     }
+    },
+    {
+     "sample_interval_ms": 387,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1052
+     }
+    },
+    {
+     "sample_interval_ms": 387,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1062
+     }
+    },
+    {
+     "sample_interval_ms": 625,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1072
+     }
+    },
+    {
+     "sample_interval_ms": 329,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1082
+     }
+    },
+    {
+     "sample_interval_ms": 535,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1092
+     }
+    },
+    {
+     "sample_interval_ms": 535,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1102
+     }
+    },
+    {
+     "sample_interval_ms": 869,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1112
+     }
+    },
+    {
+     "sample_interval_ms": 255,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1122
+     }
+    },
+    {
+     "sample_interval_ms": 413,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1132
+     }
+    },
+    {
+     "sample_interval_ms": 413,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1142
+     }
+    },
+    {
+     "sample_interval_ms": 674,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1152
+     }
+    },
+    {
+     "sample_interval_ms": 444,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1162
+     }
+    },
+    {
+     "sample_interval_ms": 722,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1172
+     }
+    },
+    {
+     "sample_interval_ms": 722,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1182
+     }
+    },
+    {
+     "sample_interval_ms": 1176,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1192
+     }
+    },
+    {
+     "sample_interval_ms": 612,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1202
+     }
+    },
+    {
+     "sample_interval_ms": 1000,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1212
+     }
+    },
+    {
+     "sample_interval_ms": 1000,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1222
+     }
+    },
+    {
+     "sample_interval_ms": 1621,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1232
+     }
+    },
+    {
+     "sample_interval_ms": 368,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1242
+     }
+    },
+    {
+     "sample_interval_ms": 594,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1252
+     }
+    },
+    {
+     "sample_interval_ms": 594,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1262
+     }
+    },
+    {
+     "sample_interval_ms": 967,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1272
+     }
+    },
+    {
+     "sample_interval_ms": 638,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1282
+     }
+    },
+    {
+     "sample_interval_ms": 1034,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1292
+     }
+    },
+    {
+     "sample_interval_ms": 1034,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1302
+     }
+    },
+    {
+     "sample_interval_ms": 1666,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1312
+     }
+    },
+    {
+     "sample_interval_ms": 882,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1322
+     }
+    },
+    {
+     "sample_interval_ms": 1428,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1332
+     }
+    },
+    {
+     "sample_interval_ms": 1428,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1342
+     }
+    },
+    {
+     "sample_interval_ms": 2307,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1352
+     }
+    },
+    {
+     "sample_interval_ms": 476,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1362
+     }
+    },
+    {
+     "sample_interval_ms": 769,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1372
+     }
+    },
+    {
+     "sample_interval_ms": 769,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1382
+     }
+    },
+    {
+     "sample_interval_ms": 1250,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1392
+     }
+    },
+    {
+     "sample_interval_ms": 833,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1402
+     }
+    },
+    {
+     "sample_interval_ms": 1333,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1412
+     }
+    },
+    {
+     "sample_interval_ms": 1333,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1422
+     }
+    },
+    {
+     "sample_interval_ms": 2222,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1432
+     }
+    },
+    {
+     "sample_interval_ms": 1153,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1442
+     }
+    },
+    {
+     "sample_interval_ms": 1875,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1452
+     }
+    },
+    {
+     "sample_interval_ms": 1875,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1462
+     }
+    },
+    {
+     "sample_interval_ms": 3000,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1472
+     }
+    },
+    {
+     "sample_interval_ms": 582,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1482
+     }
+    },
+    {
+     "sample_interval_ms": 937,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1492
+     }
+    },
+    {
+     "sample_interval_ms": 937,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1502
+     }
+    },
+    {
+     "sample_interval_ms": 1538,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1512
+     }
+    },
+    {
+     "sample_interval_ms": 1016,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1522
+     }
+    },
+    {
+     "sample_interval_ms": 1666,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1532
+     }
+    },
+    {
+     "sample_interval_ms": 1666,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1542
+     }
+    },
+    {
+     "sample_interval_ms": 2727,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1552
+     }
+    },
+    {
+     "sample_interval_ms": 1395,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1562
+     }
+    },
+    {
+     "sample_interval_ms": 2307,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1572
+     }
+    },
+    {
+     "sample_interval_ms": 2307,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1582
+     }
+    },
+    {
+     "sample_interval_ms": 3750,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1592
+     }
+    },
+    {
+     "sample_interval_ms": 681,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1602
+     }
+    },
+    {
+     "sample_interval_ms": 1111,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1612
+     }
+    },
+    {
+     "sample_interval_ms": 1111,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1622
+     }
+    },
+    {
+     "sample_interval_ms": 1818,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1632
+     }
+    },
+    {
+     "sample_interval_ms": 1200,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1642
+     }
+    },
+    {
+     "sample_interval_ms": 1935,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1652
+     }
+    },
+    {
+     "sample_interval_ms": 1935,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1662
+     }
+    },
+    {
+     "sample_interval_ms": 3157,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1672
+     }
+    },
+    {
+     "sample_interval_ms": 1666,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1682
+     }
+    },
+    {
+     "sample_interval_ms": 2727,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1692
+     }
+    },
+    {
+     "sample_interval_ms": 2727,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1702
+     }
+    },
+    {
+     "sample_interval_ms": 4285,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 55,
+      "upper_bound": 60,
+      "seed": 1712
+     }
+    }
+   ]
+  },
+  {
+   "name": "startup_time",
+   "sample_interval_ms": 720,
+   "non_negative": true,
+   "series": [
+    {
+     "sample_interval_ms": 136,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1003
+     }
+    },
+    {
+     "sample_interval_ms": 222,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1013
+     },
+     "phases": [
+      {
+       "start_offset_ms": 5700000,
+       "end_offset_ms": 6600000,
+       "ramp_ms": 120000,
+       "change": {
+        "scale": {
+         "factor": 2.0
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 222,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1023
+     }
+    },
+    {
+     "sample_interval_ms": 359,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1033
+     }
+    },
+    {
+     "sample_interval_ms": 238,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1043
+     }
+    },
+    {
+     "sample_interval_ms": 387,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1053
+     },
+     "phases": [
+      {
+       "start_offset_ms": 5700000,
+       "end_offset_ms": 6600000,
+       "ramp_ms": 120000,
+       "change": {
+        "scale": {
+         "factor": 2.0
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 387,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1063
+     }
+    },
+    {
+     "sample_interval_ms": 625,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1073
+     }
+    },
+    {
+     "sample_interval_ms": 329,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1083
+     }
+    },
+    {
+     "sample_interval_ms": 535,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1093
+     },
+     "phases": [
+      {
+       "start_offset_ms": 5700000,
+       "end_offset_ms": 6600000,
+       "ramp_ms": 120000,
+       "change": {
+        "scale": {
+         "factor": 2.0
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 535,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1103
+     }
+    },
+    {
+     "sample_interval_ms": 869,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1113
+     }
+    },
+    {
+     "sample_interval_ms": 255,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1123
+     }
+    },
+    {
+     "sample_interval_ms": 413,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1133
+     },
+     "phases": [
+      {
+       "start_offset_ms": 5700000,
+       "end_offset_ms": 6600000,
+       "ramp_ms": 120000,
+       "change": {
+        "scale": {
+         "factor": 2.0
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 413,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1143
+     }
+    },
+    {
+     "sample_interval_ms": 674,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1153
+     }
+    },
+    {
+     "sample_interval_ms": 444,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1163
+     }
+    },
+    {
+     "sample_interval_ms": 722,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1173
+     },
+     "phases": [
+      {
+       "start_offset_ms": 5700000,
+       "end_offset_ms": 6600000,
+       "ramp_ms": 120000,
+       "change": {
+        "scale": {
+         "factor": 2.0
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 722,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1183
+     }
+    },
+    {
+     "sample_interval_ms": 1176,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1193
+     }
+    },
+    {
+     "sample_interval_ms": 612,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1203
+     }
+    },
+    {
+     "sample_interval_ms": 1000,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1213
+     },
+     "phases": [
+      {
+       "start_offset_ms": 5700000,
+       "end_offset_ms": 6600000,
+       "ramp_ms": 120000,
+       "change": {
+        "scale": {
+         "factor": 2.0
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 1000,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1223
+     }
+    },
+    {
+     "sample_interval_ms": 1621,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1233
+     }
+    },
+    {
+     "sample_interval_ms": 368,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1243
+     }
+    },
+    {
+     "sample_interval_ms": 594,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1253
+     },
+     "phases": [
+      {
+       "start_offset_ms": 5700000,
+       "end_offset_ms": 6600000,
+       "ramp_ms": 120000,
+       "change": {
+        "scale": {
+         "factor": 2.0
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 594,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1263
+     }
+    },
+    {
+     "sample_interval_ms": 967,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1273
+     }
+    },
+    {
+     "sample_interval_ms": 638,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1283
+     }
+    },
+    {
+     "sample_interval_ms": 1034,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1293
+     },
+     "phases": [
+      {
+       "start_offset_ms": 5700000,
+       "end_offset_ms": 6600000,
+       "ramp_ms": 120000,
+       "change": {
+        "scale": {
+         "factor": 2.0
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 1034,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1303
+     }
+    },
+    {
+     "sample_interval_ms": 1666,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1313
+     }
+    },
+    {
+     "sample_interval_ms": 882,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1323
+     }
+    },
+    {
+     "sample_interval_ms": 1428,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1333
+     },
+     "phases": [
+      {
+       "start_offset_ms": 5700000,
+       "end_offset_ms": 6600000,
+       "ramp_ms": 120000,
+       "change": {
+        "scale": {
+         "factor": 2.0
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 1428,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1343
+     }
+    },
+    {
+     "sample_interval_ms": 2307,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1353
+     }
+    },
+    {
+     "sample_interval_ms": 476,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1363
+     }
+    },
+    {
+     "sample_interval_ms": 769,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1373
+     },
+     "phases": [
+      {
+       "start_offset_ms": 5700000,
+       "end_offset_ms": 6600000,
+       "ramp_ms": 120000,
+       "change": {
+        "scale": {
+         "factor": 2.0
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 769,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1383
+     }
+    },
+    {
+     "sample_interval_ms": 1250,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1393
+     }
+    },
+    {
+     "sample_interval_ms": 833,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1403
+     }
+    },
+    {
+     "sample_interval_ms": 1333,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1413
+     },
+     "phases": [
+      {
+       "start_offset_ms": 5700000,
+       "end_offset_ms": 6600000,
+       "ramp_ms": 120000,
+       "change": {
+        "scale": {
+         "factor": 2.0
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 1333,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1423
+     }
+    },
+    {
+     "sample_interval_ms": 2222,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1433
+     }
+    },
+    {
+     "sample_interval_ms": 1153,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1443
+     }
+    },
+    {
+     "sample_interval_ms": 1875,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1453
+     },
+     "phases": [
+      {
+       "start_offset_ms": 5700000,
+       "end_offset_ms": 6600000,
+       "ramp_ms": 120000,
+       "change": {
+        "scale": {
+         "factor": 2.0
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 1875,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1463
+     }
+    },
+    {
+     "sample_interval_ms": 3000,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1473
+     }
+    },
+    {
+     "sample_interval_ms": 582,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1483
+     }
+    },
+    {
+     "sample_interval_ms": 937,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1493
+     },
+     "phases": [
+      {
+       "start_offset_ms": 5700000,
+       "end_offset_ms": 6600000,
+       "ramp_ms": 120000,
+       "change": {
+        "scale": {
+         "factor": 2.0
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 937,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1503
+     }
+    },
+    {
+     "sample_interval_ms": 1538,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1513
+     }
+    },
+    {
+     "sample_interval_ms": 1016,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1523
+     }
+    },
+    {
+     "sample_interval_ms": 1666,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1533
+     },
+     "phases": [
+      {
+       "start_offset_ms": 5700000,
+       "end_offset_ms": 6600000,
+       "ramp_ms": 120000,
+       "change": {
+        "scale": {
+         "factor": 2.0
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 1666,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1543
+     }
+    },
+    {
+     "sample_interval_ms": 2727,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1553
+     }
+    },
+    {
+     "sample_interval_ms": 1395,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1563
+     }
+    },
+    {
+     "sample_interval_ms": 2307,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1573
+     },
+     "phases": [
+      {
+       "start_offset_ms": 5700000,
+       "end_offset_ms": 6600000,
+       "ramp_ms": 120000,
+       "change": {
+        "scale": {
+         "factor": 2.0
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 2307,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1583
+     }
+    },
+    {
+     "sample_interval_ms": 3750,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1593
+     }
+    },
+    {
+     "sample_interval_ms": 681,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1603
+     }
+    },
+    {
+     "sample_interval_ms": 1111,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1613
+     },
+     "phases": [
+      {
+       "start_offset_ms": 5700000,
+       "end_offset_ms": 6600000,
+       "ramp_ms": 120000,
+       "change": {
+        "scale": {
+         "factor": 2.0
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 1111,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1623
+     }
+    },
+    {
+     "sample_interval_ms": 1818,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1633
+     }
+    },
+    {
+     "sample_interval_ms": 1200,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1643
+     }
+    },
+    {
+     "sample_interval_ms": 1935,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1653
+     },
+     "phases": [
+      {
+       "start_offset_ms": 5700000,
+       "end_offset_ms": 6600000,
+       "ramp_ms": 120000,
+       "change": {
+        "scale": {
+         "factor": 2.0
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 1935,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1663
+     }
+    },
+    {
+     "sample_interval_ms": 3157,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1673
+     }
+    },
+    {
+     "sample_interval_ms": 1666,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1683
+     }
+    },
+    {
+     "sample_interval_ms": 2727,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1693
+     },
+     "phases": [
+      {
+       "start_offset_ms": 5700000,
+       "end_offset_ms": 6600000,
+       "ramp_ms": 120000,
+       "change": {
+        "scale": {
+         "factor": 2.0
+        }
+       }
+      }
+     ]
+    },
+    {
+     "sample_interval_ms": 2727,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1703
+     }
+    },
+    {
+     "sample_interval_ms": 4285,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "pareto",
+      "alpha": 3.0,
+      "scale": 1.0,
+      "seed": 1713
+     }
+    }
+   ]
+  },
+  {
+   "name": "device_id",
+   "sample_interval_ms": 720,
+   "floor": true,
+   "series": [
+    {
+     "sample_interval_ms": 136,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 1317,
+      "seed": 1004
+     }
+    },
+    {
+     "sample_interval_ms": 222,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 810,
+      "seed": 1014
+     }
+    },
+    {
+     "sample_interval_ms": 222,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 810,
+      "seed": 1024
+     }
+    },
+    {
+     "sample_interval_ms": 359,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 501,
+      "seed": 1034
+     }
+    },
+    {
+     "sample_interval_ms": 238,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 756,
+      "seed": 1044
+     }
+    },
+    {
+     "sample_interval_ms": 387,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 465,
+      "seed": 1054
+     }
+    },
+    {
+     "sample_interval_ms": 387,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 465,
+      "seed": 1064
+     }
+    },
+    {
+     "sample_interval_ms": 625,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 288,
+      "seed": 1074
+     }
+    },
+    {
+     "sample_interval_ms": 329,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 546,
+      "seed": 1084
+     }
+    },
+    {
+     "sample_interval_ms": 535,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 336,
+      "seed": 1094
+     }
+    },
+    {
+     "sample_interval_ms": 535,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 336,
+      "seed": 1104
+     }
+    },
+    {
+     "sample_interval_ms": 869,
+     "labels": {
+      "city": "city-0",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 207,
+      "seed": 1114
+     }
+    },
+    {
+     "sample_interval_ms": 255,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 705,
+      "seed": 1124
+     }
+    },
+    {
+     "sample_interval_ms": 413,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 435,
+      "seed": 1134
+     }
+    },
+    {
+     "sample_interval_ms": 413,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 435,
+      "seed": 1144
+     }
+    },
+    {
+     "sample_interval_ms": 674,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 267,
+      "seed": 1154
+     }
+    },
+    {
+     "sample_interval_ms": 444,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 405,
+      "seed": 1164
+     }
+    },
+    {
+     "sample_interval_ms": 722,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 249,
+      "seed": 1174
+     }
+    },
+    {
+     "sample_interval_ms": 722,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 249,
+      "seed": 1184
+     }
+    },
+    {
+     "sample_interval_ms": 1176,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 153,
+      "seed": 1194
+     }
+    },
+    {
+     "sample_interval_ms": 612,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 294,
+      "seed": 1204
+     }
+    },
+    {
+     "sample_interval_ms": 1000,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 180,
+      "seed": 1214
+     }
+    },
+    {
+     "sample_interval_ms": 1000,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 180,
+      "seed": 1224
+     }
+    },
+    {
+     "sample_interval_ms": 1621,
+     "labels": {
+      "city": "city-1",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 111,
+      "seed": 1234
+     }
+    },
+    {
+     "sample_interval_ms": 368,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 489,
+      "seed": 1244
+     }
+    },
+    {
+     "sample_interval_ms": 594,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 303,
+      "seed": 1254
+     }
+    },
+    {
+     "sample_interval_ms": 594,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 303,
+      "seed": 1264
+     }
+    },
+    {
+     "sample_interval_ms": 967,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 186,
+      "seed": 1274
+     }
+    },
+    {
+     "sample_interval_ms": 638,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 282,
+      "seed": 1284
+     }
+    },
+    {
+     "sample_interval_ms": 1034,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 174,
+      "seed": 1294
+     }
+    },
+    {
+     "sample_interval_ms": 1034,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 174,
+      "seed": 1304
+     }
+    },
+    {
+     "sample_interval_ms": 1666,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 108,
+      "seed": 1314
+     }
+    },
+    {
+     "sample_interval_ms": 882,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 204,
+      "seed": 1324
+     }
+    },
+    {
+     "sample_interval_ms": 1428,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 126,
+      "seed": 1334
+     }
+    },
+    {
+     "sample_interval_ms": 1428,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 126,
+      "seed": 1344
+     }
+    },
+    {
+     "sample_interval_ms": 2307,
+     "labels": {
+      "city": "city-2",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 78,
+      "seed": 1354
+     }
+    },
+    {
+     "sample_interval_ms": 476,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 378,
+      "seed": 1364
+     }
+    },
+    {
+     "sample_interval_ms": 769,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 234,
+      "seed": 1374
+     }
+    },
+    {
+     "sample_interval_ms": 769,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 234,
+      "seed": 1384
+     }
+    },
+    {
+     "sample_interval_ms": 1250,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 144,
+      "seed": 1394
+     }
+    },
+    {
+     "sample_interval_ms": 833,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 216,
+      "seed": 1404
+     }
+    },
+    {
+     "sample_interval_ms": 1333,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 135,
+      "seed": 1414
+     }
+    },
+    {
+     "sample_interval_ms": 1333,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 135,
+      "seed": 1424
+     }
+    },
+    {
+     "sample_interval_ms": 2222,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 81,
+      "seed": 1434
+     }
+    },
+    {
+     "sample_interval_ms": 1153,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 156,
+      "seed": 1444
+     }
+    },
+    {
+     "sample_interval_ms": 1875,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 96,
+      "seed": 1454
+     }
+    },
+    {
+     "sample_interval_ms": 1875,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 96,
+      "seed": 1464
+     }
+    },
+    {
+     "sample_interval_ms": 3000,
+     "labels": {
+      "city": "city-3",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 60,
+      "seed": 1474
+     }
+    },
+    {
+     "sample_interval_ms": 582,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 309,
+      "seed": 1484
+     }
+    },
+    {
+     "sample_interval_ms": 937,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 192,
+      "seed": 1494
+     }
+    },
+    {
+     "sample_interval_ms": 937,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 192,
+      "seed": 1504
+     }
+    },
+    {
+     "sample_interval_ms": 1538,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 117,
+      "seed": 1514
+     }
+    },
+    {
+     "sample_interval_ms": 1016,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 177,
+      "seed": 1524
+     }
+    },
+    {
+     "sample_interval_ms": 1666,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 108,
+      "seed": 1534
+     }
+    },
+    {
+     "sample_interval_ms": 1666,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 108,
+      "seed": 1544
+     }
+    },
+    {
+     "sample_interval_ms": 2727,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 66,
+      "seed": 1554
+     }
+    },
+    {
+     "sample_interval_ms": 1395,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 129,
+      "seed": 1564
+     }
+    },
+    {
+     "sample_interval_ms": 2307,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 78,
+      "seed": 1574
+     }
+    },
+    {
+     "sample_interval_ms": 2307,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 78,
+      "seed": 1584
+     }
+    },
+    {
+     "sample_interval_ms": 3750,
+     "labels": {
+      "city": "city-4",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 48,
+      "seed": 1594
+     }
+    },
+    {
+     "sample_interval_ms": 681,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 264,
+      "seed": 1604
+     }
+    },
+    {
+     "sample_interval_ms": 1111,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-0",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 162,
+      "seed": 1614
+     }
+    },
+    {
+     "sample_interval_ms": 1111,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 162,
+      "seed": 1624
+     }
+    },
+    {
+     "sample_interval_ms": 1818,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-0",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 99,
+      "seed": 1634
+     }
+    },
+    {
+     "sample_interval_ms": 1200,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 150,
+      "seed": 1644
+     }
+    },
+    {
+     "sample_interval_ms": 1935,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-1",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 93,
+      "seed": 1654
+     }
+    },
+    {
+     "sample_interval_ms": 1935,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 93,
+      "seed": 1664
+     }
+    },
+    {
+     "sample_interval_ms": 3157,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-1",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 57,
+      "seed": 1674
+     }
+    },
+    {
+     "sample_interval_ms": 1666,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 108,
+      "seed": 1684
+     }
+    },
+    {
+     "sample_interval_ms": 2727,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-2",
+      "cdn": "cdn-0",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 66,
+      "seed": 1694
+     }
+    },
+    {
+     "sample_interval_ms": 2727,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "mobile"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 66,
+      "seed": 1704
+     }
+    },
+    {
+     "sample_interval_ms": 4285,
+     "labels": {
+      "city": "city-5",
+      "isp": "isp-2",
+      "cdn": "cdn-1",
+      "device": "tv"
+     },
+     "baseline": {
+      "kind": "uniform",
+      "lower_bound": 0,
+      "upper_bound": 42,
+      "seed": 1714
+     }
+    }
+   ]
+  }
+ ],
+ "queries": [
+  {
+   "id": "entropy_bitrate",
+   "promql": "entropy_over_time(bitrate[1m])",
+   "window_ms": 60000,
+   "interval_ms": 60000,
+   "unit": "bits",
+   "truth": {"statistic": "entropy", "metric": "bitrate"}
+  },
+  {
+   "id": "buffering_l1",
+   "promql": "sum_over_time(buffering[1m])",
+   "window_ms": 60000,
+   "interval_ms": 60000,
+   "unit": "s"
+  },
+  {
+   "id": "sessions",
+   "promql": "count_over_time(bitrate[1m])",
+   "window_ms": 60000,
+   "interval_ms": 60000,
+   "unit": "sessions"
+  },
+  {
+   "id": "distinct_devices",
+   "promql": "distinct_over_time(device_id[1m])",
+   "window_ms": 60000,
+   "interval_ms": 60000,
+   "unit": "devices",
+   "truth": {"statistic": "distinct", "metric": "device_id"}
+  },
+  {
+   "id": "startup_p95",
+   "promql": "quantile_over_time(0.95, startup_time[5m])",
+   "window_ms": 300000,
+   "interval_ms": 60000,
+   "unit": "s",
+   "accuracy_metric": "rank",
+   "truth": {"statistic": {"quantile": 0.95}, "metric": "startup_time"}
+  },
+  {
+   "id": "rebuffer_ratio",
+   "promql": "sum_over_time(buffering[5m]) / (sum_over_time(play_time[5m]) + sum_over_time(buffering[5m]))",
+   "window_ms": 300000,
+   "interval_ms": 60000,
+   "unit": "ratio"
+  }
+ ]
+}

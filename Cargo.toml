@@ -1,4 +1,4 @@
-# Workspace manifest for sketch-bench → sketchlib-tool.
+# Workspace manifest for sketch-bench.
 [workspace]
 resolver = "2"
 members = [
@@ -6,6 +6,7 @@ members = [
     "aqpbm-core",
     "sketch-bench",
     "aqpbm-cli",
+    "aqpbm-usecase",
     "aqpbm-planeval",
     "aqpbm-systemeval",
 ]
@@ -60,6 +61,7 @@ asap_sketchlib = { git = "https://github.com/ProjectASAP/asap_sketchlib", rev = 
 aqpbm-datagen = { path = "aqpbm-datagen" }
 aqpbm-core = { path = "aqpbm-core", default-features = false }
 sketch-bench = { path = "sketch-bench" }
+aqpbm-usecase = { path = "aqpbm-usecase" }
 # sketch-runtime = { path = "sketch-runtime" }  # parked;
 
 [profile.release]
