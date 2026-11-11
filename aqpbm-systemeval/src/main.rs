@@ -9,11 +9,11 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use aqpbm_usecase::data::generate;
+use aqpbm_usecase::output::{SystemevalOutput, OUTPUT_SCHEMA_VERSION};
 use aqpbm_usecase::score::read_answers;
 use aqpbm_usecase::spec::Spec;
 use clap::builder::PossibleValuesParser;
 use clap::Parser;
-use serde_json::json;
 
 use crate::query::{ask, Collected};
 use crate::write::{Options, Writer};
@@ -125,7 +125,7 @@ fn main() -> Result<()> {
         "{}: {} samples at {:.0} samples/s, {} evaluation times, {:.1} s",
         system.name(),
         writer.samples(),
-        write["samples_per_second"].as_f64().unwrap_or_default(),
+        write.samples_per_second,
         due.len(),
         run_seconds
     );
@@ -136,18 +136,19 @@ fn main() -> Result<()> {
             .with_context(|| format!("answers of {}", query.id))?;
         eprintln!(
             "{}: {} evaluations, {} failed",
-            query.id, out["evaluations"], out["failed_evaluations"]
+            query.id, out.evaluations, out.failed_evaluations
         );
         queries.push(out);
     }
-    let document = json!({
-        "use_case": spec.use_case,
-        "system": system.name(),
-        "samples": writer.samples(),
-        "run_seconds": run_seconds,
-        "write": write,
-        "queries": queries,
-    });
+    let document = SystemevalOutput {
+        schema_version: OUTPUT_SCHEMA_VERSION,
+        use_case: spec.use_case.clone(),
+        system: system.name().to_string(),
+        samples: writer.samples(),
+        run_seconds,
+        write,
+        queries,
+    };
     std::fs::write(&args.out, serde_json::to_string(&document)?)
         .with_context(|| format!("writing {}", args.out.display()))?;
     Ok(())

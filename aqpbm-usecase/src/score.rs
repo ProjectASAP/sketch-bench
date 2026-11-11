@@ -3,10 +3,11 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use aqpbm_core::accuracy::scalar_error;
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use crate::accuracy::{keyed, without_name, AnswerAt, Labels, QueryTruth, Scores};
 use crate::data::Series;
+use crate::output::{Answer, TruthCell};
 use crate::spec::QuerySpec;
 
 pub fn read_answers(path: &Path) -> Result<BTreeMap<String, Vec<AnswerAt>>> {
@@ -37,8 +38,8 @@ pub fn read_answers(path: &Path) -> Result<BTreeMap<String, Vec<AnswerAt>>> {
 }
 
 pub struct Scored {
-    pub answers: Vec<Value>,
-    pub computed_truth: Option<Vec<Value>>,
+    pub answers: Vec<Answer>,
+    pub computed_truth: Option<Vec<TruthCell>>,
 }
 
 pub fn score(
@@ -68,22 +69,35 @@ pub fn score(
     let answers = answered
         .iter()
         .map(|(t, labels, value)| {
-            let mut answer = json!({"time": t, "series": labels, "value": value});
             let key = (*t, without_name(labels));
-            if let Some(&exact_value) = reference.as_ref().and_then(|r| r.get(&key)) {
-                let mut errors = scalar_error(exact_value, &[*value]);
-                if let Some(rank_error) = rank_errors.get(&key).and_then(|s| s.get("rank_error")) {
-                    errors.insert("rank_error".into(), *rank_error);
-                }
-                answer["exact_plan"] = json!(errors);
+            let exact_plan = reference
+                .as_ref()
+                .and_then(|r| r.get(&key))
+                .map(|&exact_value| {
+                    let mut errors = scalar_error(exact_value, &[*value]);
+                    if let Some(rank_error) =
+                        rank_errors.get(&key).and_then(|s| s.get("rank_error"))
+                    {
+                        errors.insert("rank_error".into(), *rank_error);
+                    }
+                    errors
+                });
+            Answer {
+                time: *t,
+                series: labels.clone(),
+                value: *value,
+                exact_plan,
             }
-            answer
         })
         .collect();
     let computed_truth = computed_truth.map(|cells| {
         cells
             .into_iter()
-            .map(|(t, labels, scores)| json!({"time": t, "series": labels, "scores": scores}))
+            .map(|(time, series, scores)| TruthCell {
+                time,
+                series,
+                scores,
+            })
             .collect()
     });
     Ok(Scored {

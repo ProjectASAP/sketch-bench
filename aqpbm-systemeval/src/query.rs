@@ -4,9 +4,10 @@ use std::time::Instant;
 use anyhow::{bail, Context, Result};
 use aqpbm_usecase::accuracy::{AnswerAt, Labels};
 use aqpbm_usecase::data::Series;
+use aqpbm_usecase::output::{Failure, SystemevalCost, SystemevalOutcome, SystemevalQuery};
 use aqpbm_usecase::score::score;
 use aqpbm_usecase::spec::QuerySpec;
-use serde_json::{json, Value};
+use serde_json::Value;
 
 const KEPT_FAILURES: usize = 5;
 
@@ -61,8 +62,8 @@ pub fn ask(agent: &ureq::Agent, base: &str, promql: &str, time_ms: i64) -> Asked
 #[derive(Default)]
 pub struct Collected {
     answered: Vec<AnswerAt>,
-    costs: Vec<Value>,
-    failures: Vec<Value>,
+    costs: Vec<SystemevalCost>,
+    failures: Vec<Failure>,
     failed: usize,
     not_finite: usize,
     times: Vec<i64>,
@@ -86,13 +87,19 @@ impl Collected {
             Err(reason) => {
                 self.failed += 1;
                 if self.failures.len() < KEPT_FAILURES {
-                    self.failures.push(json!({"time": t, "error": reason}));
+                    self.failures.push(Failure {
+                        time: t,
+                        error: reason,
+                    });
                 }
                 None
             }
         };
-        self.costs
-            .push(json!({"time": t, "query_seconds": asked.seconds, "series_returned": returned}));
+        self.costs.push(SystemevalCost {
+            time: t,
+            query_seconds: asked.seconds,
+            series_returned: returned,
+        });
     }
 
     pub fn finish(
@@ -100,29 +107,33 @@ impl Collected {
         query: &QuerySpec,
         series: &[Series],
         exact: Option<&BTreeMap<String, Vec<AnswerAt>>>,
-    ) -> Result<Value> {
-        let mut out = json!({
-            "id": query.id,
-            "promql": query.promql,
-            "unit": query.unit,
-            "threshold": query.threshold,
-            "evaluations": self.times.len(),
-            "failed_evaluations": self.failed,
-            "failures": self.failures,
-            "not_finite_answers": self.not_finite,
-            "costs": self.costs,
-        });
-        if self.failed == self.times.len() {
-            out["unsupported"] = self
-                .failures
-                .first()
-                .map_or(json!("no evaluation answered"), |f| f["error"].clone());
-            return Ok(out);
-        }
-        let scored = score(query, series, &self.times, &self.answered, exact)
-            .with_context(|| format!("scoring {}", query.id))?;
-        out["answers"] = json!(scored.answers);
-        out["computed_truth"] = json!(scored.computed_truth);
-        Ok(out)
+    ) -> Result<SystemevalQuery> {
+        let outcome = if self.failed == self.times.len() {
+            SystemevalOutcome::Unsupported {
+                unsupported: self
+                    .failures
+                    .first()
+                    .map_or_else(|| "no evaluation answered".to_string(), |f| f.error.clone()),
+            }
+        } else {
+            let scored = score(query, series, &self.times, &self.answered, exact)
+                .with_context(|| format!("scoring {}", query.id))?;
+            SystemevalOutcome::Scored {
+                answers: scored.answers,
+                computed_truth: scored.computed_truth,
+            }
+        };
+        Ok(SystemevalQuery {
+            id: query.id.clone(),
+            promql: query.promql.clone(),
+            unit: query.unit.clone(),
+            threshold: query.threshold,
+            evaluations: self.times.len(),
+            failed_evaluations: self.failed,
+            failures: self.failures,
+            not_finite_answers: self.not_finite,
+            costs: self.costs,
+            outcome,
+        })
     }
 }

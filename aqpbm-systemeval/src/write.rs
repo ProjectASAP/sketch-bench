@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use aqpbm_usecase::data::Series;
-use serde_json::{json, Value};
+use aqpbm_usecase::output::WriteSummary;
 
 use crate::remote_write::{encode, Label, Sample, TimeSeries, WriteRequest};
 use crate::system::{Sent, System};
@@ -165,22 +165,22 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
-    pub fn summary(&self) -> Result<Value> {
+    pub fn summary(&self) -> Result<WriteSummary> {
         let status = self.system.status(&self.agent, &self.base)?;
         let write_seconds = self.send_seconds + self.barrier_seconds;
-        Ok(json!({
-            "samples": self.next,
-            "requests": self.requests,
-            "compressed_bytes": self.compressed_bytes,
-            "retries": self.retries,
-            "speed": self.options.speed,
-            "batch_samples": self.options.batch_samples,
-            "send_seconds": self.send_seconds,
-            "barrier_seconds": self.barrier_seconds,
-            "barriers": self.barriers,
-            "samples_per_second": self.next as f64 / write_seconds,
-            "max_lag_seconds": self.options.speed.map(|_| self.max_lag_seconds),
-            "status": status,
-        }))
+        Ok(WriteSummary {
+            samples: self.next,
+            requests: self.requests,
+            compressed_bytes: self.compressed_bytes,
+            retries: self.retries,
+            speed: self.options.speed,
+            batch_samples: self.options.batch_samples,
+            send_seconds: self.send_seconds,
+            barrier_seconds: self.barrier_seconds,
+            barriers: self.barriers,
+            samples_per_second: self.next as f64 / write_seconds,
+            max_lag_seconds: self.options.speed.map(|_| self.max_lag_seconds),
+            status,
+        })
     }
 }
