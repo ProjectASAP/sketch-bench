@@ -13,14 +13,14 @@ Examples
 --------
 Run KLL on both tracks with the default 1 M workload:
 
-    scripts/run_all.py \\
+    scripts/sketch_runs/run_all.py \\
         --workload-file input/benchmark_data_1m_int64.bin \\
         --sketches kll \\
         --report reports/$(date +%F).jsonl
 
 Include accuracy for everything:
 
-    scripts/run_all.py \\
+    scripts/sketch_runs/run_all.py \\
         --workload-file input/benchmark_data_1m_int64.bin \\
         --sketches kll,cs \\
         --with-accuracy \\
@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 # Combos to run by default. Each entry is (track, sketch, impl).

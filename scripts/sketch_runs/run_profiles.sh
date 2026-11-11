@@ -7,9 +7,9 @@
 # output/profiles/, plus a combined all.jsonl.
 #
 # Usage:
-#   scripts/run_profiles.sh             # build + run everything
-#   scripts/run_profiles.sh --no-build  # skip cargo build
-#   ALGORITHMS="hll kll" scripts/run_profiles.sh  # subset of algorithms
+#   scripts/sketch_runs/run_profiles.sh             # build + run everything
+#   scripts/sketch_runs/run_profiles.sh --no-build  # skip cargo build
+#   ALGORITHMS="hll kll" scripts/sketch_runs/run_profiles.sh  # subset of algorithms
 #
 # ── Key JSONL fields for analysis ──────────────────────────────
 # Identity:

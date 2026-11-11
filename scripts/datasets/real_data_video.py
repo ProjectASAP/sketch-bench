@@ -16,7 +16,7 @@ import re
 import data_root
 import video_spec
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DAY = "2024-01-01T11_2024-01-02T11"
 SPEC = os.path.join(REPO, "aqpbm-planeval", "workloads", "uc3_video_real.json")
 WINDOW_START_MS = 1704132000000

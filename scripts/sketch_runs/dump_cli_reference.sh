@@ -5,11 +5,11 @@
 # surface, and the code is changed to match it. This script dumps what clap
 # actually produces so the gap is visible. It never overwrites the target.
 #
-#   ./scripts/dump_cli_reference.sh          diff the binary against the target
-#   ./scripts/dump_cli_reference.sh --dump   print the raw dump to stdout
+#   ./scripts/sketch_runs/dump_cli_reference.sh          diff the binary against the target
+#   ./scripts/sketch_runs/dump_cli_reference.sh --dump   print the raw dump to stdout
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 TARGET=docs/aqpbm-cli-reference.md
 
 cargo build --bin approxbench >&2

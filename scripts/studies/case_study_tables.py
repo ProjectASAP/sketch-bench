@@ -10,7 +10,7 @@ grid (measured at `http`'s schema only) is a candidate.
 
 Writes OUT/<case>-<knob>-<value>.json and OUT/plan.tsv (table, SLA grid).
 
-    python3 scripts/case_study_tables.py --out DIR
+    python3 scripts/studies/case_study_tables.py --out DIR
 """
 
 import argparse

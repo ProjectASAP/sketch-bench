@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 
+import os
+import sys
 import unittest
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets"))
 
 import ddos_rules
 import rate_limit_rules

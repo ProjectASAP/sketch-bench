@@ -5,7 +5,7 @@ import itertools
 import json
 import os
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 OUT = os.path.join(REPO, "aqpbm-planeval", "workloads", "uc3_video.json")
 
 START_MS = 1767225600000

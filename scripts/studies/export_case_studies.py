@@ -12,7 +12,7 @@
 
 The RQEs are built with export_autosketch_eval_table.py's helpers, so they
 have the evaluation's shape, targets and data. Usage:
-  scripts/export_case_studies.py OUT_DIR
+  scripts/studies/export_case_studies.py OUT_DIR
 """
 
 import json

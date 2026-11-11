@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests for export_autosketch_eval_table on tiny synthetic CSVs.
 
-Run: python3 scripts/test_export_autosketch_eval_table.py
+Run: python3 scripts/studies/test_export_autosketch_eval_table.py
 """
 
 import csv

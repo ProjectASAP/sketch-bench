@@ -215,7 +215,7 @@ def check_filters(args):
             sys.exit(f"{flag}: no such {unknown}")
 
 
-HYDRA_DATAGEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "configs",
+HYDRA_DATAGEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "configs",
                              "datagen")
 HYDRA_TABLE = "hydra_saturation.csv"
 # Coverage thresholds τ: err_max_cov_τ is the worst error over the groups of

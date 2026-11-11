@@ -24,14 +24,14 @@
 # Octo-parallel rows land in `octo_throughput_results_rust.csv`.
 #
 # Usage:
-#   scripts/run_throughput.sh                       # all algorithms
-#   scripts/run_throughput.sh --variant cms         # one algorithm
-#   scripts/run_throughput.sh --workers 1,2,4,8     # octo sweep
-#   scripts/run_throughput.sh --output-dir /tmp/out
+#   scripts/sketch_runs/run_throughput.sh                       # all algorithms
+#   scripts/sketch_runs/run_throughput.sh --variant cms         # one algorithm
+#   scripts/sketch_runs/run_throughput.sh --workers 1,2,4,8     # octo sweep
+#   scripts/sketch_runs/run_throughput.sh --output-dir /tmp/out
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 VARIANT="all"
 OUTPUT_DIR="${REPO_ROOT}/output/throughput"

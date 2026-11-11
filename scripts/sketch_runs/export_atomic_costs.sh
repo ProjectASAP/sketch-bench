@@ -22,8 +22,8 @@
 # sketch-bench lookup (#524) — sketch-bench has no wrapper for it at all.
 #
 # Usage:
-#   scripts/export_atomic_costs.sh             # build + run everything
-#   scripts/export_atomic_costs.sh --no-build   # skip cargo build
+#   scripts/sketch_runs/export_atomic_costs.sh             # build + run everything
+#   scripts/sketch_runs/export_atomic_costs.sh --no-build   # skip cargo build
 #
 # Output: out/atomic_costs.json (the flat AtomicCostTable ASAPQuery loads),
 # plus out/atomic_costs_grid.jsonl (the flattened MergedRecord rows, kept for
@@ -137,7 +137,7 @@ echo "==> Flattening cost + accuracy passes into one row per grid point..." >&2
 
 echo "==> Reducing to atomic-cost table..." >&2
 # Each row names its accuracy: the metric the saturation study records for
-# the variant (scripts/study_saturation.py SKETCHES). A skipped row is a
+# the variant (scripts/studies/study_saturation.py SKETCHES). A skipped row is a
 # failed measurement; fail rather than publish a short table.
 summary=$("$BINARY" atomic-costs "$GRID_JSONL" --output "$TABLE_JSON" \
     --accuracy-metric cms-fastpath-vector2d=are_top100 \

@@ -2,7 +2,7 @@
 """Unit tests for study_saturation's pure logic, and its cost phase against a
 fake approxbench (so no real cost run happens).
 
-Run: python3 scripts/test_study_saturation.py
+Run: python3 scripts/studies/test_study_saturation.py
 """
 
 import csv
@@ -660,7 +660,7 @@ class HydraSpecTest(unittest.TestCase):
                           ["a", "b", "c"]])
 
     def test_the_eval_specs_match_their_schemas(self):
-        root = os.path.join(os.path.dirname(SCRIPT), "..", "configs", "datagen")
+        root = os.path.join(os.path.dirname(SCRIPT), "..", "..", "configs", "datagen")
 
         def read(stem):
             with open(os.path.join(root, f"{stem}.yaml")) as f:
@@ -690,7 +690,7 @@ class HydraSpecTest(unittest.TestCase):
                         self.assertEqual(field["fan_out"], field["population_size"])
             return out
         # PR #196's SCHEMAS (origin/eval/hydra-workload,
-        # scripts/export_autosketch_eval_table.py): (cardinality, skew,
+        # scripts/studies/export_autosketch_eval_table.py): (cardinality, skew,
         # child_of as a column index) per label, in schema order.
         http_schema = [(4, 0.5, None), (25, 1.1, None), (25, 1.1, 1), (4, 2.0, None)]
         self.assertEqual(labels("hydra_http"), http_schema)

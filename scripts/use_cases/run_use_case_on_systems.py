@@ -14,6 +14,8 @@ import time
 import urllib.error
 import urllib.request
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets"))
+
 import bounds
 import data_root
 import rate_limit_rules

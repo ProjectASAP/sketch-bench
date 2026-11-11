@@ -8,6 +8,8 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets"))
+
 import bounds
 import data_root
 import ddos_rules
@@ -22,7 +24,7 @@ import topk_set
 import video_rules
 from approx_rows import row, write_run
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SAMPLE_BYTES = 16
 
 

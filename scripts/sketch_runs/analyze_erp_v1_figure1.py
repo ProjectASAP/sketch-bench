@@ -95,6 +95,6 @@ summary = {
     "plotted_points": len(points),
     "median_absolute_percentage_error": mape,
     "spearman_rank_correlation": numerator / denominator,
-    "commands": "scripts/run_erp_v1_figure1.sh",
+    "commands": "scripts/sketch_runs/run_erp_v1_figure1.sh",
 }
 (out_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")

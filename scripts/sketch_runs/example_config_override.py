@@ -16,9 +16,9 @@ That is the whole contract, and this script demonstrates it end to end:
 
 Usage:
 
-    scripts/example_config_override.py              # the whole tour
-    scripts/example_config_override.py 2 4          # only those sections
-    scripts/example_config_override.py --size 1000000
+    scripts/sketch_runs/example_config_override.py              # the whole tour
+    scripts/sketch_runs/example_config_override.py 2 4          # only those sections
+    scripts/sketch_runs/example_config_override.py --size 1000000
 
 The workload is small by default so the tour finishes in under a minute. It is
 a demonstration of the parameter surface, not a measurement: read the numbers
@@ -33,7 +33,7 @@ import pathlib
 import subprocess
 import sys
 
-REPO = pathlib.Path(__file__).resolve().parent.parent
+REPO = pathlib.Path(__file__).resolve().parents[2]
 BIN = REPO / "target" / "release" / "approxbench"
 
 # Which accuracy metric to show per algorithm. Each algorithm is scored by its

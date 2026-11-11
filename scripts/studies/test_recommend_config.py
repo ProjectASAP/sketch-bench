@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests for recommend_config on tiny synthetic curve / summary CSVs.
 
-Run: python3 scripts/test_recommend_config.py
+Run: python3 scripts/studies/test_recommend_config.py
 """
 
 import csv

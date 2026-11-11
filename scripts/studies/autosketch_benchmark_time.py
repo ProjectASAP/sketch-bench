@@ -14,7 +14,7 @@ on each metric's data, and its result file gets `benchmark_secs_measured`.
 Exact accumulators have one configuration and no accuracy to check, so they
 cost nothing here.
 
-Usage: scripts/autosketch_benchmark_time.py --binary APPROXBENCH --out TIMES.json RESULT.json...
+Usage: scripts/studies/autosketch_benchmark_time.py --binary APPROXBENCH --out TIMES.json RESULT.json...
 """
 
 import argparse

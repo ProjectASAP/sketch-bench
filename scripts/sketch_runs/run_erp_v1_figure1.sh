@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 out_dir=${1:-"$repo_dir/results/erp-v1-figure1"}
 raw="$out_dir/raw.jsonl"
 if [[ -e "$raw" ]]; then
@@ -44,4 +44,4 @@ for rows in 3 5; do
   done
 done
 
-python3 "$repo_dir/scripts/analyze_erp_v1_figure1.py" "$raw" "$out_dir"
+python3 "$repo_dir/scripts/sketch_runs/analyze_erp_v1_figure1.py" "$raw" "$out_dir"

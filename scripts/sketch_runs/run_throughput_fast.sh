@@ -13,9 +13,9 @@
 # before the bench fires.
 #
 # Usage:
-#   scripts/run_throughput_fast.sh                       # all four
-#   scripts/run_throughput_fast.sh kll cms               # subset
-#   PIN_CORE=2 LOCK_FREQUENCY=1 scripts/run_throughput_fast.sh
+#   scripts/sketch_runs/run_throughput_fast.sh                       # all four
+#   scripts/sketch_runs/run_throughput_fast.sh kll cms               # subset
+#   PIN_CORE=2 LOCK_FREQUENCY=1 scripts/sketch_runs/run_throughput_fast.sh
 #
 # Env knobs:
 #   PIN_CORE         core to taskset to              (default 2)
@@ -30,7 +30,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 PIN_CORE="${PIN_CORE:-2}"
 LOCK_FREQUENCY="${LOCK_FREQUENCY:-0}"

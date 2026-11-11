@@ -8,13 +8,13 @@
 # + `--raw-csv` are paired here.
 #
 # Usage:
-#   scripts/run_accuracy.sh                  # all statistics
-#   scripts/run_accuracy.sh --variant hll
-#   scripts/run_accuracy.sh --probes 50000
+#   scripts/sketch_runs/run_accuracy.sh                  # all statistics
+#   scripts/sketch_runs/run_accuracy.sh --variant hll
+#   scripts/sketch_runs/run_accuracy.sh --probes 50000
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 VARIANT="all"
 OUTPUT_DIR="${REPO_ROOT}/output/accuracy"
