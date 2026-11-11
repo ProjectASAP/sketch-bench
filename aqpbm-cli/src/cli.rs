@@ -1,6 +1,7 @@
 //! CLI surface: the clap argument structs; the logic consuming them is in
-//! `main.rs`. Option help and grouping track `docs/aqpbm-cli-reference.md`, which
-//! `scripts/dump_cli_reference.sh` diffs the built binary against.
+//! `sketchbench.rs` and the subcommand modules. Option help and grouping track
+//! `docs/aqpbm-cli-reference.md`, which `scripts/sketch_runs/dump_cli_reference.sh`
+//! diffs the built binary against.
 
 use aqpbm_core::{MergeSplit, TrialMode};
 use clap::builder::TypedValueParser;
