@@ -148,9 +148,7 @@ async fn main() -> Result<()> {
         }
         let elapsed = started.elapsed().as_secs_f64();
         let scored = score(
-            &spec,
             query,
-            &arm,
             &series,
             &times,
             &answered,

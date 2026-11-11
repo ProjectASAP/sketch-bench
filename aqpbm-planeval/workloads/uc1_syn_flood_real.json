@@ -32,7 +32,8 @@
    "window_ms": 10000,
    "interval_ms": 5000,
    "threshold": 8.5,
-   "unit": "entropy"
+   "unit": "entropy",
+   "truth": {"statistic": "entropy", "metric": "src_ip", "matchers": {"vm": "instance1"}}
   },
   {
    "id": "distinct_10s",
@@ -40,7 +41,8 @@
    "window_ms": 10000,
    "interval_ms": 5000,
    "threshold": 3000,
-   "unit": "addresses"
+   "unit": "addresses",
+   "truth": {"statistic": "distinct", "metric": "src_ip", "matchers": {"vm": "instance1"}}
   },
   {
    "id": "distinct_5s",
@@ -48,7 +50,8 @@
    "window_ms": 5000,
    "interval_ms": 5000,
    "threshold": 1700,
-   "unit": "addresses"
+   "unit": "addresses",
+   "truth": {"statistic": "distinct", "metric": "src_ip", "matchers": {"vm": "instance1"}}
   },
   {
    "id": "packets_5s",
@@ -64,7 +67,8 @@
    "window_ms": 60000,
    "interval_ms": 5000,
    "threshold": 18000,
-   "unit": "addresses"
+   "unit": "addresses",
+   "truth": {"statistic": "distinct", "metric": "src_ip", "matchers": {"vm": "instance1"}}
   }
  ]
 }

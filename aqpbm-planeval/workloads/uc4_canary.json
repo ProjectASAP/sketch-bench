@@ -58,9 +58,9 @@
     }
   ],
   "queries": [
-    {"id": "p99_canary", "promql": "quantile_over_time(0.99, request_latency{version=\"canary\"}[5m])", "window_ms": 300000, "interval_ms": 60000, "unit": "s", "accuracy_metric": "rank"},
-    {"id": "p95_canary", "promql": "quantile_over_time(0.95, request_latency{version=\"canary\"}[5m])", "window_ms": 300000, "interval_ms": 60000, "unit": "s", "accuracy_metric": "rank"},
-    {"id": "p99_stable", "promql": "quantile_over_time(0.99, request_latency{version=\"stable\"}[5m])", "window_ms": 300000, "interval_ms": 60000, "unit": "s", "accuracy_metric": "rank"},
+    {"id": "p99_canary", "promql": "quantile_over_time(0.99, request_latency{version=\"canary\"}[5m])", "window_ms": 300000, "interval_ms": 60000, "unit": "s", "accuracy_metric": "rank", "truth": {"statistic": {"quantile": 0.99}, "metric": "request_latency", "matchers": {"version": "canary"}}},
+    {"id": "p95_canary", "promql": "quantile_over_time(0.95, request_latency{version=\"canary\"}[5m])", "window_ms": 300000, "interval_ms": 60000, "unit": "s", "accuracy_metric": "rank", "truth": {"statistic": {"quantile": 0.95}, "metric": "request_latency", "matchers": {"version": "canary"}}},
+    {"id": "p99_stable", "promql": "quantile_over_time(0.99, request_latency{version=\"stable\"}[5m])", "window_ms": 300000, "interval_ms": 60000, "unit": "s", "accuracy_metric": "rank", "truth": {"statistic": {"quantile": 0.99}, "metric": "request_latency", "matchers": {"version": "stable"}}},
     {"id": "success_rate_canary", "promql": "sum(count_over_time(requests{version=\"canary\", code=\"200\"}[5m])) / sum(count_over_time(requests{version=\"canary\"}[5m]))", "window_ms": 300000, "interval_ms": 60000, "unit": "ratio"}
   ]
 }

@@ -107,6 +107,26 @@ pub struct QuerySpec {
     pub unit: String,
     #[serde(default)]
     pub accuracy_metric: Option<String>,
+    #[serde(default)]
+    pub truth: Option<Truth>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Truth {
+    pub statistic: Statistic,
+    pub metric: String,
+    #[serde(default)]
+    pub matchers: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub enum Statistic {
+    Quantile(f64),
+    Entropy,
+    Distinct,
+    TopK { k: usize, by: String },
 }
 
 impl MetricSpec {

@@ -78,12 +78,14 @@ def queries():
     every = {"window_ms": MINUTE, "interval_ms": MINUTE}
     five = {"window_ms": 5 * MINUTE, "interval_ms": MINUTE}
     return [
-        {"id": "entropy_bitrate", "promql": "entropy_over_time(bitrate[1m])", **every, "unit": "bits"},
+        {"id": "entropy_bitrate", "promql": "entropy_over_time(bitrate[1m])", **every, "unit": "bits",
+         "truth": {"statistic": "entropy", "metric": "bitrate"}},
         {"id": "buffering_l1", "promql": "sum_over_time(buffering[1m])", **every, "unit": "s"},
         {"id": "sessions", "promql": "count_over_time(bitrate[1m])", **every, "unit": "sessions"},
-        {"id": "distinct_devices", "promql": "distinct_over_time(device_id[1m])", **every, "unit": "devices"},
+        {"id": "distinct_devices", "promql": "distinct_over_time(device_id[1m])", **every, "unit": "devices",
+         "truth": {"statistic": "distinct", "metric": "device_id"}},
         {"id": "startup_p95", "promql": "quantile_over_time(0.95, startup_time[5m])", **five, "unit": "s",
-         "accuracy_metric": "rank"},
+         "accuracy_metric": "rank", "truth": {"statistic": {"quantile": 0.95}, "metric": "startup_time"}},
         {"id": "rebuffer_ratio",
          "promql": "sum_over_time(buffering[5m]) / (sum_over_time(play_time[5m]) + sum_over_time(buffering[5m]))",
          **five, "unit": "ratio"},

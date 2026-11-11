@@ -28,14 +28,16 @@
    "promql": "topk(10, sum by (client_id) (count_over_time(requests[5m])))",
    "window_ms": 300000,
    "interval_ms": 60000,
-   "unit": "requests"
+   "unit": "requests",
+   "truth": {"statistic": {"top_k": {"k": 10, "by": "client_id"}}, "metric": "requests"}
   },
   {
    "id": "top10_clients_1m",
    "promql": "topk(10, sum by (client_id) (count_over_time(requests[1m])))",
    "window_ms": 60000,
    "interval_ms": 60000,
-   "unit": "requests"
+   "unit": "requests",
+   "truth": {"statistic": {"top_k": {"k": 10, "by": "client_id"}}, "metric": "requests"}
   }
  ]
 }

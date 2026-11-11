@@ -139,7 +139,10 @@ def with_bound_queries(spec, max_error):
         phi = float(found.group(1))
         for suffix, shifted in ((LOWER, max(0.0, phi - max_error)), (UPPER, min(1.0, phi + max_error))):
             promql = q["promql"][:found.start(1)] + f"{shifted:g}" + q["promql"][found.end(1):]
-            extra.append({**q, "id": q["id"] + suffix, "promql": promql})
+            shifted_query = {**q, "id": q["id"] + suffix, "promql": promql}
+            if "truth" in q:
+                shifted_query["truth"] = {**q["truth"], "statistic": {"quantile": float(f"{shifted:g}")}}
+            extra.append(shifted_query)
     return {**spec, "queries": spec["queries"] + extra}
 
 

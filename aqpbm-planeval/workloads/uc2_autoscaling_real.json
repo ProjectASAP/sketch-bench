@@ -54,7 +54,8 @@
    "window_ms": 300000,
    "interval_ms": 60000,
    "unit": "cores",
-   "accuracy_metric": "rank"
+   "accuracy_metric": "rank",
+   "truth": {"statistic": {"quantile": 0.95}, "metric": "container_cpu", "matchers": {"dimension": "used"}}
   },
   {
    "id": "p95_memory",
@@ -62,7 +63,8 @@
    "window_ms": 300000,
    "interval_ms": 60000,
    "unit": "bytes",
-   "accuracy_metric": "rank"
+   "accuracy_metric": "rank",
+   "truth": {"statistic": {"quantile": 0.95}, "metric": "container_memory", "matchers": {"dimension": "used"}}
   },
   {
    "id": "p50_cpu_1h",
@@ -70,7 +72,8 @@
    "window_ms": 3600000,
    "interval_ms": 60000,
    "unit": "cores",
-   "accuracy_metric": "rank"
+   "accuracy_metric": "rank",
+   "truth": {"statistic": {"quantile": 0.5}, "metric": "container_cpu", "matchers": {"dimension": "used"}}
   },
   {
    "id": "p95_cpu_1h",
@@ -78,7 +81,8 @@
    "window_ms": 3600000,
    "interval_ms": 60000,
    "unit": "cores",
-   "accuracy_metric": "rank"
+   "accuracy_metric": "rank",
+   "truth": {"statistic": {"quantile": 0.95}, "metric": "container_cpu", "matchers": {"dimension": "used"}}
   },
   {
    "id": "p99_memory_1h",
@@ -86,7 +90,8 @@
    "window_ms": 3600000,
    "interval_ms": 60000,
    "unit": "bytes",
-   "accuracy_metric": "rank"
+   "accuracy_metric": "rank",
+   "truth": {"statistic": {"quantile": 0.99}, "metric": "container_memory", "matchers": {"dimension": "used"}}
   },
   {
    "id": "max_memory_1h",

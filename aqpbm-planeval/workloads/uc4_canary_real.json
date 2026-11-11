@@ -116,7 +116,8 @@
    "window_ms": 300000,
    "interval_ms": 60000,
    "unit": "s",
-   "accuracy_metric": "rank"
+   "accuracy_metric": "rank",
+   "truth": {"statistic": {"quantile": 0.99}, "metric": "request_latency", "matchers": {"version": "canary"}}
   },
   {
    "id": "p95_canary",
@@ -124,7 +125,8 @@
    "window_ms": 300000,
    "interval_ms": 60000,
    "unit": "s",
-   "accuracy_metric": "rank"
+   "accuracy_metric": "rank",
+   "truth": {"statistic": {"quantile": 0.95}, "metric": "request_latency", "matchers": {"version": "canary"}}
   },
   {
    "id": "p99_stable",
@@ -132,7 +134,8 @@
    "window_ms": 300000,
    "interval_ms": 60000,
    "unit": "s",
-   "accuracy_metric": "rank"
+   "accuracy_metric": "rank",
+   "truth": {"statistic": {"quantile": 0.99}, "metric": "request_latency", "matchers": {"version": "stable"}}
   },
   {
    "id": "success_rate_canary",

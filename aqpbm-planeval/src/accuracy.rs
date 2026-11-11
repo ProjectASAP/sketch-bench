@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use aqpbm_core::accuracy::cardinality::CardinalityGT;
 use aqpbm_core::accuracy::keyed::KeyedEntropyGT;
 use aqpbm_core::accuracy::quantile::{RankErrorGT, ReferenceRankErrorGT};
@@ -8,12 +8,9 @@ use aqpbm_core::accuracy::topk::TopkGT;
 use aqpbm_core::accuracy::windowed::{WindowScore, Windowed};
 use aqpbm_core::accuracy::GroundTruth;
 use aqpbm_datagen::{ColumnData, GeneratedTable};
-use asap_types::ir::operator::{AggIntent, Reduction, Source};
-use asap_types::ir::scalar::{CompareOpKind, ScalarValue};
-use asap_types::ir::{NonASAPOp, Operator, OperatorNode, QueryRoot, ScalarExpr, TimeRangeKind};
-use asap_types::workload::PlanningWorkload;
 
 use crate::data::Series;
+use crate::spec::{QuerySpec, Statistic};
 
 pub type Labels = BTreeMap<String, String>;
 
@@ -24,13 +21,6 @@ pub type Cell = (i64, Labels, Option<Scores>);
 pub type AnswerAt = (i64, Labels, f64);
 
 const TIME_COLUMN: usize = 0;
-
-enum Statistic {
-    Quantile(f64),
-    Entropy,
-    Distinct,
-    Topk { k: usize, by: String },
-}
 
 pub struct QueryTruth {
     statistic: Statistic,
@@ -82,128 +72,18 @@ pub fn keyed(answers: &[AnswerAt]) -> HashMap<(i64, Labels), f64> {
         .collect()
 }
 
-fn aggregate(node: &OperatorNode) -> Option<(&Reduction, &AggIntent, &OperatorNode)> {
-    let Operator::NonASAP(NonASAPOp::Aggregate {
-        reduction,
-        measures,
-        filters,
-        having,
-        child,
-        ..
-    }) = &node.operator
-    else {
-        return None;
-    };
-    let [measure] = measures.as_slice() else {
-        return None;
-    };
-    if having.is_some() || filters.iter().any(Option::is_some) {
-        return None;
-    }
-    Some((reduction, measure, child))
-}
-
-fn grouped_by(reduction: &Reduction) -> Option<&[usize]> {
-    match reduction {
-        Reduction::Reduce(keys) if !keys.is_without() => Some(keys.keys()),
-        _ => None,
-    }
-}
-
 impl QueryTruth {
-    pub fn of(workload: &PlanningWorkload) -> Result<Option<QueryTruth>> {
-        let roots = asap_frontend_promql::lower_promql_query_workload(workload)
-            .map_err(|e| anyhow!("lowering the query: {e}"))?;
-        let Some(QueryRoot::Operator(root)) = roots.first() else {
-            return Ok(None);
-        };
-        let Some((reduction, measure, child)) = aggregate(root) else {
-            return Ok(None);
-        };
-        Ok(match (reduction, measure) {
-            (Reduction::PerEntity, AggIntent::Quantile { col: None, q, .. }) => {
-                QueryTruth::over(Statistic::Quantile(*q), child, None)
-            }
-            (Reduction::PerEntity, AggIntent::FrequencyEntropy { col: None, .. }) => {
-                QueryTruth::over(Statistic::Entropy, child, None)
-            }
-            (Reduction::PerEntity, AggIntent::Cardinality { cols, .. }) if cols.is_empty() => {
-                QueryTruth::over(Statistic::Distinct, child, None)
-            }
-            (reduction, AggIntent::TopK { k, .. }) if grouped_by(reduction) == Some(&[]) => {
-                QueryTruth::top_k(*k, child)
-            }
-            _ => None,
-        })
-    }
-
-    fn top_k(k: usize, node: &OperatorNode) -> Option<QueryTruth> {
-        let (reduction, AggIntent::Sum { col: None, .. }, child) = aggregate(node)? else {
-            return None;
-        };
-        let &[by] = grouped_by(reduction)? else {
-            return None;
-        };
-        let (Reduction::PerEntity, AggIntent::Count { .. }, child) = aggregate(child)? else {
-            return None;
-        };
-        QueryTruth::over(
-            Statistic::Topk {
-                k,
-                by: String::new(),
-            },
-            child,
-            Some(by),
-        )
-    }
-
-    fn over(statistic: Statistic, node: &OperatorNode, by: Option<usize>) -> Option<QueryTruth> {
-        let Operator::NonASAP(NonASAPOp::TimeRange {
-            range,
-            kind: TimeRangeKind::Range,
-            child,
-        }) = &node.operator
-        else {
-            return None;
-        };
-        let Operator::NonASAP(NonASAPOp::Scan {
-            source: Source::TimeSeries { metric },
-            predicates,
-            schema,
-        }) = &child.operator
-        else {
-            return None;
-        };
-        let name = |column: usize| schema.fields.get(column).map(|f| f.name.clone());
-        let matchers = predicates
-            .iter()
-            .map(|predicate| match &predicate.0 {
-                ScalarExpr::Compare {
-                    left,
-                    op: CompareOpKind::Eq,
-                    right,
-                    ..
-                } => match (left.as_ref(), right.as_ref()) {
-                    (ScalarExpr::Column(column), ScalarExpr::Literal(ScalarValue::Utf8(value))) => {
-                        Some((name(*column)?, value.clone()))
-                    }
-                    _ => None,
-                },
-                _ => None,
-            })
-            .collect::<Option<Vec<_>>>()?;
-        let statistic = match (statistic, by) {
-            (Statistic::Topk { k, .. }, Some(column)) => Statistic::Topk {
-                k,
-                by: name(column)?,
-            },
-            (statistic, _) => statistic,
-        };
+    pub fn of(query: &QuerySpec) -> Option<QueryTruth> {
+        let truth = query.truth.as_ref()?;
         Some(QueryTruth {
-            statistic,
-            metric: metric.clone(),
-            matchers,
-            width_ms: range.as_millis() as i64,
+            statistic: truth.statistic.clone(),
+            metric: truth.metric.clone(),
+            matchers: truth
+                .matchers
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect(),
+            width_ms: query.window_ms,
         })
     }
 
@@ -311,7 +191,7 @@ impl QueryTruth {
             Statistic::Distinct => {
                 self.per_series(&samples, CardinalityGT { column: value }, ends, lookup)
             }
-            Statistic::Topk { k, by } => {
+            Statistic::TopK { k, by } => {
                 let Some(column) = samples.label_names.iter().position(|name| name == by) else {
                     return Ok(Vec::new());
                 };

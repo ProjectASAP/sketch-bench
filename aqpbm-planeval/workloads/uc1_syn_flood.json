@@ -26,10 +26,10 @@
     }
   ],
   "queries": [
-    {"id": "entropy_10s", "promql": "entropy_over_time(src_ip{vm=\"instance1\"}[10s])", "window_ms": 10000, "interval_ms": 5000, "threshold": 8.5, "unit": "entropy"},
-    {"id": "distinct_10s", "promql": "distinct_over_time(src_ip{vm=\"instance1\"}[10s])", "window_ms": 10000, "interval_ms": 5000, "threshold": 3000, "unit": "addresses"},
-    {"id": "distinct_5s", "promql": "distinct_over_time(src_ip{vm=\"instance1\"}[5s])", "window_ms": 5000, "interval_ms": 5000, "threshold": 1700, "unit": "addresses"},
+    {"id": "entropy_10s", "promql": "entropy_over_time(src_ip{vm=\"instance1\"}[10s])", "window_ms": 10000, "interval_ms": 5000, "threshold": 8.5, "unit": "entropy", "truth": {"statistic": "entropy", "metric": "src_ip", "matchers": {"vm": "instance1"}}},
+    {"id": "distinct_10s", "promql": "distinct_over_time(src_ip{vm=\"instance1\"}[10s])", "window_ms": 10000, "interval_ms": 5000, "threshold": 3000, "unit": "addresses", "truth": {"statistic": "distinct", "metric": "src_ip", "matchers": {"vm": "instance1"}}},
+    {"id": "distinct_5s", "promql": "distinct_over_time(src_ip{vm=\"instance1\"}[5s])", "window_ms": 5000, "interval_ms": 5000, "threshold": 1700, "unit": "addresses", "truth": {"statistic": "distinct", "metric": "src_ip", "matchers": {"vm": "instance1"}}},
     {"id": "packets_5s", "promql": "count_over_time(src_ip{vm=\"instance1\"}[5s])", "window_ms": 5000, "interval_ms": 5000, "threshold": 100000, "unit": "packets"},
-    {"id": "distinct_1m", "promql": "distinct_over_time(src_ip{vm=\"instance1\"}[1m])", "window_ms": 60000, "interval_ms": 5000, "threshold": 18000, "unit": "addresses"}
+    {"id": "distinct_1m", "promql": "distinct_over_time(src_ip{vm=\"instance1\"}[1m])", "window_ms": 60000, "interval_ms": 5000, "threshold": 18000, "unit": "addresses", "truth": {"statistic": "distinct", "metric": "src_ip", "matchers": {"vm": "instance1"}}}
   ]
 }

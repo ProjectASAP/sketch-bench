@@ -130,7 +130,8 @@
    "promql": "entropy_over_time(bitrate[1m])",
    "window_ms": 60000,
    "interval_ms": 60000,
-   "unit": "bits"
+   "unit": "bits",
+   "truth": {"statistic": "entropy", "metric": "bitrate"}
   },
   {
    "id": "buffering_l1",
@@ -151,7 +152,8 @@
    "promql": "distinct_over_time(device_id[1m])",
    "window_ms": 60000,
    "interval_ms": 60000,
-   "unit": "devices"
+   "unit": "devices",
+   "truth": {"statistic": "distinct", "metric": "device_id"}
   },
   {
    "id": "startup_p95",
@@ -159,7 +161,8 @@
    "window_ms": 300000,
    "interval_ms": 60000,
    "unit": "s",
-   "accuracy_metric": "rank"
+   "accuracy_metric": "rank",
+   "truth": {"statistic": {"quantile": 0.95}, "metric": "startup_time"}
   },
   {
    "id": "rebuffer_ratio",

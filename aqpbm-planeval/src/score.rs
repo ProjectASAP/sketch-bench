@@ -7,8 +7,7 @@ use serde_json::{json, Value};
 
 use crate::accuracy::{keyed, without_name, AnswerAt, Labels, QueryTruth, Scores};
 use crate::data::Series;
-use crate::plan::{workload, Arm};
-use crate::spec::{QuerySpec, Spec};
+use crate::spec::QuerySpec;
 
 pub fn read_answers(path: &Path) -> Result<BTreeMap<String, Vec<AnswerAt>>> {
     let text =
@@ -43,15 +42,13 @@ pub struct Scored {
 }
 
 pub fn score(
-    spec: &Spec,
     query: &QuerySpec,
-    arm: &Arm,
     series: &[Series],
     times: &[i64],
     answered: &[AnswerAt],
     exact: Option<&BTreeMap<String, Vec<AnswerAt>>>,
 ) -> Result<Scored> {
-    let truth = QueryTruth::of(&workload(spec, query, arm)?)?;
+    let truth = QueryTruth::of(query);
     let computed_truth = truth
         .as_ref()
         .map(|truth| truth.score(series, times, answered))

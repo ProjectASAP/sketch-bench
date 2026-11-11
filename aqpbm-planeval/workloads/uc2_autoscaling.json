@@ -42,11 +42,11 @@
     }
   ],
   "queries": [
-    {"id": "p95_cpu", "promql": "quantile_over_time(0.95, container_cpu{dimension=\"used\"}[5m])", "window_ms": 300000, "interval_ms": 60000, "unit": "cores", "accuracy_metric": "rank"},
-    {"id": "p95_memory", "promql": "quantile_over_time(0.95, container_memory{dimension=\"used\"}[5m])", "window_ms": 300000, "interval_ms": 60000, "unit": "bytes", "accuracy_metric": "rank"},
-    {"id": "p50_cpu_1h", "promql": "quantile_over_time(0.5, container_cpu{dimension=\"used\"}[1h])", "window_ms": 3600000, "interval_ms": 60000, "unit": "cores", "accuracy_metric": "rank"},
-    {"id": "p95_cpu_1h", "promql": "quantile_over_time(0.95, container_cpu{dimension=\"used\"}[1h])", "window_ms": 3600000, "interval_ms": 60000, "unit": "cores", "accuracy_metric": "rank"},
-    {"id": "p99_memory_1h", "promql": "quantile_over_time(0.99, container_memory{dimension=\"used\"}[1h])", "window_ms": 3600000, "interval_ms": 60000, "unit": "bytes", "accuracy_metric": "rank"},
+    {"id": "p95_cpu", "promql": "quantile_over_time(0.95, container_cpu{dimension=\"used\"}[5m])", "window_ms": 300000, "interval_ms": 60000, "unit": "cores", "accuracy_metric": "rank", "truth": {"statistic": {"quantile": 0.95}, "metric": "container_cpu", "matchers": {"dimension": "used"}}},
+    {"id": "p95_memory", "promql": "quantile_over_time(0.95, container_memory{dimension=\"used\"}[5m])", "window_ms": 300000, "interval_ms": 60000, "unit": "bytes", "accuracy_metric": "rank", "truth": {"statistic": {"quantile": 0.95}, "metric": "container_memory", "matchers": {"dimension": "used"}}},
+    {"id": "p50_cpu_1h", "promql": "quantile_over_time(0.5, container_cpu{dimension=\"used\"}[1h])", "window_ms": 3600000, "interval_ms": 60000, "unit": "cores", "accuracy_metric": "rank", "truth": {"statistic": {"quantile": 0.5}, "metric": "container_cpu", "matchers": {"dimension": "used"}}},
+    {"id": "p95_cpu_1h", "promql": "quantile_over_time(0.95, container_cpu{dimension=\"used\"}[1h])", "window_ms": 3600000, "interval_ms": 60000, "unit": "cores", "accuracy_metric": "rank", "truth": {"statistic": {"quantile": 0.95}, "metric": "container_cpu", "matchers": {"dimension": "used"}}},
+    {"id": "p99_memory_1h", "promql": "quantile_over_time(0.99, container_memory{dimension=\"used\"}[1h])", "window_ms": 3600000, "interval_ms": 60000, "unit": "bytes", "accuracy_metric": "rank", "truth": {"statistic": {"quantile": 0.99}, "metric": "container_memory", "matchers": {"dimension": "used"}}},
     {"id": "max_memory_1h", "promql": "max_over_time(container_memory{dimension=\"used\"}[1h])", "window_ms": 3600000, "interval_ms": 60000, "unit": "bytes"}
   ]
 }

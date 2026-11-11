@@ -4,9 +4,8 @@ use std::time::Instant;
 use anyhow::{bail, Context, Result};
 use aqpbm_planeval::accuracy::{AnswerAt, Labels};
 use aqpbm_planeval::data::Series;
-use aqpbm_planeval::plan::Arm;
 use aqpbm_planeval::score::score;
-use aqpbm_planeval::spec::{QuerySpec, Spec};
+use aqpbm_planeval::spec::QuerySpec;
 use serde_json::{json, Value};
 
 const KEPT_FAILURES: usize = 5;
@@ -98,7 +97,6 @@ impl Collected {
 
     pub fn finish(
         self,
-        spec: &Spec,
         query: &QuerySpec,
         series: &[Series],
         exact: Option<&BTreeMap<String, Vec<AnswerAt>>>,
@@ -121,22 +119,8 @@ impl Collected {
                 .map_or(json!("no evaluation answered"), |f| f["error"].clone());
             return Ok(out);
         }
-        let arm = Arm {
-            max_error: None,
-            failure_probability: 0.01,
-            raw_data_retained: true,
-            ignore_guarantees: false,
-        };
-        let scored = score(
-            spec,
-            query,
-            &arm,
-            series,
-            &self.times,
-            &self.answered,
-            exact,
-        )
-        .with_context(|| format!("scoring {}", query.id))?;
+        let scored = score(query, series, &self.times, &self.answered, exact)
+            .with_context(|| format!("scoring {}", query.id))?;
         out["answers"] = json!(scored.answers);
         out["computed_truth"] = json!(scored.computed_truth);
         Ok(out)

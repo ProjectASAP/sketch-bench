@@ -144,7 +144,7 @@ fn main() -> Result<()> {
     let mut queries = Vec::new();
     for (query, collected) in asked.iter().zip(collected) {
         let out = collected
-            .finish(&spec, query, &series, exact.as_ref())
+            .finish(query, &series, exact.as_ref())
             .with_context(|| format!("answers of {}", query.id))?;
         eprintln!(
             "{}: {} evaluations, {} failed",

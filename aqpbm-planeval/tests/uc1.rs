@@ -3,9 +3,9 @@ use std::path::Path;
 
 use aqpbm_planeval::accuracy::{Labels, QueryTruth};
 use aqpbm_planeval::data::{generate, Series};
-use aqpbm_planeval::plan::{plan, workload, Arm};
+use aqpbm_planeval::plan::{plan, Arm};
 use aqpbm_planeval::run::Driver;
-use aqpbm_planeval::spec::Spec;
+use aqpbm_planeval::spec::{Spec, Statistic, Truth};
 
 fn small_spec() -> Spec {
     let spec: Spec = serde_json::from_value(serde_json::json!({
@@ -139,15 +139,13 @@ fn a_quantile_answer_is_scored_by_rank_within_its_window_and_series() {
     let mut spec = small_spec();
     spec.metrics[0].name = "m".into();
     spec.queries[0].promql = "quantile_over_time(0.5, m[4ms])".into();
-    let arm = Arm {
-        max_error: None,
-        failure_probability: 0.01,
-        raw_data_retained: true,
-        ignore_guarantees: false,
-    };
-    let truth = QueryTruth::of(&workload(&spec, &spec.queries[0], &arm).unwrap())
-        .unwrap()
-        .expect("a quantile over a plain selector has a computed truth");
+    spec.queries[0].window_ms = 4;
+    spec.queries[0].truth = Some(Truth {
+        statistic: Statistic::Quantile(0.5),
+        metric: "m".into(),
+        matchers: Default::default(),
+    });
+    let truth = QueryTruth::of(&spec.queries[0]).expect("the query declares its truth");
     let cells = truth
         .score(&series, &[5], &[(5, labels("a"), 1.0)])
         .unwrap();
