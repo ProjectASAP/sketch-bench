@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 
+import bounds
+import decision
+import rules
 from bounds import any_of, gt, lt
 from rules import above, at_least, below, both, for_consecutive
+
+ID = "2"
 
 CPU_REQUEST, MEMORY_REQUEST = 0.6, 1.6e9
 EC2_OUT, EC2_IN, EC2_PERIODS = 0.6, 0.4, 3
@@ -62,4 +67,34 @@ RULES = {
         "description": "On half the size (0.5 cores, 1 GB), p95 CPU of the last hour stays at most 40% and p99 "
                        "memory at most 60%: recommend the smaller size (Azure Advisor, user-facing; 1 hour "
                        "instead of 7 days; sizes ours)"},
+}
+
+
+DECISION = {"signal": "scale_decision", "cpu": "p95_cpu", "memory": "p95_memory", "entity": "container",
+            "rule": {"cpu_up": 0.8, "memory_up": 1.5e9, "cpu_down": 0.4, "memory_down": 0.75e9}}
+
+
+def derive(rows, queries, policy=bounds.PLAIN, widen=None):
+    out = decision.derive(rows, DECISION["signal"], DECISION["cpu"], DECISION["memory"], DECISION["entity"],
+                          DECISION["rule"], policy, widen)
+    return out + rules.derive(rows, RULES, policy, widen)
+
+
+DASHBOARD = {"uid": "autoscaling", "title": "2 · Autoscaling",
+             "parts": ("overview", "cost", "stage1", "decision", "rules", "rule_error"),
+             "rule_error": {"metrics": ("relative_error", "rank_error"), "file_var": "entity_in_run"}}
+
+CASE = {
+    "spec": "uc2_autoscaling.json",
+    "arms": ["raw-eps0.01", "noraw-eps0.1", "noraw-eps0.05", "noraw-eps0.01", "noraw-eps0.005"],
+    "planeval_flags": ["--executor-max-bytes", str(2 << 30)],
+    "signal": lambda query: "scale_decision",
+    "signals": lambda query: (["scale_decision"] if query in ("p95_cpu", "p95_memory") else [])
+    + rules.rule_signals(RULES)(query),
+    "rules": RULES,
+    "scenario_entity": container,
+    "derive": derive,
+    "dashboard": "decision",
+    "needs_every_query": True,
+    "split": {"query_result": "container", "low_level": "container", "app_state": ("container", "entity")},
 }

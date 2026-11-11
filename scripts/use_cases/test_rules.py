@@ -6,12 +6,12 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets"))
 
-import ddos_rules
-import rate_limit_rules
 import rules
-import scaling_rules
 from bounds import Bounded
-import video_rules
+from cases import uc1_ddos_detection as ddos_rules
+from cases import uc2_autoscaling as scaling_rules
+from cases import uc3_video_experience as video_rules
+from cases import uc5_rate_limiting as rate_limit_rules
 import video_spec
 from approx_rows import row
 

@@ -11,17 +11,14 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets"))
 
 import bounds
+import cases
 import data_root
-import ddos_rules
 import decision
 import rollout
-import rate_limit_rules
 import rules
 import scenario
-import scaling_rules
 import threshold_alert
 import topk_set
-import video_rules
 from approx_rows import row, write_run
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -47,117 +44,7 @@ def max_error_of(arm):
     return found[0] if found else None
 
 
-def planned_rules(rule_set, queries):
-    ids = {q["id"] for q in queries}
-    return {name: rule for name, rule in rule_set.items() if set(rule["queries"]) <= ids}
-
-
-def uc1_derive(rows, queries, policy=bounds.PLAIN, widen=None):
-    out = threshold_alert.derive(rows, {q["id"]: q["threshold"] for q in queries}, policy, widen)
-    usable = planned_rules(ddos_rules.RULES, queries)
-    return out + (rules.derive(rows, usable, policy, widen) if usable else [])
-
-
-def uc4_derive(rows, queries, policy=bounds.PLAIN, widen=None):
-    return rollout.derive(rows, rollout.RULES, policy, widen)
-
-
-def uc2_derive(rows, queries, policy=bounds.PLAIN, widen=None):
-    rule = {"cpu_up": 0.8, "memory_up": 1.5e9, "cpu_down": 0.4, "memory_down": 0.75e9}
-    out = decision.derive(rows, "scale_decision", "p95_cpu", "p95_memory", "container", rule, policy, widen)
-    return out + rules.derive(rows, scaling_rules.RULES, policy, widen)
-
-
-def uc5_derive(rows, queries, policy=bounds.PLAIN, widen=None):
-    if policy != bounds.PLAIN:
-        raise ValueError("the top clients rule has no use for an error bound")
-    out = topk_set.derive(rows, "top_clients", "top10_clients", "client_id")
-    return out + rules.derive(rows, rate_limit_rules.RULES)
-
-
-def uc3_derive(rows, queries, policy=bounds.PLAIN, widen=None):
-    return rules.derive(rows, video_rules.RULES, policy, widen)
-
-
-def rule_signals(rule_set):
-    return lambda query: [name for name, rule in rule_set.items() if query in rule["queries"]]
-
-
-def uc4_stage2(derived, errors):
-    ranked = {r["labels"]["query"] for r in errors}
-    relative = [r for r in derived if r["kind"] == "low_level" and r["metric"] == "relative_error"
-                and r["labels"]["query"] not in ranked]
-    return rollout_errors(derived, errors + relative, rollout.RULES)
-
-
-USE_CASES = {
-    "1": {
-        "spec": "uc1_syn_flood.json",
-        "arms": ["raw-eps0.05", "noraw-eps0.1", "noraw-eps0.05", "noraw-eps0.01",
-                 "noraw-ignore-eps0.1", "noraw-ignore-eps0.05", "noraw-ignore-eps0.01"],
-        "planeval_flags": ["--executor-max-bytes", str(2 << 30)],
-        "signal": lambda query: query,
-        "signals": lambda query: [query] + rule_signals(ddos_rules.RULES)(query),
-        "rules": ddos_rules.RULES,
-        "scenario_entity": ddos_rules.server,
-        "derive": uc1_derive,
-        "dashboard": "threshold-alert",
-        "needs_every_query": False,
-        "split": {"app_state": "entity"},
-    },
-    "2": {
-        "spec": "uc2_autoscaling.json",
-        "arms": ["raw-eps0.01", "noraw-eps0.1", "noraw-eps0.05", "noraw-eps0.01", "noraw-eps0.005"],
-        "planeval_flags": ["--executor-max-bytes", str(2 << 30)],
-        "signal": lambda query: "scale_decision",
-        "signals": lambda query: (["scale_decision"] if query in ("p95_cpu", "p95_memory") else [])
-        + rule_signals(scaling_rules.RULES)(query),
-        "rules": scaling_rules.RULES,
-        "scenario_entity": scaling_rules.container,
-        "derive": uc2_derive,
-        "dashboard": "decision",
-        "needs_every_query": True,
-        "split": {"query_result": "container", "low_level": "container", "app_state": ("container", "entity")},
-    },
-    "3": {
-        "spec": "uc3_video.json",
-        "arms": ["noraw-ignore-eps0.1", "noraw-ignore-eps0.05", "noraw-ignore-eps0.01"],
-        "planeval_flags": ["--executor-max-bytes", str(1 << 30)],
-        "signal": lambda query: "video",
-        "signals": rule_signals(video_rules.RULES),
-        "rules": video_rules.RULES,
-        "scenario_entity": video_rules.subpopulation,
-        "derive": uc3_derive,
-        "dashboard": "rules",
-        "needs_every_query": True,
-        "split": {"query_result": "city", "low_level": "city", "app_state": "entity"},
-    },
-    "4": {
-        "spec": "uc4_canary.json",
-        "arms": ["raw-eps0.01", "noraw-eps0.05", "noraw-eps0.01", "noraw-eps0.005", "noraw-eps0.001"],
-        "signal": lambda query: "rollout",
-        "signals": lambda query: [name for name, rule in rollout.RULES.items() if query in rule["queries"]],
-        "derive": uc4_derive,
-        "dashboard": "rollout",
-        "needs_every_query": True,
-        "split": {},
-        "stage2": uc4_stage2,
-    },
-    "5": {
-        "spec": "uc5_top_clients.json",
-        "arms": ["noraw-ignore-eps0.05", "noraw-ignore-eps0.01", "noraw-ignore-eps0.005", "noraw-ignore-eps0.001"],
-        "planeval_flags": ["--executor-max-bytes", str(4 << 30)],
-        "signal": lambda query: "top_clients",
-        "signals": lambda query: (["top_clients"] if query == "top10_clients" else [])
-        + rule_signals(rate_limit_rules.RULES)(query),
-        "rules": rate_limit_rules.RULES,
-        "derive": uc5_derive,
-        "dashboard": "topk",
-        "bounds": False,
-        "needs_every_query": True,
-        "split": {"app_state": ("client_id", "entity")},
-    },
-}
+USE_CASES = {case_id: module.CASE for case_id, module in cases.load().items()}
 
 
 POLICY_TEXT = {
@@ -300,26 +187,6 @@ def stage1(arm, exact_query, approx_query, derived):
     out.update(costs_of(approx_query))
     out.update({f"exact {k}": v for k, v in costs_of(exact_query).items()})
     return out
-
-
-def rollout_errors(derived, errors, rule_set):
-    by_query = {}
-    for r in errors:
-        by_query.setdefault(r["labels"]["query"], {})[r["time"]] = r["value"]
-    out = []
-    for name, rule in rule_set.items():
-        times = sorted({r["time"] for r in derived
-                        if r["kind"] == "app_state" and r["labels"].get("signal") == name})
-        for r in derived:
-            if r["kind"] != "fidelity_event" or r["metric"] != "rollout" or r["labels"].get("signal") != name:
-                continue
-            first = times.index(r["time"])
-            span = times[first:first + rule["checks"]]
-            out.append({"rule": name, "rollout": int(r["labels"]["rollout"]), "outcome": r["value"],
-                        "exact": r["labels"]["exact"], "approx": r["labels"]["approx"],
-                        "max error": {q: max(e[t] for t in span if t in e) for q, e in sorted(by_query.items())
-                                      if q in rule["queries"]}})
-    return sorted(out, key=lambda x: (x["rule"], x["rollout"]))
 
 
 def delay_text(s, metric, name):
@@ -496,7 +363,7 @@ def main(argv=None):
     suffix = f"real-{args.real}" if args.real else "real"
     prefix = f"uc{args.use_case}-{suffix}" if real else f"uc{args.use_case}"
     spec_name = case["spec"].replace(".json", f"_{suffix.replace('-', '_')}.json") if real else case["spec"]
-    spec = os.path.join(REPO, "aqpbm-planeval", "workloads", spec_name)
+    spec = os.path.join(cases.WORKLOADS, spec_name)
     if not os.path.exists(spec):
         parser.error(f"use case {args.use_case} has no {spec_name}")
     for arm in args.arm or []:

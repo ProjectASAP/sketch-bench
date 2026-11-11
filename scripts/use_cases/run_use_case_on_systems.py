@@ -17,13 +17,10 @@ import urllib.request
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets"))
 
 import bounds
+import cases
 import data_root
-import rate_limit_rules
-import rules
 import run_use_case as in_process
 import scenario
-import topk_set
-import video_rules
 from approx_rows import row, write_run
 
 REPO = in_process.REPO
@@ -299,22 +296,6 @@ def plan_arm(binary, spec, arm, workdir):
     return planned, plan, unsupported
 
 
-def uc3_supported_rules(rows, queries):
-    usable = in_process.planned_rules(video_rules.RULES, queries)
-    return rules.derive(rows, usable) if usable else []
-
-
-def uc5_supported_rules(rows, queries):
-    out = topk_set.derive(rows, "top_clients", "top10_clients", "client_id") \
-        if "top10_clients" in {q["id"] for q in queries} else []
-    usable = in_process.planned_rules(rate_limit_rules.RULES, queries)
-    return out + (rules.derive(rows, usable) if usable else [])
-
-
-SUPPORTED_RULES = {"ddos_syn_flood": lambda rows, queries: in_process.uc1_derive(rows, queries),
-                   "video_experience": uc3_supported_rules, "top_clients": uc5_supported_rules}
-
-
 def query_costs(run_id, use_case, signal, query, system):
     labels = {"use_case": use_case, "signal": signal, "query": query["id"], "arm": ARM_OF[system]}
     return [row(c["time"], "low_level", run_id, labels, "query_latency", c["query_seconds"], "s")
@@ -344,7 +325,7 @@ def write_arm(data, case, run_id, exact, approx, unsupported, details, spec):
         print(f"{run_id}: no query answered by {BACKEND}; only costs written", file=sys.stderr)
         return
     if unsupported:
-        partial = SUPPORTED_RULES.get(use_case)
+        partial = case.get("supported_rules")
         if partial is None:
             raise RuntimeError(f"{run_id}: {use_case} has no rules without {sorted(unsupported)}")
         derived = partial(rows, planned)
@@ -465,7 +446,7 @@ def main(argv=None):
     suffix = f"real-{args.real}" if args.real else "real"
     prefix = f"uc{args.use_case}-{suffix}" if real else f"uc{args.use_case}"
     spec_name = case["spec"].replace(".json", f"_{suffix.replace('-', '_')}.json") if real else case["spec"]
-    spec_path = os.path.join(REPO, "aqpbm-planeval", "workloads", spec_name)
+    spec_path = os.path.join(cases.WORKLOADS, spec_name)
     if not os.path.exists(spec_path):
         parser.error(f"use case {args.use_case} has no {spec_name}")
     with open(spec_path) as f:

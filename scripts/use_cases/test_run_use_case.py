@@ -3,7 +3,9 @@
 import unittest
 
 from approx_rows import row
-from run_use_case import rank_errors, relative_errors, rollout_errors, stage1, uc4_stage2
+from cases.uc4_canary_release import stage2 as uc4_stage2
+from rollout import rollout_errors
+from run_use_case import rank_errors, relative_errors, stage1
 
 
 def query(id_, answers, costs=(), planning_ms=None):

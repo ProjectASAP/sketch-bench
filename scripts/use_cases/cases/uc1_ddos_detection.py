@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 
+import bounds
+import rules
+import threshold_alert
 from rules import above, above_band, above_mean_times, cusum_above, either, for_consecutive, latch, x_of_last_y
+
+ID = "1"
 
 THRESHOLDS = {"entropy_10s": 8.5, "distinct_10s": 3000, "distinct_5s": 1700}
 DATADOG_HISTORY, DATADOG_SIGMAS = 60, 3
@@ -76,4 +81,31 @@ RULES = {
         "description": "More than 300 SYN-only flows per second over 1 minute for 15 s, counting each source "
                        "address as one flow; firing at the 4th evaluation in a row (Red Hat Network "
                        "Observability; flows as distinct sources ours)"},
+}
+
+
+def derive(rows, queries, policy=bounds.PLAIN, widen=None):
+    out = threshold_alert.derive(rows, {q["id"]: q["threshold"] for q in queries}, policy, widen)
+    usable = rules.planned_rules(RULES, queries)
+    return out + (rules.derive(rows, usable, policy, widen) if usable else [])
+
+
+DASHBOARD = {"uid": "ddos-detection", "title": "1 · DDoS detection",
+             "parts": ("overview", "cost", "stage1", "alert", "rules", "rule_error"),
+             "rule_error": {"metrics": ("relative_error",)}}
+
+CASE = {
+    "spec": "uc1_syn_flood.json",
+    "arms": ["raw-eps0.05", "noraw-eps0.1", "noraw-eps0.05", "noraw-eps0.01",
+             "noraw-ignore-eps0.1", "noraw-ignore-eps0.05", "noraw-ignore-eps0.01"],
+    "planeval_flags": ["--executor-max-bytes", str(2 << 30)],
+    "signal": lambda query: query,
+    "signals": lambda query: [query] + rules.rule_signals(RULES)(query),
+    "rules": RULES,
+    "scenario_entity": server,
+    "derive": derive,
+    "supported_rules": lambda rows, queries: derive(rows, queries),
+    "dashboard": "threshold-alert",
+    "needs_every_query": False,
+    "split": {"app_state": "entity"},
 }

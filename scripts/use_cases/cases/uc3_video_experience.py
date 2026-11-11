@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 
+import bounds
+import rules
 from rules import (above, above_band, above_decayed_band, at_least, both, either, for_consecutive, latch,
                    outside_band)
+
+ID = "3"
 
 DIMENSIONS = ("city", "isp", "cdn", "device")
 HISTORY, SIGMAS = 30, 3
@@ -54,4 +58,33 @@ RULES = {
                        "entity": subpopulation, "hold": for_consecutive(PATENT_MINUTES),
                        "description": "Rebuffering above a baseline decaying by 0.998 per minute plus 3 standard "
                                       "deviations for 5 minutes, with at least 100 devices (Conviva patent)"},
+}
+
+
+def derive(rows, queries, policy=bounds.PLAIN, widen=None):
+    return rules.derive(rows, RULES, policy, widen)
+
+
+def supported_rules(rows, queries):
+    usable = rules.planned_rules(RULES, queries)
+    return rules.derive(rows, usable) if usable else []
+
+
+DASHBOARD = {"uid": "video-experience", "title": "3 · Video experience",
+             "parts": ("overview", "cost", "stage1", "rules", "rule_error"),
+             "rule_error": {"metrics": ("relative_error", "rank_error"), "file_var": "city", "subpopulation": DIMENSIONS}}
+
+CASE = {
+    "spec": "uc3_video.json",
+    "arms": ["noraw-ignore-eps0.1", "noraw-ignore-eps0.05", "noraw-ignore-eps0.01"],
+    "planeval_flags": ["--executor-max-bytes", str(1 << 30)],
+    "signal": lambda query: "video",
+    "signals": rules.rule_signals(RULES),
+    "rules": RULES,
+    "scenario_entity": subpopulation,
+    "derive": derive,
+    "supported_rules": supported_rules,
+    "dashboard": "rules",
+    "needs_every_query": True,
+    "split": {"query_result": "city", "low_level": "city", "app_state": "entity"},
 }

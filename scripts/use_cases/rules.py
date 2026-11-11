@@ -178,6 +178,15 @@ def latch(evaluations, extend=True, while_held=False):
     return hold
 
 
+def planned_rules(rule_set, queries):
+    ids = {q["id"] for q in queries}
+    return {name: rule for name, rule in rule_set.items() if set(rule["queries"]) <= ids}
+
+
+def rule_signals(rule_set):
+    return lambda query: [name for name, rule in rule_set.items() if query in rule["queries"]]
+
+
 def derive(query_rows, rules, policy=PLAIN, widen=None):
     if any(r["kind"] != "query_result" for r in query_rows):
         raise ValueError("derive reads query_result rows only")

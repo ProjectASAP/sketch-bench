@@ -216,3 +216,23 @@ def rule_rows(run_id, app, rule, times, values, policy=PLAIN):
                              "rollback_delay", "rollbacks", "early_rollbacks", "late_rollbacks")
     out += [row(checked[-1], "fidelity_summary", run_id, app, metric, value, unit) for metric, value, unit in summary]
     return out
+
+
+def rollout_errors(derived, errors, rule_set):
+    by_query = {}
+    for r in errors:
+        by_query.setdefault(r["labels"]["query"], {})[r["time"]] = r["value"]
+    out = []
+    for name, rule in rule_set.items():
+        times = sorted({r["time"] for r in derived
+                        if r["kind"] == "app_state" and r["labels"].get("signal") == name})
+        for r in derived:
+            if r["kind"] != "fidelity_event" or r["metric"] != "rollout" or r["labels"].get("signal") != name:
+                continue
+            first = times.index(r["time"])
+            span = times[first:first + rule["checks"]]
+            out.append({"rule": name, "rollout": int(r["labels"]["rollout"]), "outcome": r["value"],
+                        "exact": r["labels"]["exact"], "approx": r["labels"]["approx"],
+                        "max error": {q: max(e[t] for t in span if t in e) for q, e in sorted(by_query.items())
+                                      if q in rule["queries"]}})
+    return sorted(out, key=lambda x: (x["rule"], x["rollout"]))

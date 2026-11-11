@@ -6,10 +6,8 @@ import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "scripts", "use_cases"))
-import ddos_rules
+import cases
 import rollout
-import scaling_rules
-import video_rules
 
 DS = {"type": "yesoreyeram-infinity-datasource", "uid": "approx-rows"}
 DATA = "http://localhost:8000/runs/"
@@ -269,8 +267,8 @@ def sort_limit(field, limit):
             {"id": "limit", "options": {"limitField": limit}}]
 
 
-def alert_dashboard(uid):
-    use_cases = ["ddos_syn_flood"]
+def alert_dashboard(uid, module):
+    use_cases = [cases.spec_of(module)["use_case"]]
     sel = 'labels.signal="${signal}"'
     b = Board()
     b.row("Runs", 0)
@@ -344,8 +342,9 @@ def alert_dashboard(uid):
     return dashboard(uid, "Threshold alert", b, variables, annotations)
 
 
-def decision_dashboard(uid):
-    use_cases = ["k8s_autoscaling"]
+def decision_dashboard(uid, module):
+    use_cases = [cases.spec_of(module)["use_case"]]
+    scale = module.DECISION
     here = 'labels.container="${container}"'
     overall = 'labels.app="autoscaler" and $not($exists(labels.container))'
     summary = RUN + "fidelity_summary.json"
@@ -355,8 +354,10 @@ def decision_dashboard(uid):
     plans_panel(b, 12, 1, 12, 7)
 
     b.row("Query result for ${container}", 8)
-    for i, (query, title, unit, low, high) in enumerate((("p95_cpu", "p95 CPU", "none", 0.4, 0.8),
-                                                         ("p95_memory", "p95 memory", "bytes", 0.75e9, 1.5e9))):
+    for i, (query, title, unit, low, high) in enumerate(((scale["cpu"], "p95 CPU", "none", scale["rule"]["cpu_down"],
+                                                          scale["rule"]["cpu_up"]),
+                                                         (scale["memory"], "p95 memory", "bytes",
+                                                          scale["rule"]["memory_down"], scale["rule"]["memory_up"]))):
         sel = f'{here} and labels.query="{query}"'
         results = entity_file("query_result", "container_in_run")
         b.panel({"type": "timeseries", "title": f"{title} of ${{container}}: exact vs approx",
@@ -435,7 +436,6 @@ def decision_dashboard(uid):
                       in_run("container_in_run", "container", "container")], annotations)
 
 
-QUERY_COLORS = {"p99_canary": "orange", "p99_stable": "blue", "success_rate_canary": "green", "p95_canary": "purple"}
 DECISION_MARKS = {"failed check": ("#FF9830", 5), "rollback": ("red", 14), "promote": ("green", 14)}
 DECISION_LEVEL = {"exact": 101, "approx": 100}
 
@@ -467,8 +467,8 @@ def rule_descriptions():
     return "\n".join(lines)
 
 
-def query_and_decision_panel(app):
-    queries = json.dumps({name: list(rule["queries"]) for name, rule in rollout.RULES.items()})
+def query_and_decision_panel(app, module):
+    queries = json.dumps({name: list(rule["queries"]) for name, rule in module.RULES.items()})
     lines = (f'$[labels.query in $lookup({queries}, "${{rule}}")]'
              '.{"time": time, "value": value, "series": labels.query & " " & labels.arm}')
     level = f'labels.arm="exact" ? {DECISION_LEVEL["exact"]} : {DECISION_LEVEL["approx"]}'
@@ -483,7 +483,7 @@ def query_and_decision_panel(app):
         target["format"] = "timeseries"
         targets.append(target)
     overrides = []
-    for query, color in QUERY_COLORS.items():
+    for query, color in module.QUERY_COLORS.items():
         for arm in ("exact", "approx"):
             properties = [{"id": "color", "value": {"mode": "fixed", "fixedColor": color}}]
             if arm == "approx":
@@ -540,9 +540,8 @@ def cost_panel(colors, metric, title, unit, note):
             "options": LEGEND}
 
 
-def cost_dashboard(uid, spec):
-    with open(os.path.join(REPO, "aqpbm-planeval", "workloads", spec)) as f:
-        colors = dict(zip((q["id"] for q in json.load(f)["queries"]), PALETTE))
+def cost_dashboard(uid, module):
+    colors = dict(zip((q["id"] for q in cases.spec_of(module)["queries"]), PALETTE))
     b = Board()
     b.row("Query cost", 0)
     for i, cost in enumerate(COST_PANELS):
@@ -550,8 +549,8 @@ def cost_dashboard(uid, spec):
     return dashboard(uid, "Query cost", b, [])
 
 
-def rollout_dashboard(uid):
-    use_cases = ["canary_release"]
+def rollout_dashboard(uid, module):
+    use_cases = [cases.spec_of(module)["use_case"]]
     app = 'labels.app="rollout_controller" and labels.signal="${rule}"'
     summary = RUN + "fidelity_summary.json"
     b = Board()
@@ -562,7 +561,7 @@ def rollout_dashboard(uid):
     b.row("Query result", 8)
     for x, w, title, queries, unit in ((0, 16, "p99 latency of canary and stable", ("p99_canary", "p99_stable"), "s"),
                                        (16, 8, "Success rate of canary", ("success_rate_canary",), "percentunit")):
-        targets, overrides = exact_solid_approx_dashed("query_result", {q: QUERY_COLORS[q] for q in queries})
+        targets, overrides = exact_solid_approx_dashed("query_result", {q: module.QUERY_COLORS[q] for q in queries})
         b.panel({"type": "timeseries", "title": f"{title}: exact vs approx", "targets": targets,
                  "fieldConfig": {"defaults": {**LINES, "unit": unit, "displayName": "${__field.name}"},
                                  "overrides": overrides},
@@ -571,10 +570,10 @@ def rollout_dashboard(uid):
     b.panel({"type": "timeseries", "title": "Rank error of approx",
              "targets": [rows_of(q, "low_level", f'metric="rank_error" and labels.query="{q}"', q) for q in ranked],
              "fieldConfig": {"defaults": {**LINES, "unit": "percentunit", "displayName": "${__field.name}"},
-                             "overrides": [by_ref(q, QUERY_COLORS[q]) for q in ranked]},
+                             "overrides": [by_ref(q, module.QUERY_COLORS[q]) for q in ranked]},
              "options": LEGEND}, 0, 17, 12, 6)
     for (x, y, w), cost in zip(((12, 17, 12), (0, 23, 24)), COST_PANELS):
-        b.panel(cost_panel(QUERY_COLORS, *cost), x, y, w, 6)
+        b.panel(cost_panel(module.QUERY_COLORS, *cost), x, y, w, 6)
 
     b.row("Application: rollout controller, rule ${rule}", 29)
     b.panel({"type": "text", "title": "Decision rules (selected: ${rule})",
@@ -599,7 +598,7 @@ def rollout_dashboard(uid):
                          "promote": {"color": "green", "text": "promote"}}), 0, 43, 24, 9)
 
     b.row("Query result and decision on one time axis, rule ${rule}", 52)
-    b.panel(query_and_decision_panel(app), 0, 53, 24, 12)
+    b.panel(query_and_decision_panel(app, module), 0, 53, 24, 12)
 
     b.row("Fidelity over rollouts", 65)
     b.panel(outcome_stat("Rollouts by outcome (positive: rollback)", summary, app), 0, 66, 6, 8)
@@ -636,8 +635,8 @@ def rollout_dashboard(uid):
                      to="2026-01-01T04:10:00.000Z")
 
 
-def topk_dashboard(uid):
-    use_cases = ["top_clients"]
+def topk_dashboard(uid, module):
+    use_cases = [cases.spec_of(module)["use_case"]]
     app = 'labels.app="topk_set"'
     here = f'{app} and labels.client_id="${{client_in_run}}"'
     overall = f'{app} and $not($exists(labels.client_id))'
@@ -849,8 +848,8 @@ def stage1_dashboard(uid, use_case):
     return dashboard(uid, "Stage 1", b, [])
 
 
-def two_stages_dashboard(uid):
-    use_case = "canary_release"
+def two_stages_dashboard(uid, module):
+    use_case = cases.spec_of(module)["use_case"]
     b = Board()
     b.row("Stage 1: sketch configuration to approx query result", 0)
     b.panel(stage1_panel(uid, use_case), 0, 1, 24, 14)
@@ -1070,58 +1069,29 @@ def systems_dashboard(uid, use_case):
     return dashboard(uid, "VictoriaMetrics vs ASAPQuery-backend", b, [])
 
 
-USE_CASES = (
-    ("ddos-detection", "1 · DDoS detection", (
-        lambda uid: overview_dashboard(uid, "ddos_syn_flood"),
-        lambda uid: cost_dashboard(uid, "uc1_syn_flood.json"), lambda uid: stage1_dashboard(uid, "ddos_syn_flood"),
-        alert_dashboard, lambda uid: rules_dashboard(uid, ["ddos_syn_flood"]),
-        lambda uid: rule_error_dashboard(uid, ddos_rules.RULES, ERRORS[:1]))),
-    ("autoscaling", "2 · Autoscaling", (
-        lambda uid: overview_dashboard(uid, "k8s_autoscaling"),
-        lambda uid: cost_dashboard(uid, "uc2_autoscaling.json"), lambda uid: stage1_dashboard(uid, "k8s_autoscaling"),
-        decision_dashboard, lambda uid: rules_dashboard(uid, ["k8s_autoscaling"]),
-        lambda uid: rule_error_dashboard(uid, scaling_rules.RULES, ERRORS, "entity_in_run"))),
-    ("video-experience", "3 · Video experience", (
-        lambda uid: overview_dashboard(uid, "video_experience"),
-        lambda uid: cost_dashboard(uid, "uc3_video.json"), lambda uid: stage1_dashboard(uid, "video_experience"),
-        lambda uid: rules_dashboard(uid, ["video_experience"]),
-        lambda uid: rule_error_dashboard(uid, video_rules.RULES, ERRORS, "city", video_rules.DIMENSIONS))),
-    ("canary-release", "4 · Canary release", (
-        lambda uid: overview_dashboard(uid, "canary_release"),
-        rollout_dashboard, two_stages_dashboard)),
-    ("rate-limiting", "5 · Top clients and rate limiting", (
-        lambda uid: overview_dashboard(uid, "top_clients"),
-        lambda uid: cost_dashboard(uid, "uc5_top_clients.json"), lambda uid: stage1_dashboard(uid, "top_clients"),
-        topk_dashboard,
-        lambda uid: rules_dashboard(uid, ["top_clients"]))),
-)
+PHASE3_SKIPS = ("stage1", "two_stages")
 
 
-
-def phase3_parts(use_case):
-    return (lambda uid: systems_dashboard(uid, use_case),
-            lambda uid: overview_dashboard(uid, use_case, sketch_bounds=False))
-
-
-PHASE3_USE_CASES = (
-    ("phase3-ddos-detection", "Phase 3 · 1 · DDoS detection", phase3_parts("ddos_syn_flood") + (
-        lambda uid: cost_dashboard(uid, "uc1_syn_flood.json"),
-        alert_dashboard, lambda uid: rules_dashboard(uid, ["ddos_syn_flood"]),
-        lambda uid: rule_error_dashboard(uid, ddos_rules.RULES, ERRORS[:1]))),
-    ("phase3-autoscaling", "Phase 3 · 2 · Autoscaling", phase3_parts("k8s_autoscaling") + (
-        lambda uid: cost_dashboard(uid, "uc2_autoscaling.json"),
-        decision_dashboard, lambda uid: rules_dashboard(uid, ["k8s_autoscaling"]),
-        lambda uid: rule_error_dashboard(uid, scaling_rules.RULES, ERRORS, "entity_in_run"))),
-    ("phase3-video-experience", "Phase 3 · 3 · Video experience", phase3_parts("video_experience") + (
-        lambda uid: cost_dashboard(uid, "uc3_video.json"),
-        lambda uid: rules_dashboard(uid, ["video_experience"]),
-        lambda uid: rule_error_dashboard(uid, video_rules.RULES, ERRORS, "city", video_rules.DIMENSIONS))),
-    ("phase3-canary-release", "Phase 3 · 4 · Canary release", phase3_parts("canary_release") + (
-        rollout_dashboard,)),
-    ("phase3-rate-limiting", "Phase 3 · 5 · Top clients and rate limiting", phase3_parts("top_clients") + (
-        lambda uid: cost_dashboard(uid, "uc5_top_clients.json"),
-        topk_dashboard, lambda uid: rules_dashboard(uid, ["top_clients"]))),
-)
+def parts_of(module, phase3=False):
+    use_case = cases.spec_of(module)["use_case"]
+    board = module.DASHBOARD
+    rule_error = board.get("rule_error", {})
+    builders = {
+        "overview": lambda uid: overview_dashboard(uid, use_case, sketch_bounds=not phase3),
+        "cost": lambda uid: cost_dashboard(uid, module),
+        "stage1": lambda uid: stage1_dashboard(uid, use_case),
+        "alert": lambda uid: alert_dashboard(uid, module),
+        "decision": lambda uid: decision_dashboard(uid, module),
+        "rollout": lambda uid: rollout_dashboard(uid, module),
+        "two_stages": lambda uid: two_stages_dashboard(uid, module),
+        "topk": lambda uid: topk_dashboard(uid, module),
+        "rules": lambda uid: rules_dashboard(uid, [use_case]),
+        "rule_error": lambda uid: rule_error_dashboard(
+            uid, module.RULES, tuple(e for e in ERRORS if e[0] in rule_error.get("metrics", ())),
+            rule_error.get("file_var"), rule_error.get("subpopulation")),
+    }
+    parts = tuple(builders[name] for name in board["parts"] if not (phase3 and name in PHASE3_SKIPS))
+    return ((lambda uid: systems_dashboard(uid, use_case)),) + parts if phase3 else parts
 
 
 def merged_variable(first, other):
@@ -1164,9 +1134,13 @@ def main():
     for name in os.listdir(OUT):
         if name.endswith(".json"):
             os.remove(os.path.join(OUT, name))
-    boards = [(uid, use_case_dashboard(uid, title, parts)) for uid, title, parts in USE_CASES]
-    boards += [(uid, json.loads(json.dumps(use_case_dashboard(uid, title, parts)).replace(DATA, PHASE3_DATA)))
-               for uid, title, parts in PHASE3_USE_CASES]
+    modules = cases.load().values()
+    boards = [(m.DASHBOARD["uid"], use_case_dashboard(m.DASHBOARD["uid"], m.DASHBOARD["title"], parts_of(m)))
+              for m in modules]
+    boards += [("phase3-" + m.DASHBOARD["uid"],
+                json.loads(json.dumps(use_case_dashboard("phase3-" + m.DASHBOARD["uid"], "Phase 3 · " + m.DASHBOARD["title"],
+                                                         parts_of(m, phase3=True))).replace(DATA, PHASE3_DATA)))
+               for m in modules]
     for uid, board in boards:
         with open(os.path.join(OUT, uid + ".json"), "w") as f:
             json.dump(board, f, indent=2)
