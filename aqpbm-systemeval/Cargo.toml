@@ -1,0 +1,20 @@
+[package]
+name = "aqpbm-systemeval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Writes a spec's samples to a time series system by Prometheus Remote Write and asks it the spec's queries at every evaluation time."
+
+[[bin]]
+name = "systemeval"
+path = "src/main.rs"
+
+[dependencies]
+aqpbm-planeval = { path = "../aqpbm-planeval" }
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+prost = "0.13"
+snap = "1.1"
+ureq = { version = "2", default-features = false }
