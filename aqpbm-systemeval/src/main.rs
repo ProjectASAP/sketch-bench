@@ -47,7 +47,11 @@ struct Args {
     #[arg(long, help = "Base URL of the system, e.g. http://127.0.0.1:8428")]
     url: String,
 
-    #[arg(long, default_value_t = 10_000, help = "Most samples in one Remote Write request")]
+    #[arg(
+        long,
+        default_value_t = 10_000,
+        help = "Most samples in one Remote Write request"
+    )]
     batch_samples: usize,
 
     #[arg(

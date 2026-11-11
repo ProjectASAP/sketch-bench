@@ -57,8 +57,8 @@ pub fn score(
         .map(|truth| truth.score(series, times, answered))
         .transpose()
         .with_context(|| format!("scoring {} against its computed truth", query.id))?;
-    let reference = exact
-        .map(|exact| keyed(exact.get(&query.id).map_or(&[][..], |a| a.as_slice())));
+    let reference =
+        exact.map(|exact| keyed(exact.get(&query.id).map_or(&[][..], |a| a.as_slice())));
     let rank_errors: HashMap<(i64, Labels), Scores> = match (&truth, &reference) {
         (Some(truth), Some(reference)) => truth
             .reference_rank_errors(series, times, answered, reference)

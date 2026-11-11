@@ -127,8 +127,16 @@ impl Collected {
             raw_data_retained: true,
             ignore_guarantees: false,
         };
-        let scored = score(spec, query, &arm, series, &self.times, &self.answered, exact)
-            .with_context(|| format!("scoring {}", query.id))?;
+        let scored = score(
+            spec,
+            query,
+            &arm,
+            series,
+            &self.times,
+            &self.answered,
+            exact,
+        )
+        .with_context(|| format!("scoring {}", query.id))?;
         out["answers"] = json!(scored.answers);
         out["computed_truth"] = json!(scored.computed_truth);
         Ok(out)

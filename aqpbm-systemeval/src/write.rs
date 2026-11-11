@@ -92,7 +92,8 @@ impl<'a> Writer<'a> {
         while end < self.order.len()
             && self.order[end].0 <= through_ms
             && end - self.next < self.options.batch_samples
-            && (self.options.speed.is_none() || self.order[end].0 - first_ms < self.options.flush_ms)
+            && (self.options.speed.is_none()
+                || self.order[end].0 - first_ms < self.options.flush_ms)
         {
             end += 1;
         }
