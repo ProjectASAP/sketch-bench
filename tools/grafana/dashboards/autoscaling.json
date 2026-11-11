@@ -802,11 +802,451 @@
     {
       "id": 3,
       "type": "row",
-      "title": "Query cost",
+      "title": "VictoriaMetrics vs ASAPQuery-backend",
       "collapsed": false,
       "gridPos": {
         "x": 0,
         "y": 45,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "VictoriaMetrics, which keeps every raw sample, vs ASAPQuery-backend planned to keep none: writes, memory, disk and query latency",
+      "description": "VictoriaMetrics answers are the exact arm, ASAPQuery-backend answers the approx arm. One sender writes both in time order; at each evaluation time it makes the samples written so far visible (a watermark for ASAPQuery-backend, a flush for VictoriaMetrics) and asks the queries due then, one instant query each. Write seconds include the visibility calls. Peak resident bytes and CPU seconds cover the whole process; disk bytes is the data directory at the end, and ASAPQuery-backend keeps everything in memory.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/index.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[use_case=\"k8s_autoscaling\" and $exists(details.systems)].( $e := $; $e.details.systems ~> $each(function($v, $k) { $merge([$v, {\"run_id\": $e.run_id, \"system\": $k, \"write mode\": $lookup($e.details, \"write mode\"), \"unsupported\": ( $u := $keys($v.unsupported); $exists($u) ? $join($u, \", \") : \"\" ), \"failed evaluations\": ( $f := $lookup($v, \"failed evaluations\"); $count($keys($f)) > 0 ? $string($f) : \"\" ), \"samples dropped\": ( $d := $lookup($v, \"samples dropped\"); $count($keys($d)) > 0 ? $string($d) : \"\" )}]) }) ); $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "run_id",
+              "text": "run_id",
+              "type": "string"
+            },
+            {
+              "selector": "system",
+              "text": "system",
+              "type": "string"
+            },
+            {
+              "selector": "write mode",
+              "text": "write mode",
+              "type": "string"
+            },
+            {
+              "selector": "unsupported",
+              "text": "unsupported",
+              "type": "string"
+            },
+            {
+              "selector": "failed evaluations",
+              "text": "failed evaluations",
+              "type": "string"
+            },
+            {
+              "selector": "samples dropped",
+              "text": "samples dropped",
+              "type": "string"
+            },
+            {
+              "selector": "insert samples per second",
+              "text": "insert samples per second",
+              "type": "number"
+            },
+            {
+              "selector": "write seconds",
+              "text": "write seconds",
+              "type": "number"
+            },
+            {
+              "selector": "visibility seconds",
+              "text": "visibility seconds",
+              "type": "number"
+            },
+            {
+              "selector": "peak resident bytes",
+              "text": "peak resident bytes",
+              "type": "number"
+            },
+            {
+              "selector": "resident bytes at end",
+              "text": "resident bytes at end",
+              "type": "number"
+            },
+            {
+              "selector": "disk bytes",
+              "text": "disk bytes",
+              "type": "number"
+            },
+            {
+              "selector": "cpu seconds",
+              "text": "cpu seconds",
+              "type": "number"
+            },
+            {
+              "selector": "mean query ms",
+              "text": "mean query ms",
+              "type": "number"
+            },
+            {
+              "selector": "median query ms",
+              "text": "median query ms",
+              "type": "number"
+            },
+            {
+              "selector": "p99 query ms",
+              "text": "p99 query ms",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "run_id": 0,
+              "system": 1,
+              "write mode": 2,
+              "insert samples per second": 3,
+              "write seconds": 4,
+              "visibility seconds": 5,
+              "peak resident bytes": 6,
+              "resident bytes at end": 7,
+              "disk bytes": 8,
+              "cpu seconds": 9,
+              "mean query ms": 10,
+              "median query ms": 11,
+              "p99 query ms": 12,
+              "unsupported": 13,
+              "failed evaluations": 14,
+              "samples dropped": 15
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "run_id"
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "minWidth": 60,
+            "cellOptions": {
+              "type": "auto",
+              "wrapText": true
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "insert samples per second"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "write seconds"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "visibility seconds"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "peak resident bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "resident bytes at end"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "disk bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cpu seconds"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "mean query ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "median query ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p99 query ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "run_id"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 230
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open this run",
+                    "url": "/d/autoscaling/autoscaling?var-run=${__data.fields.run_id}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true
+      },
+      "id": 4,
+      "gridPos": {
+        "x": 0,
+        "y": 46,
+        "w": 24,
+        "h": 10
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "type": "table",
+      "title": "VictoriaMetrics answers checked against the in-process exact plan over the same samples",
+      "description": "A difference here comes from how VictoriaMetrics evaluates the query, not from approximation.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "approx-rows"
+          },
+          "type": "json",
+          "source": "url",
+          "parser": "backend",
+          "format": "table",
+          "url": "http://localhost:8000/runs/index.json",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "( $r := $[use_case=\"k8s_autoscaling\" and $exists(details.victoriametrics_vs_truth)].( $e := $; $e.details.victoriametrics_vs_truth ~> $each(function($v, $k) { $merge([$v, {\"run_id\": $e.run_id, \"query\": $k}]) }) ); $exists($r) ? $r : [] )",
+          "columns": [
+            {
+              "selector": "run_id",
+              "text": "run_id",
+              "type": "string"
+            },
+            {
+              "selector": "query",
+              "text": "query",
+              "type": "string"
+            },
+            {
+              "selector": "max relative error",
+              "text": "max relative error",
+              "type": "number"
+            },
+            {
+              "selector": "answers differing",
+              "text": "answers differing",
+              "type": "number"
+            },
+            {
+              "selector": "answers",
+              "text": "answers",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "run_id": 0,
+              "query": 1,
+              "max relative error": 2,
+              "answers differing": 3,
+              "answers": 4
+            },
+            "excludeByName": {},
+            "renameByName": {}
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "run_id"
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "minWidth": 60
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max relative error"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true
+      },
+      "id": 5,
+      "gridPos": {
+        "x": 0,
+        "y": 56,
+        "w": 24,
+        "h": 7
+      },
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "approx-rows"
+      }
+    },
+    {
+      "id": 6,
+      "type": "row",
+      "title": "Query cost",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 63,
         "w": 24,
         "h": 1
       },
@@ -1457,10 +1897,10 @@
           "sort": "none"
         }
       },
-      "id": 4,
+      "id": 7,
       "gridPos": {
         "x": 0,
-        "y": 46,
+        "y": 64,
         "w": 12,
         "h": 8
       },
@@ -2114,10 +2554,10 @@
           "sort": "none"
         }
       },
-      "id": 5,
+      "id": 8,
       "gridPos": {
         "x": 12,
-        "y": 46,
+        "y": 64,
         "w": 12,
         "h": 8
       },
@@ -2127,13 +2567,13 @@
       }
     },
     {
-      "id": 6,
+      "id": 9,
       "type": "row",
       "title": "Stage 1: sketch configuration to approx query result",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 54,
+        "y": 72,
         "w": 24,
         "h": 1
       },
@@ -2400,10 +2840,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 7,
+      "id": 10,
       "gridPos": {
         "x": 0,
-        "y": 55,
+        "y": 73,
         "w": 24,
         "h": 14
       },
@@ -2413,13 +2853,13 @@
       }
     },
     {
-      "id": 8,
+      "id": 11,
       "type": "row",
       "title": "Runs",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 69,
+        "y": 87,
         "w": 24,
         "h": 1
       },
@@ -2545,10 +2985,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 9,
+      "id": 12,
       "gridPos": {
         "x": 0,
-        "y": 70,
+        "y": 88,
         "w": 12,
         "h": 7
       },
@@ -2636,10 +3076,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 10,
+      "id": 13,
       "gridPos": {
         "x": 12,
-        "y": 70,
+        "y": 88,
         "w": 12,
         "h": 7
       },
@@ -2649,13 +3089,13 @@
       }
     },
     {
-      "id": 11,
+      "id": 14,
       "type": "row",
       "title": "Query result for ${container}",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 77,
+        "y": 95,
         "w": 24,
         "h": 1
       },
@@ -2828,10 +3268,10 @@
           "sort": "none"
         }
       },
-      "id": 12,
+      "id": 15,
       "gridPos": {
         "x": 0,
-        "y": 78,
+        "y": 96,
         "w": 12,
         "h": 8
       },
@@ -3007,10 +3447,10 @@
           "sort": "none"
         }
       },
-      "id": 13,
+      "id": 16,
       "gridPos": {
         "x": 12,
-        "y": 78,
+        "y": 96,
         "w": 12,
         "h": 8
       },
@@ -3080,10 +3520,10 @@
           "sort": "none"
         }
       },
-      "id": 14,
+      "id": 17,
       "gridPos": {
         "x": 0,
-        "y": 86,
+        "y": 104,
         "w": 12,
         "h": 6
       },
@@ -3153,10 +3593,10 @@
           "sort": "none"
         }
       },
-      "id": 15,
+      "id": 18,
       "gridPos": {
         "x": 12,
-        "y": 86,
+        "y": 104,
         "w": 12,
         "h": 6
       },
@@ -3166,13 +3606,13 @@
       }
     },
     {
-      "id": 16,
+      "id": 19,
       "type": "row",
       "title": "Application: autoscaler",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 92,
+        "y": 110,
         "w": 24,
         "h": 1
       },
@@ -3393,10 +3833,10 @@
           "sort": "none"
         }
       },
-      "id": 17,
+      "id": 20,
       "gridPos": {
         "x": 0,
-        "y": 93,
+        "y": 111,
         "w": 24,
         "h": 6
       },
@@ -3579,10 +4019,10 @@
           "sort": "none"
         }
       },
-      "id": 18,
+      "id": 21,
       "gridPos": {
         "x": 0,
-        "y": 99,
+        "y": 117,
         "w": 24,
         "h": 5
       },
@@ -3592,13 +4032,13 @@
       }
     },
     {
-      "id": 19,
+      "id": 22,
       "type": "row",
       "title": "Fidelity over all containers",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 104,
+        "y": 122,
         "w": 24,
         "h": 1
       },
@@ -3686,10 +4126,10 @@
         "orientation": "horizontal",
         "justifyMode": "auto"
       },
-      "id": 20,
+      "id": 23,
       "gridPos": {
         "x": 0,
-        "y": 105,
+        "y": 123,
         "w": 6,
         "h": 7
       },
@@ -3786,10 +4226,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 21,
+      "id": 24,
       "gridPos": {
         "x": 6,
-        "y": 105,
+        "y": 123,
         "w": 7,
         "h": 7
       },
@@ -3868,10 +4308,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 22,
+      "id": 25,
       "gridPos": {
         "x": 13,
-        "y": 105,
+        "y": 123,
         "w": 6,
         "h": 7
       },
@@ -3962,10 +4402,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 23,
+      "id": 26,
       "gridPos": {
         "x": 19,
-        "y": 105,
+        "y": 123,
         "w": 5,
         "h": 7
       },
@@ -4044,10 +4484,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 24,
+      "id": 27,
       "gridPos": {
         "x": 0,
-        "y": 112,
+        "y": 130,
         "w": 24,
         "h": 6
       },
@@ -4057,13 +4497,13 @@
       }
     },
     {
-      "id": 25,
+      "id": 28,
       "type": "row",
       "title": "Rules in ${run}",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 118,
+        "y": 136,
         "w": 24,
         "h": 1
       },
@@ -4192,10 +4632,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 26,
+      "id": 29,
       "gridPos": {
         "x": 0,
-        "y": 119,
+        "y": 137,
         "w": 14,
         "h": 8
       },
@@ -4265,10 +4705,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 27,
+      "id": 30,
       "gridPos": {
         "x": 14,
-        "y": 119,
+        "y": 137,
         "w": 10,
         "h": 8
       },
@@ -4278,13 +4718,13 @@
       }
     },
     {
-      "id": 28,
+      "id": 31,
       "type": "row",
       "title": "Rule ${signal}: entities",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 127,
+        "y": 145,
         "w": 24,
         "h": 1
       },
@@ -4372,10 +4812,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 29,
+      "id": 32,
       "gridPos": {
         "x": 0,
-        "y": 128,
+        "y": 146,
         "w": 8,
         "h": 8
       },
@@ -4454,10 +4894,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 30,
+      "id": 33,
       "gridPos": {
         "x": 8,
-        "y": 128,
+        "y": 146,
         "w": 10,
         "h": 8
       },
@@ -4548,10 +4988,10 @@
         "orientation": "horizontal",
         "justifyMode": "auto"
       },
-      "id": 31,
+      "id": 34,
       "gridPos": {
         "x": 18,
-        "y": 128,
+        "y": 146,
         "w": 6,
         "h": 8
       },
@@ -4777,10 +5217,10 @@
       },
       "repeat": "entity_in_run",
       "repeatDirection": "v",
-      "id": 32,
+      "id": 35,
       "gridPos": {
         "x": 0,
-        "y": 136,
+        "y": 154,
         "w": 24,
         "h": 5
       },
@@ -4790,13 +5230,13 @@
       }
     },
     {
-      "id": 33,
+      "id": 36,
       "type": "row",
       "title": "Rule ${signal}: query error",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 141,
+        "y": 159,
         "w": 24,
         "h": 1
       },
@@ -4865,10 +5305,10 @@
       },
       "repeat": "entity_in_run",
       "repeatDirection": "v",
-      "id": 34,
+      "id": 37,
       "gridPos": {
         "x": 0,
-        "y": 142,
+        "y": 160,
         "w": 24,
         "h": 7
       },
@@ -4940,10 +5380,10 @@
       },
       "repeat": "entity_in_run",
       "repeatDirection": "v",
-      "id": 35,
+      "id": 38,
       "gridPos": {
         "x": 0,
-        "y": 149,
+        "y": 167,
         "w": 24,
         "h": 7
       },

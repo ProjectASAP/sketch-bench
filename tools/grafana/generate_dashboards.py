@@ -1005,26 +1005,90 @@ def overview_dashboard(uid, use_case):
     return dashboard("overview", "Approximate query fidelity overview", b, [])
 
 
+SYSTEM_TEXT = ("run_id", "system", "write mode", "unsupported", "failed evaluations", "samples dropped")
+SYSTEM_NUMBERS = (("insert samples per second", "short"), ("write seconds", "s"), ("visibility seconds", "s"),
+                  ("peak resident bytes", "bytes"),
+                  ("resident bytes at end", "bytes"), ("disk bytes", "bytes"), ("cpu seconds", "s"),
+                  ("mean query ms", "ms"), ("median query ms", "ms"), ("p99 query ms", "ms"))
+TRUTH_NUMBERS = ("max relative error", "answers differing", "answers")
+
+
+def systems_dashboard(uid, use_case):
+    each = (f'$[use_case="{use_case}" and $exists(details.systems)].( $e := $; '
+            '$e.details.systems ~> $each(function($v, $k) { $merge([$v, {"run_id": $e.run_id, "system": $k, '
+            '"write mode": $lookup($e.details, "write mode"), '
+            '"unsupported": ( $u := $keys($v.unsupported); $exists($u) ? $join($u, ", ") : "" ), '
+            '"failed evaluations": ( $f := $lookup($v, "failed evaluations"); $count($keys($f)) > 0 ? $string($f) : "" ), '
+            '"samples dropped": ( $d := $lookup($v, "samples dropped"); $count($keys($d)) > 0 ? $string($d) : "" )'
+            '}]) }) )')
+    b = Board()
+    b.row("VictoriaMetrics vs ASAPQuery-backend", 0)
+    b.panel({"type": "table",
+             "title": "VictoriaMetrics, which keeps every raw sample, vs ASAPQuery-backend planned to keep none: "
+                      "writes, memory, disk and query latency",
+             "description": "VictoriaMetrics answers are the exact arm, ASAPQuery-backend answers the approx arm. "
+                            "One sender writes both in time order; at each evaluation time it makes the samples "
+                            "written so far visible (a watermark for ASAPQuery-backend, a flush for "
+                            "VictoriaMetrics) and asks the queries due then, one instant query each. Write seconds "
+                            "include the visibility calls. Peak resident bytes and CPU seconds cover the whole "
+                            "process; disk bytes is the data directory at the end, and ASAPQuery-backend keeps "
+                            "everything in memory.",
+             "targets": [iq("A", INDEX, each, [col(k, k, "string") for k in SYSTEM_TEXT]
+                            + [col(k, k, "number") for k, _ in SYSTEM_NUMBERS])],
+             "transformations": order(*SYSTEM_TEXT[:3], *(k for k, _ in SYSTEM_NUMBERS), *SYSTEM_TEXT[3:])
+             + [{"id": "sortBy", "options": {"sort": [{"field": "run_id"}]}}],
+             "fieldConfig": {"defaults": {"custom": {"minWidth": 60, "cellOptions": {"type": "auto", "wrapText": True}}},
+                             "overrides": [{"matcher": {"id": "byName", "options": k},
+                                            "properties": [{"id": "unit", "value": unit}]}
+                                           for k, unit in SYSTEM_NUMBERS]
+                             + [{"matcher": {"id": "byName", "options": "run_id"},
+                                 "properties": [{"id": "custom.width", "value": 230}, {"id": "links", "value": [{
+                                     "title": "Open this run",
+                                     "url": f"/d/{uid}/{uid}?var-run=${{__data.fields.run_id}}"}]}]}]},
+             "options": {"showHeader": True}}, 0, 1, 24, 10)
+    truth = (f'$[use_case="{use_case}" and $exists(details.victoriametrics_vs_truth)].( $e := $; '
+             '$e.details.victoriametrics_vs_truth ~> $each(function($v, $k) { $merge([$v, '
+             '{"run_id": $e.run_id, "query": $k}]) }) )')
+    b.panel({"type": "table",
+             "title": "VictoriaMetrics answers checked against the in-process exact plan over the same samples",
+             "description": "A difference here comes from how VictoriaMetrics evaluates the query, not from "
+                            "approximation.",
+             "targets": [iq("A", INDEX, truth, [col("run_id", "run_id", "string"), col("query", "query", "string")]
+                            + [col(k, k, "number") for k in TRUTH_NUMBERS])],
+             "transformations": order("run_id", "query", *TRUTH_NUMBERS)
+             + [{"id": "sortBy", "options": {"sort": [{"field": "run_id"}]}}],
+             "fieldConfig": {"defaults": {"custom": {"minWidth": 60}}, "overrides": [
+                 {"matcher": {"id": "byName", "options": "max relative error"},
+                  "properties": [{"id": "unit", "value": "percentunit"}, {"id": "decimals", "value": 2}]}]},
+             "options": {"showHeader": True}}, 0, 11, 24, 7)
+    return dashboard(uid, "VictoriaMetrics vs ASAPQuery-backend", b, [])
+
+
 USE_CASES = (
     ("ddos-detection", "1 · DDoS detection", (
         lambda uid: overview_dashboard(uid, "ddos_syn_flood"),
+        lambda uid: systems_dashboard(uid, "ddos_syn_flood"),
         lambda uid: cost_dashboard(uid, "uc1_syn_flood.json"), lambda uid: stage1_dashboard(uid, "ddos_syn_flood"),
         alert_dashboard, lambda uid: rules_dashboard(uid, ["ddos_syn_flood"]),
         lambda uid: rule_error_dashboard(uid, ddos_rules.RULES, ERRORS[:1]))),
     ("autoscaling", "2 · Autoscaling", (
         lambda uid: overview_dashboard(uid, "k8s_autoscaling"),
+        lambda uid: systems_dashboard(uid, "k8s_autoscaling"),
         lambda uid: cost_dashboard(uid, "uc2_autoscaling.json"), lambda uid: stage1_dashboard(uid, "k8s_autoscaling"),
         decision_dashboard, lambda uid: rules_dashboard(uid, ["k8s_autoscaling"]),
         lambda uid: rule_error_dashboard(uid, scaling_rules.RULES, ERRORS, "entity_in_run"))),
     ("video-experience", "3 · Video experience", (
         lambda uid: overview_dashboard(uid, "video_experience"),
+        lambda uid: systems_dashboard(uid, "video_experience"),
         lambda uid: cost_dashboard(uid, "uc3_video.json"), lambda uid: stage1_dashboard(uid, "video_experience"),
         lambda uid: rules_dashboard(uid, ["video_experience"]),
         lambda uid: rule_error_dashboard(uid, video_rules.RULES, ERRORS, "city", video_rules.DIMENSIONS))),
     ("canary-release", "4 · Canary release", (
-        lambda uid: overview_dashboard(uid, "canary_release"), rollout_dashboard, two_stages_dashboard)),
+        lambda uid: overview_dashboard(uid, "canary_release"), lambda uid: systems_dashboard(uid, "canary_release"),
+        rollout_dashboard, two_stages_dashboard)),
     ("rate-limiting", "5 · Top clients and rate limiting", (
         lambda uid: overview_dashboard(uid, "top_clients"),
+        lambda uid: systems_dashboard(uid, "top_clients"),
         lambda uid: cost_dashboard(uid, "uc5_top_clients.json"), lambda uid: stage1_dashboard(uid, "top_clients"),
         topk_dashboard,
         lambda uid: rules_dashboard(uid, ["top_clients"]))),
