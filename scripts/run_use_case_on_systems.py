@@ -170,7 +170,8 @@ def systemeval(binary, spec, system, url, out, extra):
 
 
 def latency(document):
-    seconds = [c["query_seconds"] for q in document["queries"] if "unsupported" not in q for c in q["costs"]]
+    seconds = [c["query_seconds"] for q in document["queries"] if "unsupported" not in q for c in q["costs"]
+               if c.get("series_returned", 0) is not None]
     if not seconds:
         return {}
     ordered = sorted(seconds)
@@ -315,7 +316,7 @@ SUPPORTED_RULES = {"ddos_syn_flood": lambda rows, queries: in_process.uc1_derive
 def query_costs(run_id, use_case, signal, query, system):
     labels = {"use_case": use_case, "signal": signal, "query": query["id"], "arm": ARM_OF[system]}
     return [row(c["time"], "low_level", run_id, labels, "query_latency", c["query_seconds"], "s")
-            for c in query["costs"]]
+            for c in query["costs"] if c.get("series_returned", 0) is not None]
 
 
 def write_arm(data, case, run_id, exact, approx, unsupported, details, spec):
@@ -323,9 +324,10 @@ def write_arm(data, case, run_id, exact, approx, unsupported, details, spec):
     exact_by_id = {q["id"]: q for q in exact["queries"]}
     rows, errors, relative, costs, planned = [], [], [], [], []
     for q in approx["queries"]:
-        if q["id"] in unsupported:
-            continue
         signal = case["signal"](q["id"])
+        if q["id"] in unsupported:
+            costs += query_costs(run_id, use_case, signal, exact_by_id[q["id"]], VICTORIAMETRICS)
+            continue
         rows += in_process.query_rows(run_id, use_case, signal, exact_by_id[q["id"]], q)
         errors += in_process.rank_errors(run_id, use_case, signal, q)
         relative += in_process.relative_errors(run_id, use_case, signal, q)
@@ -333,7 +335,11 @@ def write_arm(data, case, run_id, exact, approx, unsupported, details, spec):
         costs += query_costs(run_id, use_case, signal, exact_by_id[q["id"]], VICTORIAMETRICS)
         planned.append(q)
     if not rows:
-        print(f"{run_id}: no query is supported by {BACKEND}; nothing written", file=sys.stderr)
+        if not costs:
+            print(f"{run_id}: no query was asked; nothing written", file=sys.stderr)
+            return
+        write_run(data, run_id, use_case, costs, details, case["split"])
+        print(f"{run_id}: no query answered by {BACKEND}; only costs written", file=sys.stderr)
         return
     if unsupported:
         partial = SUPPORTED_RULES.get(use_case)

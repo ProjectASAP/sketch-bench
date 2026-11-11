@@ -82,6 +82,11 @@ class LatencyTest(unittest.TestCase):
         self.assertAlmostEqual(out["median query ms"], 2.0)
         self.assertEqual(out["evaluations"], 3)
 
+    def test_failed_evaluations_are_left_out(self):
+        document = {"queries": [{"id": "a", "costs": [{"query_seconds": 0.001, "series_returned": 2},
+                                                      {"query_seconds": 5.0, "series_returned": None}]}]}
+        self.assertEqual(latency(document)["evaluations"], 1)
+
 
 class PlanTest(unittest.TestCase):
     def test_sketches_and_stored_outputs_below_the_query_root(self):
