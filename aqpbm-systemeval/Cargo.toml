@@ -10,7 +10,7 @@ name = "systemeval"
 path = "src/main.rs"
 
 [dependencies]
-aqpbm-planeval = { path = "../aqpbm-planeval" }
+aqpbm-usecase.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true

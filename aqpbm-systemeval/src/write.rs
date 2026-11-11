@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
-use aqpbm_planeval::data::Series;
+use aqpbm_usecase::data::Series;
 use serde_json::{json, Value};
 
 use crate::remote_write::{encode, Label, Sample, TimeSeries, WriteRequest};

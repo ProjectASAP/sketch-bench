@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use aqpbm_planeval::plan::{workload, Arm};
-use aqpbm_planeval::spec::{Spec, Statistic, Truth};
+use aqpbm_usecase::spec::{Spec, Statistic, Truth};
 use asap_types::ir::operator::{AggIntent, Reduction, Source};
 use asap_types::ir::scalar::{CompareOpKind, ScalarValue};
 use asap_types::ir::{NonASAPOp, Operator, OperatorNode, QueryRoot, ScalarExpr, TimeRangeKind};
@@ -140,7 +140,7 @@ fn every_workload_declares_the_truth_its_lowered_query_has() {
         ignore_guarantees: false,
     };
     let mut checked = 0;
-    for entry in std::fs::read_dir(Path::new("workloads")).unwrap() {
+    for entry in std::fs::read_dir(Path::new("../aqpbm-usecase/workloads")).unwrap() {
         let path = entry.unwrap().path();
         let spec = Spec::read(&path).unwrap();
         for query in &spec.queries {

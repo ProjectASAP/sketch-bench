@@ -7,9 +7,9 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use aqpbm_planeval::data::generate;
-use aqpbm_planeval::score::read_answers;
-use aqpbm_planeval::spec::Spec;
+use aqpbm_usecase::data::generate;
+use aqpbm_usecase::score::read_answers;
+use aqpbm_usecase::spec::Spec;
 use clap::{Parser, ValueEnum};
 use serde_json::json;
 

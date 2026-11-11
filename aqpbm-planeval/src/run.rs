@@ -15,7 +15,7 @@ use asap_types::ir::schema::{DataType, FieldDataType, Schema, PROMQL_SERIES_IDEN
 use asap_types::ir::NonASAPOp;
 use futures::{executor::block_on, StreamExt};
 
-use crate::data::{between, up_to, Series, Slice};
+use aqpbm_usecase::data::{between, up_to, Series, Slice};
 
 pub type Answer = (BTreeMap<String, String>, f64);
 

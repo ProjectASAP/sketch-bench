@@ -4,7 +4,7 @@ import os
 import pkgutil
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-WORKLOADS = os.path.join(REPO, "aqpbm-planeval", "workloads")
+WORKLOADS = os.path.join(REPO, "aqpbm-usecase", "workloads")
 
 
 def load():

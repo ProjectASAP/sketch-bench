@@ -5,12 +5,12 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use serde_json::{json, Value};
 
-use aqpbm_planeval::accuracy::AnswerAt;
-use aqpbm_planeval::data::generate;
 use aqpbm_planeval::plan::{plan, summary, Arm};
 use aqpbm_planeval::run::Driver;
-use aqpbm_planeval::score::{read_answers, score};
-use aqpbm_planeval::spec::Spec;
+use aqpbm_usecase::accuracy::AnswerAt;
+use aqpbm_usecase::data::generate;
+use aqpbm_usecase::score::{read_answers, score};
+use aqpbm_usecase::spec::Spec;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -147,13 +147,7 @@ async fn main() -> Result<()> {
             );
         }
         let elapsed = started.elapsed().as_secs_f64();
-        let scored = score(
-            query,
-            &series,
-            &times,
-            &answered,
-            exact.as_ref(),
-        )?;
+        let scored = score(query, &series, &times, &answered, exact.as_ref())?;
         eprintln!(
             "{}: {} evaluations in {:.1} s, {} view refreshes{}",
             query.id,

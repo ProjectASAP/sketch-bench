@@ -159,8 +159,7 @@ name = "aqpbm-planeval"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "aqpbm-core",
- "aqpbm-datagen",
+ "aqpbm-usecase",
  "asap-executor",
  "asap-frontend-promql",
  "asap-planner",
@@ -168,8 +167,6 @@ dependencies = [
  "asap_sketchlib 0.4.0 (git+https://github.com/ProjectASAP/asap_sketchlib?rev=a05b35ce14e4079eaa6acb29dd8c416bd1a2a3d1)",
  "clap",
  "futures",
- "rand 0.9.4",
- "rand_xoshiro",
  "serde",
  "serde_json",
  "tokio",
@@ -180,13 +177,26 @@ name = "aqpbm-systemeval"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "aqpbm-planeval",
+ "aqpbm-usecase",
  "clap",
  "prost",
  "serde",
  "serde_json",
  "snap",
  "ureq",
+]
+
+[[package]]
+name = "aqpbm-usecase"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "aqpbm-core",
+ "aqpbm-datagen",
+ "rand 0.9.4",
+ "rand_xoshiro",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

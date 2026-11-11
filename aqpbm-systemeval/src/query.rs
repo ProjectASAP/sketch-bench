@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
-use aqpbm_planeval::accuracy::{AnswerAt, Labels};
-use aqpbm_planeval::data::Series;
-use aqpbm_planeval::score::score;
-use aqpbm_planeval::spec::QuerySpec;
+use aqpbm_usecase::accuracy::{AnswerAt, Labels};
+use aqpbm_usecase::data::Series;
+use aqpbm_usecase::score::score;
+use aqpbm_usecase::spec::QuerySpec;
 use serde_json::{json, Value};
 
 const KEPT_FAILURES: usize = 5;
