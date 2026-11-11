@@ -144,6 +144,7 @@ USE_CASES = {
     "5": {
         "spec": "uc5_top_clients.json",
         "arms": ["noraw-ignore-eps0.05", "noraw-ignore-eps0.01", "noraw-ignore-eps0.005", "noraw-ignore-eps0.001"],
+        "planeval_flags": ["--executor-max-bytes", str(4 << 30)],
         "signal": lambda query: "top_clients",
         "signals": lambda query: (["top_clients"] if query == "top10_clients" else [])
         + rule_signals(rate_limit_rules.RULES)(query),
