@@ -234,12 +234,29 @@ def sketches(node, out):
             sketches(item, out)
 
 
-def describe_backend_plan(plan):
+def reachable(dag, root):
+    producers = {}
+    for edge in dag.get("edges", []):
+        producers.setdefault(edge["consumer"], []).append(edge["producer"])
+    seen, stack = set(), [root]
+    while stack:
+        node = stack.pop()
+        if node not in seen:
+            seen.add(node)
+            stack += producers.get(node, [])
+    return seen
+
+
+def describe_backend_plan(plan, promql):
+    dag = plan["dag"]["dag"]
+    root = next(q["root_node_id"] for q in plan["queries"] if q["query"] == promql)
+    nodes = reachable(dag, root)
     found = []
-    sketches(plan["dag"], found)
+    sketches([n["payload"] for n in dag["nodes"] if n["id"] in nodes], found)
     names = [f"{s.get('algorithm', '?')} {json.dumps(s.get('params'), separators=(',', ':'))}"
              for s in found if isinstance(s, dict)]
-    return f"{'; '.join(names) or 'exact'} ({len(plan.get('stored_outputs', []))} stored outputs)"
+    stored = sum(o["node_id"] in nodes for o in plan.get("stored_outputs", []))
+    return f"{'; '.join(names) or 'exact'} ({stored} stored outputs)"
 
 
 def control_plane(binary, spec, queries, arm, workdir, name):
@@ -479,7 +496,8 @@ def main(argv=None):
             "arm": {"max_error": in_process.max_error_of(arm), "failure_probability": 0.01,
                     "raw_data_retained": False, "ignore_guarantees": "ignore" in arm.split("-")},
             "trial": 1,
-            "plans": {q["id"]: describe_backend_plan(plan) for q in approx["queries"] if q["id"] not in unsupported},
+            "plans": {q["id"]: describe_backend_plan(plan, q["promql"]) for q in approx["queries"]
+                      if q["id"] not in unsupported},
             "unsupported": {q: f"not supported by {BACKEND}: {reason}" for q, reason in unsupported.items()},
             "exact_plans": {q: source for q, source in sources.items()},
             "promql": {q["id"]: q["promql"] for q in spec["queries"]},

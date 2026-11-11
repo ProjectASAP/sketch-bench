@@ -84,12 +84,17 @@ class LatencyTest(unittest.TestCase):
 
 
 class PlanTest(unittest.TestCase):
-    def test_sketches_found_anywhere_in_the_dag(self):
-        plan = {"dag": {"nodes": [{"payload": {"Sketch": [{"algorithm": "Kll", "params": {"k": 200}}, "x"]}},
-                                  {"payload": {"Sketch": [{"algorithm": "Kll", "params": {"k": 200}}, "y"]}}]},
-                "stored_outputs": [1, 2]}
-        self.assertEqual(describe_backend_plan(plan), 'Kll {"k":200} (2 stored outputs)')
-        self.assertEqual(describe_backend_plan({"dag": {}, "stored_outputs": []}), "exact (0 stored outputs)")
+    def test_sketches_and_stored_outputs_below_the_query_root(self):
+        kll = {"algorithm": "Kll", "params": {"k": 200}}
+        plan = {"dag": {"dag": {
+            "nodes": [{"id": 0, "payload": {}}, {"id": 1, "payload": {"Sketch": [kll, "x"]}},
+                      {"id": 2, "payload": {"Sketch": [{"algorithm": "Hll", "params": {"p": 12}}, "y"]}},
+                      {"id": 3, "payload": {}}],
+            "edges": [{"producer": 0, "consumer": 1}, {"producer": 1, "consumer": 3}, {"producer": 0, "consumer": 2}]}},
+            "queries": [{"query": "a", "root_node_id": 3}, {"query": "b", "root_node_id": 2}],
+            "stored_outputs": [{"node_id": 1}, {"node_id": 2}]}
+        self.assertEqual(describe_backend_plan(plan, "a"), 'Kll {"k":200} (1 stored outputs)')
+        self.assertEqual(describe_backend_plan(plan, "b"), 'Hll {"p":12} (1 stored outputs)')
 
 
 if __name__ == "__main__":
