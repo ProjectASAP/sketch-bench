@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 
 use aqpbm_datagen::{DataDistribution, TableDescription, RULE_MONOTONIC_INCREASE};
 
-use crate::accuracy::aggregate::GROUPS_PER_INSTANCE;
-use crate::benchmark_result::{CpuTime, MergedRecord, RunStats, WorkloadDescription};
+use aqpbm_core::accuracy::aggregate::GROUPS_PER_INSTANCE;
+use aqpbm_core::benchmark_result::{CpuTime, MergedRecord, RunStats, WorkloadDescription};
 
 /// One row: measured atomic costs for one (sketch algorithm, construction
 /// params) point, at the grid resolution ASAPQuery's `candidate_gen.rs`
@@ -384,7 +384,7 @@ pub fn reduce_all(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::benchmark_result::{
+    use aqpbm_core::benchmark_result::{
         InsertMetrics, Language, MergeMetrics, Mode, PrepareMetrics, QueryMetrics, Source,
         SCHEMA_VERSION,
     };

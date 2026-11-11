@@ -3,9 +3,7 @@
 //! Hand a sketch's primed closures to [`measure()`](fn@measure); it times them.
 
 pub mod accuracy;
-pub mod atomic_costs;
 pub mod benchmark_result;
-pub mod erp;
 pub mod error;
 pub mod measure;
 pub mod metrics;
@@ -19,16 +17,10 @@ pub use aqpbm_datagen::{
     NormalParameter, ParetoParameter, StringOpts, TableDescription, UniformParameter,
     ZipfParameter, RULE_MONOTONIC_INCREASE, RULE_NONE,
 };
-pub use atomic_costs::{
-    reduce_all, reduce_one, AtomicCostEntry, AtomicCostTable, MeasuredAt, MeasuredShape, SkipReason,
-};
 pub use benchmark_result::{
     BenchReport, BenchSection, CpuTime, ExternalWorkload, InsertMetrics, LatencySummary,
     MergeMetrics, MergeSplit, MergedRecord, Mode, PrepareMetrics, QueryMetrics, Record, RunStats,
     Source, TrialMode, WorkloadDescription, SCHEMA_VERSION,
-};
-pub use erp::{
-    erp_artifact, erp_record, ErpArtifact, ErpRecord, ErpResourceProfile, ERP_SCHEMA_VERSION,
 };
 pub use error::RunError;
 pub use measure::{

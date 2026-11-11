@@ -1,7 +1,7 @@
 //! `approxbench atomic-costs` — reduce a `--flat` `MergedRecord` JSONL stream
 //! (produced by looping `sketchbench` over a param grid, see
-//! `scripts/export_atomic_costs.sh`) into the flat cost table ASAPQuery's
-//! optimizer loads. The reduction itself lives in `aqpbm_core::atomic_costs`;
+//! `scripts/sketch_runs/export_atomic_costs.sh`) into the flat cost table ASAPQuery's
+//! optimizer loads. The reduction itself lives in `crate::atomic_costs`;
 //! this is just the CLI's read-stdin-or-file / write-stdout-or-file plumbing.
 
 use std::io::Read;
@@ -11,7 +11,9 @@ use clap::Parser;
 
 use std::collections::BTreeMap;
 
-use aqpbm_core::{reduce_all, MergedRecord};
+use aqpbm_core::MergedRecord;
+
+use crate::atomic_costs::reduce_all;
 
 #[derive(Parser, Debug)]
 pub struct AtomicCostsArgs {

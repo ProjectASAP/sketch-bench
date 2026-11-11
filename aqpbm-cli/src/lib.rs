@@ -1,5 +1,7 @@
+pub mod atomic_costs;
 pub mod atomic_costs_cmd;
 pub mod cli;
+pub mod erp;
 pub mod erp_cmd;
 pub mod external;
 pub mod flatten_cmd;

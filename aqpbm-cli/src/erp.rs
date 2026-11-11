@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 use aqpbm_datagen::DataDistribution;
 
 use crate::atomic_costs::reduce_scores;
-use crate::{MergedRecord, SkipReason, WorkloadDescription};
+use crate::atomic_costs::SkipReason;
+use aqpbm_core::{MergedRecord, WorkloadDescription};
 
 pub const ERP_SCHEMA_VERSION: u32 = 1;
 

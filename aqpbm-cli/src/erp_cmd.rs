@@ -3,7 +3,9 @@
 use std::io::Read;
 
 use anyhow::{Context, Result};
-use aqpbm_core::{erp_artifact, MergedRecord};
+use aqpbm_core::MergedRecord;
+
+use crate::erp::erp_artifact;
 use clap::Parser;
 
 #[derive(Parser, Debug)]
