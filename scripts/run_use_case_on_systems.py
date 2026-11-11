@@ -440,7 +440,7 @@ def main(argv=None):
                         help=f"directory with {BACKEND}'s control_plane and data_plane binaries; default "
                              f"${BACKEND_ENV}, else ../ASAPQuery-backend/target/release beside this repository")
     parser.add_argument("--victoriametrics", default=shutil.which("victoria-metrics") or "victoria-metrics")
-    parser.add_argument("--data", default=os.path.join(REPO, "target", "grafana-data"))
+    parser.add_argument("--data", default=os.path.join(REPO, "target", "grafana-data", "phase3"))
     parser.add_argument("--raw-out", default=os.path.join(REPO, "target", "systems"))
     parser.add_argument("--arm", action="append", help="repeatable; default every arm of the use case that keeps "
                                                        "no raw samples")

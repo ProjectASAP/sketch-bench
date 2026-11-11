@@ -734,463 +734,11 @@
     {
       "id": 3,
       "type": "row",
-      "title": "VictoriaMetrics vs ASAPQuery-backend",
-      "collapsed": false,
-      "gridPos": {
-        "x": 0,
-        "y": 45,
-        "w": 24,
-        "h": 1
-      },
-      "panels": []
-    },
-    {
-      "type": "table",
-      "title": "VictoriaMetrics, which keeps every raw sample, vs ASAPQuery-backend planned to keep none: writes, memory, disk and query latency",
-      "description": "VictoriaMetrics answers are the exact arm, ASAPQuery-backend answers the approx arm. One sender writes both in time order; at each evaluation time it makes the samples written so far visible (a watermark for ASAPQuery-backend, a flush for VictoriaMetrics) and asks the queries due then, one instant query each. Write seconds include the visibility calls. Peak resident bytes and CPU seconds cover the whole process; disk bytes is the data directory at the end, and ASAPQuery-backend keeps everything in memory.",
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "yesoreyeram-infinity-datasource",
-            "uid": "approx-rows"
-          },
-          "type": "json",
-          "source": "url",
-          "parser": "backend",
-          "format": "table",
-          "url": "http://localhost:8000/runs/index.json",
-          "url_options": {
-            "method": "GET",
-            "data": ""
-          },
-          "root_selector": "( $r := ( $runs := $[use_case=\"video_experience\" and $exists(details.systems)]; $reduce($runs, function($acc, $e) { $append($acc, $each($e.details.systems, function($v, $k) { $merge([$v, {\"run_id\": $e.run_id, \"system\": $k, \"write mode\": $lookup($e.details, \"write mode\"), \"unsupported\": ( $u := $keys($v.unsupported); $exists($u) ? $join($u, \", \") : \"\" ), \"failed evaluations\": ( $f := $lookup($v, \"failed evaluations\"); $count($keys($f)) > 0 ? $string($f) : \"\" ), \"samples dropped\": ( $d := $lookup($v, \"samples dropped\"); $count($keys($d)) > 0 ? $string($d) : \"\" )}]) })) }, []) ); $exists($r) ? $r : [] )",
-          "columns": [
-            {
-              "selector": "run_id",
-              "text": "run_id",
-              "type": "string"
-            },
-            {
-              "selector": "system",
-              "text": "system",
-              "type": "string"
-            },
-            {
-              "selector": "write mode",
-              "text": "write mode",
-              "type": "string"
-            },
-            {
-              "selector": "unsupported",
-              "text": "unsupported",
-              "type": "string"
-            },
-            {
-              "selector": "failed evaluations",
-              "text": "failed evaluations",
-              "type": "string"
-            },
-            {
-              "selector": "samples dropped",
-              "text": "samples dropped",
-              "type": "string"
-            },
-            {
-              "selector": "insert samples per second",
-              "text": "insert samples per second",
-              "type": "number"
-            },
-            {
-              "selector": "write seconds",
-              "text": "write seconds",
-              "type": "number"
-            },
-            {
-              "selector": "visibility seconds",
-              "text": "visibility seconds",
-              "type": "number"
-            },
-            {
-              "selector": "peak resident bytes",
-              "text": "peak resident bytes",
-              "type": "number"
-            },
-            {
-              "selector": "resident bytes at end",
-              "text": "resident bytes at end",
-              "type": "number"
-            },
-            {
-              "selector": "disk bytes",
-              "text": "disk bytes",
-              "type": "number"
-            },
-            {
-              "selector": "cpu seconds",
-              "text": "cpu seconds",
-              "type": "number"
-            },
-            {
-              "selector": "mean query ms",
-              "text": "mean query ms",
-              "type": "number"
-            },
-            {
-              "selector": "median query ms",
-              "text": "median query ms",
-              "type": "number"
-            },
-            {
-              "selector": "p99 query ms",
-              "text": "p99 query ms",
-              "type": "number"
-            }
-          ]
-        }
-      ],
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "indexByName": {
-              "run_id": 0,
-              "system": 1,
-              "write mode": 2,
-              "insert samples per second": 3,
-              "write seconds": 4,
-              "visibility seconds": 5,
-              "peak resident bytes": 6,
-              "resident bytes at end": 7,
-              "disk bytes": 8,
-              "cpu seconds": 9,
-              "mean query ms": 10,
-              "median query ms": 11,
-              "p99 query ms": 12,
-              "unsupported": 13,
-              "failed evaluations": 14,
-              "samples dropped": 15
-            },
-            "excludeByName": {},
-            "renameByName": {}
-          }
-        },
-        {
-          "id": "sortBy",
-          "options": {
-            "sort": [
-              {
-                "field": "run_id"
-              }
-            ]
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "minWidth": 95,
-            "cellOptions": {
-              "type": "auto",
-              "wrapText": true
-            }
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "insert samples per second"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "short"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "write seconds"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "s"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "visibility seconds"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "s"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "peak resident bytes"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "bytes"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "resident bytes at end"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "bytes"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "disk bytes"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "bytes"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "cpu seconds"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "s"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "mean query ms"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "ms"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "median query ms"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "ms"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "p99 query ms"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "ms"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "^(system|write mode)$"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 150
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "run_id"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 230
-              },
-              {
-                "id": "links",
-                "value": [
-                  {
-                    "title": "Open this run",
-                    "url": "/d/video-experience/video-experience?var-run=${__data.fields.run_id}"
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "showHeader": true
-      },
-      "id": 4,
-      "gridPos": {
-        "x": 0,
-        "y": 46,
-        "w": 24,
-        "h": 14
-      },
-      "datasource": {
-        "type": "yesoreyeram-infinity-datasource",
-        "uid": "approx-rows"
-      }
-    },
-    {
-      "type": "table",
-      "title": "VictoriaMetrics answers checked against the in-process exact plan over the same samples",
-      "description": "A difference here comes from how VictoriaMetrics evaluates the query, not from approximation.",
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "yesoreyeram-infinity-datasource",
-            "uid": "approx-rows"
-          },
-          "type": "json",
-          "source": "url",
-          "parser": "backend",
-          "format": "table",
-          "url": "http://localhost:8000/runs/index.json",
-          "url_options": {
-            "method": "GET",
-            "data": ""
-          },
-          "root_selector": "( $r := ( $runs := $[use_case=\"video_experience\" and $exists(details.victoriametrics_vs_truth)]; $reduce($runs, function($acc, $e) { $append($acc, $each($e.details.victoriametrics_vs_truth, function($v, $k) { $merge([$v, {\"run_id\": $e.run_id, \"query\": $k}]) })) }, []) ); $exists($r) ? $r : [] )",
-          "columns": [
-            {
-              "selector": "run_id",
-              "text": "run_id",
-              "type": "string"
-            },
-            {
-              "selector": "query",
-              "text": "query",
-              "type": "string"
-            },
-            {
-              "selector": "max relative error",
-              "text": "max relative error",
-              "type": "number"
-            },
-            {
-              "selector": "answers differing",
-              "text": "answers differing",
-              "type": "number"
-            },
-            {
-              "selector": "answers",
-              "text": "answers",
-              "type": "number"
-            }
-          ]
-        }
-      ],
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "indexByName": {
-              "run_id": 0,
-              "query": 1,
-              "max relative error": 2,
-              "answers differing": 3,
-              "answers": 4
-            },
-            "excludeByName": {},
-            "renameByName": {}
-          }
-        },
-        {
-          "id": "sortBy",
-          "options": {
-            "sort": [
-              {
-                "field": "run_id"
-              }
-            ]
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "minWidth": 60
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "max relative error"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "percentunit"
-              },
-              {
-                "id": "decimals",
-                "value": 2
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "showHeader": true
-      },
-      "id": 5,
-      "gridPos": {
-        "x": 0,
-        "y": 60,
-        "w": 24,
-        "h": 8
-      },
-      "datasource": {
-        "type": "yesoreyeram-infinity-datasource",
-        "uid": "approx-rows"
-      }
-    },
-    {
-      "id": 6,
-      "type": "row",
       "title": "Query cost",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 68,
+        "y": 45,
         "w": 24,
         "h": 1
       },
@@ -1841,10 +1389,10 @@
           "sort": "none"
         }
       },
-      "id": 7,
+      "id": 4,
       "gridPos": {
         "x": 0,
-        "y": 69,
+        "y": 46,
         "w": 12,
         "h": 8
       },
@@ -2498,10 +2046,10 @@
           "sort": "none"
         }
       },
-      "id": 8,
+      "id": 5,
       "gridPos": {
         "x": 12,
-        "y": 69,
+        "y": 46,
         "w": 12,
         "h": 8
       },
@@ -2511,13 +2059,13 @@
       }
     },
     {
-      "id": 9,
+      "id": 6,
       "type": "row",
       "title": "Stage 1: sketch configuration to approx query result",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 77,
+        "y": 54,
         "w": 24,
         "h": 1
       },
@@ -2784,10 +2332,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 10,
+      "id": 7,
       "gridPos": {
         "x": 0,
-        "y": 78,
+        "y": 55,
         "w": 24,
         "h": 14
       },
@@ -2797,13 +2345,13 @@
       }
     },
     {
-      "id": 11,
+      "id": 8,
       "type": "row",
       "title": "Runs",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 92,
+        "y": 69,
         "w": 24,
         "h": 1
       },
@@ -2929,10 +2477,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 12,
+      "id": 9,
       "gridPos": {
         "x": 0,
-        "y": 93,
+        "y": 70,
         "w": 12,
         "h": 7
       },
@@ -3020,10 +2568,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 13,
+      "id": 10,
       "gridPos": {
         "x": 12,
-        "y": 93,
+        "y": 70,
         "w": 12,
         "h": 7
       },
@@ -3033,13 +2581,13 @@
       }
     },
     {
-      "id": 14,
+      "id": 11,
       "type": "row",
       "title": "Rules in ${run}",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 100,
+        "y": 77,
         "w": 24,
         "h": 1
       },
@@ -3168,10 +2716,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 15,
+      "id": 12,
       "gridPos": {
         "x": 0,
-        "y": 101,
+        "y": 78,
         "w": 14,
         "h": 8
       },
@@ -3241,10 +2789,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 16,
+      "id": 13,
       "gridPos": {
         "x": 14,
-        "y": 101,
+        "y": 78,
         "w": 10,
         "h": 8
       },
@@ -3254,13 +2802,13 @@
       }
     },
     {
-      "id": 17,
+      "id": 14,
       "type": "row",
       "title": "Rule ${signal}: entities",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 109,
+        "y": 86,
         "w": 24,
         "h": 1
       },
@@ -3348,10 +2896,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 18,
+      "id": 15,
       "gridPos": {
         "x": 0,
-        "y": 110,
+        "y": 87,
         "w": 8,
         "h": 8
       },
@@ -3430,10 +2978,10 @@
       "options": {
         "showHeader": true
       },
-      "id": 19,
+      "id": 16,
       "gridPos": {
         "x": 8,
-        "y": 110,
+        "y": 87,
         "w": 10,
         "h": 8
       },
@@ -3524,10 +3072,10 @@
         "orientation": "horizontal",
         "justifyMode": "auto"
       },
-      "id": 20,
+      "id": 17,
       "gridPos": {
         "x": 18,
-        "y": 110,
+        "y": 87,
         "w": 6,
         "h": 8
       },
@@ -3753,10 +3301,10 @@
       },
       "repeat": "entity_in_run",
       "repeatDirection": "v",
-      "id": 21,
+      "id": 18,
       "gridPos": {
         "x": 0,
-        "y": 118,
+        "y": 95,
         "w": 24,
         "h": 5
       },
@@ -3766,13 +3314,13 @@
       }
     },
     {
-      "id": 22,
+      "id": 19,
       "type": "row",
       "title": "Rule ${signal}: query error",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 123,
+        "y": 100,
         "w": 24,
         "h": 1
       },
@@ -3841,10 +3389,10 @@
       },
       "repeat": "city",
       "repeatDirection": "v",
-      "id": 23,
+      "id": 20,
       "gridPos": {
         "x": 0,
-        "y": 124,
+        "y": 101,
         "w": 24,
         "h": 7
       },
@@ -3916,10 +3464,10 @@
       },
       "repeat": "city",
       "repeatDirection": "v",
-      "id": 24,
+      "id": 21,
       "gridPos": {
         "x": 0,
-        "y": 131,
+        "y": 108,
         "w": 24,
         "h": 7
       },

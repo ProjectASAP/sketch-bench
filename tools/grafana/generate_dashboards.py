@@ -13,6 +13,7 @@ import video_rules
 
 DS = {"type": "yesoreyeram-infinity-datasource", "uid": "approx-rows"}
 DATA = "http://localhost:8000/runs/"
+PHASE3_DATA = "http://localhost:8000/phase3/runs/"
 RUN = DATA + "${run}/"
 INDEX = DATA + "index.json"
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboards")
@@ -925,7 +926,7 @@ def rule_error_dashboard(uid, rule_set, metrics, file_var=None, subpopulation=No
 ERRORS = (("relative_error", "Relative error"), ("rank_error", "Rank error"))
 
 
-def overview_dashboard(uid, use_case):
+def overview_dashboard(uid, use_case, sketch_bounds=True):
     rows = (f'$[use_case="{use_case}" and $exists(details.fidelity)].( $e := $; '
             '$append($keys($e.details.plans), $keys($e.details.unsupported)).( $q := $; '
             '$lookup($e.details.signals, $q).( $s := $; $f := $lookup($e.details.fidelity, $s); '
@@ -977,6 +978,8 @@ def overview_dashboard(uid, use_case):
                              "&var-signal=${__data.fields.signal}"
                              "&from=${__data.fields.start}&to=${__data.fields.end}"}]}]}]},
              "options": {"showHeader": True}}, 0, 0, 24, 30)
+    if not sketch_bounds:
+        return dashboard("overview", "Approximate query fidelity overview", b, [])
     bounds = (f'$[use_case="{use_case}" and $exists(details.sketch_bounds)].( $e := $; $e.details.sketch_bounds.( '
               '$merge([$, {"run_id": $e.run_id, '
               '"max relative error": $lookup($e.details.max_relative_error, query)}]) ) )')
@@ -1070,31 +1073,54 @@ def systems_dashboard(uid, use_case):
 USE_CASES = (
     ("ddos-detection", "1 · DDoS detection", (
         lambda uid: overview_dashboard(uid, "ddos_syn_flood"),
-        lambda uid: systems_dashboard(uid, "ddos_syn_flood"),
         lambda uid: cost_dashboard(uid, "uc1_syn_flood.json"), lambda uid: stage1_dashboard(uid, "ddos_syn_flood"),
         alert_dashboard, lambda uid: rules_dashboard(uid, ["ddos_syn_flood"]),
         lambda uid: rule_error_dashboard(uid, ddos_rules.RULES, ERRORS[:1]))),
     ("autoscaling", "2 · Autoscaling", (
         lambda uid: overview_dashboard(uid, "k8s_autoscaling"),
-        lambda uid: systems_dashboard(uid, "k8s_autoscaling"),
         lambda uid: cost_dashboard(uid, "uc2_autoscaling.json"), lambda uid: stage1_dashboard(uid, "k8s_autoscaling"),
         decision_dashboard, lambda uid: rules_dashboard(uid, ["k8s_autoscaling"]),
         lambda uid: rule_error_dashboard(uid, scaling_rules.RULES, ERRORS, "entity_in_run"))),
     ("video-experience", "3 · Video experience", (
         lambda uid: overview_dashboard(uid, "video_experience"),
-        lambda uid: systems_dashboard(uid, "video_experience"),
         lambda uid: cost_dashboard(uid, "uc3_video.json"), lambda uid: stage1_dashboard(uid, "video_experience"),
         lambda uid: rules_dashboard(uid, ["video_experience"]),
         lambda uid: rule_error_dashboard(uid, video_rules.RULES, ERRORS, "city", video_rules.DIMENSIONS))),
     ("canary-release", "4 · Canary release", (
-        lambda uid: overview_dashboard(uid, "canary_release"), lambda uid: systems_dashboard(uid, "canary_release"),
+        lambda uid: overview_dashboard(uid, "canary_release"),
         rollout_dashboard, two_stages_dashboard)),
     ("rate-limiting", "5 · Top clients and rate limiting", (
         lambda uid: overview_dashboard(uid, "top_clients"),
-        lambda uid: systems_dashboard(uid, "top_clients"),
         lambda uid: cost_dashboard(uid, "uc5_top_clients.json"), lambda uid: stage1_dashboard(uid, "top_clients"),
         topk_dashboard,
         lambda uid: rules_dashboard(uid, ["top_clients"]))),
+)
+
+
+
+def phase3_parts(use_case):
+    return (lambda uid: systems_dashboard(uid, use_case),
+            lambda uid: overview_dashboard(uid, use_case, sketch_bounds=False))
+
+
+PHASE3_USE_CASES = (
+    ("phase3-ddos-detection", "Phase 3 · 1 · DDoS detection", phase3_parts("ddos_syn_flood") + (
+        lambda uid: cost_dashboard(uid, "uc1_syn_flood.json"),
+        alert_dashboard, lambda uid: rules_dashboard(uid, ["ddos_syn_flood"]),
+        lambda uid: rule_error_dashboard(uid, ddos_rules.RULES, ERRORS[:1]))),
+    ("phase3-autoscaling", "Phase 3 · 2 · Autoscaling", phase3_parts("k8s_autoscaling") + (
+        lambda uid: cost_dashboard(uid, "uc2_autoscaling.json"),
+        decision_dashboard, lambda uid: rules_dashboard(uid, ["k8s_autoscaling"]),
+        lambda uid: rule_error_dashboard(uid, scaling_rules.RULES, ERRORS, "entity_in_run"))),
+    ("phase3-video-experience", "Phase 3 · 3 · Video experience", phase3_parts("video_experience") + (
+        lambda uid: cost_dashboard(uid, "uc3_video.json"),
+        lambda uid: rules_dashboard(uid, ["video_experience"]),
+        lambda uid: rule_error_dashboard(uid, video_rules.RULES, ERRORS, "city", video_rules.DIMENSIONS))),
+    ("phase3-canary-release", "Phase 3 · 4 · Canary release", phase3_parts("canary_release") + (
+        rollout_dashboard,)),
+    ("phase3-rate-limiting", "Phase 3 · 5 · Top clients and rate limiting", phase3_parts("top_clients") + (
+        lambda uid: cost_dashboard(uid, "uc5_top_clients.json"),
+        topk_dashboard, lambda uid: rules_dashboard(uid, ["top_clients"]))),
 )
 
 
@@ -1138,9 +1164,12 @@ def main():
     for name in os.listdir(OUT):
         if name.endswith(".json"):
             os.remove(os.path.join(OUT, name))
-    for uid, title, parts in USE_CASES:
+    boards = [(uid, use_case_dashboard(uid, title, parts)) for uid, title, parts in USE_CASES]
+    boards += [(uid, json.loads(json.dumps(use_case_dashboard(uid, title, parts)).replace(DATA, PHASE3_DATA)))
+               for uid, title, parts in PHASE3_USE_CASES]
+    for uid, board in boards:
         with open(os.path.join(OUT, uid + ".json"), "w") as f:
-            json.dump(use_case_dashboard(uid, title, parts), f, indent=2)
+            json.dump(board, f, indent=2)
             f.write("\n")
 
 
