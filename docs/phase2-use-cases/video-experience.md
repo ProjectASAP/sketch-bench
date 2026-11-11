@@ -5,6 +5,8 @@ A rule reads query results at every check and decides which groups have a proble
 This page lists what public tools query and decide, and the end-to-end cases we benchmark.
 Sources: Hydra (PVLDB 2022), Conviva, Mux, Bitmovin, Netflix, Twitch, ClickHouse.
 
+![Video experience](../figures/phase2-use-cases/uc3-video-experience.svg)
+
 ## 1. Industry examples
 
 | Source | Metrics | Query | Compared against | Decision |

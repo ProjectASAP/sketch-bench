@@ -5,6 +5,8 @@ A rule reads query results at every check and decides which clients to limit and
 This page lists what public tools query and decide, and the end-to-end cases we benchmark.
 Sources: Cloudflare, AWS WAF, Google Cloud Armor, Microsoft Azure Front Door, Fastly.
 
+![Rate limiting](../figures/phase2-use-cases/uc5-rate-limiting.svg)
+
 ## 1. Industry examples
 
 | Source | Metrics | Query | Compared against | Decision |

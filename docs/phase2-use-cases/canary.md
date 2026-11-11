@@ -5,6 +5,8 @@ A rule reads query results at every check and decides to roll back or to promote
 This page lists what public tools query and decide, and the end-to-end cases we benchmark.
 Sources: Flagger, Argo Rollouts, AWS CloudWatch, Keptn, Kayenta (Spinnaker), Netflix (KDD 2022), Google SRE Workbook.
 
+![Canary release](../figures/phase2-use-cases/uc4-canary-release.svg)
+
 ## 1. Industry examples
 
 | Source | Metrics | Query | Compared against | Decision |
