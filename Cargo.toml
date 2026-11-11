@@ -1,4 +1,4 @@
-# Workspace manifest for sketch-bench → sketchlib-tool.
+# Workspace manifest for sketch-bench.
 [workspace]
 resolver = "2"
 members = [
