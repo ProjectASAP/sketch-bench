@@ -5,6 +5,8 @@ A rule reads query results at every check and decides to alert or to mitigate.
 This page lists what public tools query and decide, and the end-to-end cases we benchmark.
 Sources: PromSketch (PVLDB 2025), Cloudflare, AWS Shield, Google Cloud Armor, Datadog, Red Hat, Kentik, FastNetMon, NetFlow Logic.
 
+![DDoS detection](../figures/phase2-use-cases/uc1-ddos-detection.svg)
+
 ## 1. Industry examples
 
 | Source | Metrics | Query | Compared against | Decision |

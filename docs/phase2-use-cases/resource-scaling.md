@@ -5,6 +5,8 @@ A rule reads query results at every check and decides to scale up, to scale down
 This page lists what public tools query and decide, and the end-to-end cases we benchmark.
 Sources: PromSketch (PVLDB 2025), Google Autopilot, Kubernetes, AWS, Microsoft Azure, Uber, Grafana Labs.
 
+![Resource scaling](../figures/phase2-use-cases/uc2-resource-scaling.svg)
+
 ## 1. Industry examples
 
 | Source | Metrics | Query | Compared against | Decision |

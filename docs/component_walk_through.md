@@ -72,11 +72,36 @@ aqpbm-datagen --->|"5:generated data"| cli
 cli --->|"6: necessary components"| aqpbm-core
 aqpbm-core --->|"7: benchmark result"| cli
 
+aqpbm-usecase["`**aqpbm-usecase**
+- use case spec: data, queries, declared truth
+- sample generation
+- answer scoring`"]
+
+aqpbm-planeval["`**aqpbm-planeval**
+- ASAPPlanner planner and executor in process
+- recurring queries at every evaluation time`"]
+
+aqpbm-systemeval["`**aqpbm-systemeval**
+- Prometheus Remote Write to a time series system
+- recurring queries at every evaluation time`"]
+
+aqpbm-usecase --->|"data generation requirement"| aqpbm-datagen
+aqpbm-usecase --->|"necessary components"| aqpbm-core
+
+aqpbm-planeval ---> aqpbm-usecase
+aqpbm-systemeval ---> aqpbm-usecase
+
 class aqp-bench,runtime future
 
 spacer~~~cli
 
 end
+
+commandline_input --->|"benchmark setup"| aqpbm-planeval
+commandline_input --->|"benchmark setup"| aqpbm-systemeval
+
+aqpbm-planeval ---->|"result"| output
+aqpbm-systemeval ---->|"result"| output
 
 classDef future stroke-dasharray: 5 5
 classDef invisible fill:none,stroke:none,color:transparent
