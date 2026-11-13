@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 
 import unittest
+from unittest import mock
 
 import run_use_case
-from run_use_case_on_systems import (backend_arms, cpu_seconds, describe_backend_plan, latency, merged_exact,
-                                     truth_errors, workload)
+import run_use_case_on_systems
+from run_use_case_on_systems import (backend_arms, cpu_seconds, describe_backend_plan, evaluation_counts, latency,
+                                     merged_exact, merged_groups, plan_groups, truth_errors, workload)
 
 SPEC = {
     "metrics": [
@@ -100,6 +102,73 @@ class PlanTest(unittest.TestCase):
             "stored_outputs": [{"node_id": 1}, {"node_id": 2}]}
         self.assertEqual(describe_backend_plan(plan, "a"), 'Kll {"k":200} (1 stored outputs)')
         self.assertEqual(describe_backend_plan(plan, "b"), 'Hll {"p":12} (1 stored outputs)')
+
+
+def planner(unplannable, conflicts):
+    def control_plane(binary, spec, queries, arm, workdir, name, calls=None):
+        ids = {q["id"] for q in queries}
+        if ids & unplannable:
+            return None, "unsupported"
+        if any(pair <= ids for pair in conflicts):
+            return None, "not together"
+        return f"{name}-plan.json", {"ids": sorted(ids)}
+    return control_plane
+
+
+def spec_of(*ids):
+    return {"queries": [{"id": i} for i in ids]}
+
+
+class PlanGroupsTest(unittest.TestCase):
+    def groups(self, spec, unplannable=(), conflicts=()):
+        with mock.patch.object(run_use_case_on_systems, "control_plane",
+                               planner(set(unplannable), [set(c) for c in conflicts])):
+            groups, unsupported = plan_groups("cp", spec, "noraw", "/tmp")
+        return [[q["id"] for q in members] for _, _, members in groups], unsupported
+
+    def test_one_group_when_everything_plans_together(self):
+        self.assertEqual(self.groups(spec_of("a", "b", "c")), ([["a", "b", "c"]], {}))
+
+    def test_unplannable_queries_are_recorded_and_the_rest_plan_alone(self):
+        groups, unsupported = self.groups(spec_of("a", "b", "c"), unplannable={"b"})
+        self.assertEqual(groups, [["a"], ["c"]])
+        self.assertEqual(unsupported, {"b": "unsupported"})
+
+    def test_queries_that_do_not_plan_together_plan_alone(self):
+        groups, unsupported = self.groups(spec_of("a", "b", "c"), conflicts=[("a", "c")])
+        self.assertEqual(groups, [["a"], ["b"], ["c"]])
+        self.assertEqual(unsupported, {})
+
+    def test_no_group_when_nothing_plans(self):
+        self.assertEqual(self.groups(spec_of("a"), unplannable={"a"}), ([], {"a": "unsupported"}))
+
+
+class MergedGroupsTest(unittest.TestCase):
+    def test_answers_follow_spec_order_and_costs_add_up(self):
+        def ran(ids, cpu, peak):
+            asked = {"use_case": "u", "run_seconds": 1.0, "write": {"samples": 1},
+                     "queries": [{"id": i, "costs": [{"query_seconds": 0.002}], "failed_evaluations": 0}
+                                 for i in ids]}
+            return asked, {"cpu seconds": cpu, "peak resident bytes": peak, "failed evaluations": {}}
+        asked, summary = merged_groups(spec_of("a", "b", "c"), [ran(["c"], 1.0, 10), ran(["a", "b"], 2.0, 30)])
+        self.assertEqual([q["id"] for q in asked["queries"]], ["a", "b", "c"])
+        self.assertEqual([g["queries"] for g in asked["groups"]], [["c"], ["a", "b"]])
+        self.assertEqual(summary["instances"], 2)
+        self.assertEqual(summary["cpu seconds"], 3.0)
+        self.assertEqual(summary["peak resident bytes"], 30)
+        self.assertEqual(summary["evaluations"], 3)
+
+    def test_one_group_is_returned_unchanged(self):
+        only = ({"queries": []}, {"cpu seconds": 1.0})
+        self.assertIs(merged_groups(spec_of(), [only]), only)
+
+
+class EvaluationCountsTest(unittest.TestCase):
+    def test_empty_and_failed_evaluations(self):
+        query = {"evaluations": 3, "failed_evaluations": 1,
+                 "costs": [{"series_returned": 0}, {"series_returned": 2}, {"series_returned": None}]}
+        self.assertEqual(evaluation_counts(query),
+                         {"evaluations": 3, "failed evaluations": 1, "empty evaluations": 1})
 
 
 if __name__ == "__main__":
