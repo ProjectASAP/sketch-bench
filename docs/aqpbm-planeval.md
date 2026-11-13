@@ -61,17 +61,17 @@ For each sketch, `asap_sketchlib` gives its theoretical error bound and memory.
 Fidelity compares the approx arm with the exact arm.
 It is measured on the application, not only on the query result.
 For example, does the alert fire at the same evaluations.
-Each application has its own script in `scripts/`.
+Each application has its own script in `scripts/use_cases/cases/`.
 The relative error of each query result is also recorded.
 
 ## How to Run
 
 ```bash
 cargo build --release -p aqpbm-planeval
-python3 scripts/run_use_case.py 4
+python3 scripts/use_cases/run_use_case.py 4
 tools/grafana/run.sh
 ```
 
 `run_use_case.py` runs the exact arm and every approx arm of one use case.
 The results go to `target/grafana-data`.
-Grafana shows one dashboard per application and one overview.
+Grafana shows one dashboard per application.
