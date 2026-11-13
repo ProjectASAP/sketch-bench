@@ -106,9 +106,9 @@ Every exact and approximate plan comes from ASAPPlanner and runs in `planeval`; 
 
 ```bash
 cargo build --release -p aqpbm-planeval
-python3 scripts/run_use_case.py 4 --trials 3
+python3 scripts/use_cases/run_use_case.py 4 --trials 3
 python3 tools/grafana/generate_dashboards.py
 tools/grafana/run.sh
 ```
 
-`run_use_case.py` runs the exact plan once, then every arm three times, and writes rows to `target/grafana-data`. Dashboards: `http://localhost:3000/d/rollout` (one run, one rule), `/d/two-stages` and `/d/overview`.
+`run_use_case.py` runs the exact plan once, then every arm three times, and writes rows to `target/grafana-data`. Dashboard: `http://localhost:3000/d/canary-release`.

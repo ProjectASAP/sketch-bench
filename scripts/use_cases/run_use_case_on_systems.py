@@ -33,6 +33,10 @@ BACKEND_ENV = "ASAPQUERY_BACKEND_DIR"
 READY_SECONDS = 60
 
 
+def raw_retained(arm):
+    return "noraw" not in arm.split("-")
+
+
 def backend_arms(case):
     return [arm for arm in case["arms"] if "noraw" in arm.split("-")]
 
@@ -267,7 +271,7 @@ def control_plane(binary, spec, queries, arm, workdir, name, calls=None):
         json.dump(workload(spec, queries, max_error, 0.01), f)
     capabilities = os.path.join(workdir, "capabilities.json")
     with open(capabilities, "w") as f:
-        json.dump({"raw_data_retained": False}, f)
+        json.dump({"raw_data_retained": raw_retained(arm)}, f)
     out = os.path.join(workdir, f"{name}-plan.json")
     cmd = [binary, "--workload", path, "--deployment-capabilities", capabilities, "--out", out]
     if "ignore" in arm.split("-"):
@@ -399,13 +403,32 @@ def run_victoriametrics(args, spec_path, workdir, write_flags, truth_path):
     return asked, summary
 
 
-def run_group(args, spec_path, spec, planned, members, name, workdir, flags):
+def start_raw_store(args, spec_path, workdir, write_flags):
+    data = os.path.join(workdir, "raw-store-data")
+    shutil.rmtree(data, ignore_errors=True)
+    port = free_port()
+    url = f"http://127.0.0.1:{port}"
+    server = Server("raw store", [args.victoriametrics, f"-storageDataPath={data}", "-retentionPeriod=100y",
+                                  f"-httpListenAddr=127.0.0.1:{port}", "-loggerLevel=ERROR",
+                                  "-search.disableCache"],
+                    url + "/health", os.path.join(workdir, "raw-store.log"))
+    try:
+        systemeval(args.systemeval, spec_path, VICTORIAMETRICS, url, os.path.join(workdir, "raw-store.json"),
+                   write_flags + ["--query", "none"])
+    except BaseException:
+        server.stop()
+        raise
+    return server, url, data
+
+
+def run_group(args, spec_path, spec, planned, members, name, workdir, flags, raw_store=None):
     port = free_port()
     url = f"http://127.0.0.1:{port}"
     try:
         server = Server(BACKEND, [os.path.join(args.backend_dir, "data_plane"), "--plan", planned,
                                   "--no-forward", "--stream-start-ms", str(spec["start_ms"]),
-                                  "--listen", f"127.0.0.1:{port}"],
+                                  "--listen", f"127.0.0.1:{port}"]
+                        + (["--prometheus-url", raw_store] if raw_store else []),
                         url + "/-/ready", os.path.join(workdir, f"{name}-data-plane.log"))
     except RuntimeError as refused:
         lines = str(refused).strip().splitlines()
@@ -445,7 +468,7 @@ def planner_summary(calls):
             "largest plan bytes": max((c["plan bytes"] or 0) for c in calls)}
 
 
-def run_backend(args, spec_path, spec, arm, workdir, write_flags, exact_path):
+def run_backend(args, spec_path, spec, arm, workdir, write_flags, exact_path, raw_store=None):
     calls = []
     groups, unsupported = plan_groups(os.path.join(args.backend_dir, "control_plane"), spec, arm, workdir,
                                       calls=calls)
@@ -454,7 +477,7 @@ def run_backend(args, spec_path, spec, arm, workdir, write_flags, exact_path):
     ran, installed = [], []
     for planned, plan, members in groups:
         name = arm if len(groups) == 1 else f"{arm}-{members[0]['id']}"
-        asked, summary = run_group(args, spec_path, spec, planned, members, name, workdir, flags)
+        asked, summary = run_group(args, spec_path, spec, planned, members, name, workdir, flags, raw_store)
         if asked is None:
             for q in members:
                 unsupported[q["id"]] = summary
@@ -525,35 +548,53 @@ def run_spec(args):
     victoriametrics, victoriametrics_summary = run_victoriametrics(args, spec_path, workdir, write_flags, None)
     exact_path = os.path.join(workdir, "victoriametrics.json")
     rev, planner_pin = backend_rev(args.backend_dir)
-    for arm in args.arm or [SPEC_ARM]:
-        approx, backend_summary, plans, unsupported = run_backend(args, spec_path, spec, arm, workdir,
-                                                                  write_flags, exact_path)
-        queries = query_report(spec, victoriametrics, approx, unsupported, plans)
-        groups = (approx.get("groups") or [{"queries": [q["id"] for q in approx["queries"]]}]) if approx else []
-        report = {
-            "spec": spec_path,
-            "use_case": spec["use_case"],
-            "start_ms": spec["start_ms"],
-            "duration_ms": spec["duration_ms"],
-            "queries": len(spec["queries"]),
-            f"supported by {BACKEND}": sum(r[BACKEND]["supported"] for r in queries.values()),
-            f"{BACKEND} deployment": {"raw_data_retained": False, "forwards queries": False,
-                                      "accuracy requirement": None if in_process.max_error_of(arm) is None
-                                      else {"max_error": in_process.max_error_of(arm),
-                                            "failure_probability": 0.01}},
-            f"{BACKEND} instances": [g["queries"] for g in groups],
-            "write mode": "as fast as each system accepts" if args.speed is None
-            else f"replay at {args.speed:g}x the data rate",
-            "planner_rev": planner_pin,
-            "backend_rev": rev,
-            "systems": {VICTORIAMETRICS: victoriametrics_summary, BACKEND: backend_summary},
-            "per query": queries,
-        }
-        out = os.path.join(workdir, f"{arm}-summary.json")
-        with open(out, "w") as f:
-            json.dump(report, f, indent=1)
-        print(f"{name} {arm}: {report[f'supported by {BACKEND}']} of {len(spec['queries'])} queries supported by "
-              f"{BACKEND} in {len(groups)} instances; {out}", file=sys.stderr)
+    arms = args.arm or [SPEC_ARM]
+    raw_store = start_raw_store(args, spec_path, workdir, write_flags) if any(map(raw_retained, arms)) else None
+    try:
+        for arm in arms:
+            run_spec_arm(args, spec_path, spec, name, workdir, write_flags, exact_path, victoriametrics,
+                         victoriametrics_summary, rev, planner_pin, arm,
+                         raw_store if raw_retained(arm) else None)
+    finally:
+        if raw_store:
+            raw_store[0].stop()
+            if not args.keep_data:
+                shutil.rmtree(raw_store[2], ignore_errors=True)
+
+
+def run_spec_arm(args, spec_path, spec, name, workdir, write_flags, exact_path, victoriametrics,
+                 victoriametrics_summary, rev, planner_pin, arm, raw_store):
+    approx, backend_summary, plans, unsupported = run_backend(args, spec_path, spec, arm, workdir,
+                                                              write_flags, exact_path,
+                                                              raw_store[1] if raw_store else None)
+    queries = query_report(spec, victoriametrics, approx, unsupported, plans)
+    groups = (approx.get("groups") or [{"queries": [q["id"] for q in approx["queries"]]}]) if approx else []
+    report = {
+        "spec": spec_path,
+        "use_case": spec["use_case"],
+        "start_ms": spec["start_ms"],
+        "duration_ms": spec["duration_ms"],
+        "queries": len(spec["queries"]),
+        f"supported by {BACKEND}": sum(r[BACKEND]["supported"] for r in queries.values()),
+        f"{BACKEND} deployment": {"raw_data_retained": raw_retained(arm), "forwards queries": False,
+                                  "raw store": f"{VICTORIAMETRICS}, filled with every sample before "
+                                               f"{BACKEND} starts" if raw_store else None,
+                                  "accuracy requirement": None if in_process.max_error_of(arm) is None
+                                  else {"max_error": in_process.max_error_of(arm),
+                                        "failure_probability": 0.01}},
+        f"{BACKEND} instances": [g["queries"] for g in groups],
+        "write mode": "as fast as each system accepts" if args.speed is None
+        else f"replay at {args.speed:g}x the data rate",
+        "planner_rev": planner_pin,
+        "backend_rev": rev,
+        "systems": {VICTORIAMETRICS: victoriametrics_summary, BACKEND: backend_summary},
+        "per query": queries,
+    }
+    out = os.path.join(workdir, f"{arm}-summary.json")
+    with open(out, "w") as f:
+        json.dump(report, f, indent=1)
+    print(f"{name} {arm}: {report[f'supported by {BACKEND}']} of {len(spec['queries'])} queries supported by "
+          f"{BACKEND} in {len(groups)} instances; {out}", file=sys.stderr)
 
 
 def main(argv=None):
