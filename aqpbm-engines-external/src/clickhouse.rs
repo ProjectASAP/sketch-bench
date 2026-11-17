@@ -49,7 +49,7 @@ use crate::{NodeId, SharingLost, Substitution, TranslationError};
 /// The plan's series identity column, a label column like any other. It has
 /// one value per series, so it is a plain `String`: `LowCardinality` pays
 /// off only below about ten thousand distinct values.
-const SERIES_IDENTITY: &str = "$promql_series_identity";
+pub const SERIES_IDENTITY: &str = "$promql_series_identity";
 
 /// The settings every `INSERT` into a source table uses: a NULL value is an
 /// error instead of being stored as 0 (PromQL samples are never NULL), in
@@ -62,6 +62,11 @@ pub const INSERT_SETTINGS: &str = "input_format_null_as_default = 0, insert_null
 pub struct ClickHouseDeployment {
     /// `CREATE TABLE` statements: one per metric, then one per stored chain.
     pub tables: Vec<String>,
+    /// The source table of each metric, in the order of `tables`: where its
+    /// samples are inserted.
+    pub sources: Vec<SourceTable>,
+    /// The tables of the stored chains (`v<node>`), in the order of `tables`.
+    pub stored_tables: Vec<String>,
     /// `CREATE MATERIALIZED VIEW` statements, one per stored chain.
     pub materialized_views: Vec<String>,
     /// One `SELECT` per query root, in root order, with the parameter `{t:Int64}`.
@@ -75,6 +80,16 @@ pub struct ClickHouseDeployment {
     pub table_retention: Vec<TableRetention>,
     pub substitutions: Vec<Substitution>,
     pub sharing_lost: Vec<SharingLost>,
+}
+
+/// A metric's source table: samples of `metric` (their `__name__`) are
+/// inserted into `table`, with one column per label of `label_columns`, in
+/// that order, the series identity last.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceTable {
+    pub metric: String,
+    pub table: String,
+    pub label_columns: Vec<String>,
 }
 
 /// A table's retention: rows whose time is older than `retention_ms` before
@@ -136,12 +151,15 @@ pub fn translate(plan: &PlanFile) -> Result<ClickHouseDeployment, TranslationErr
         queries.push(relation.sql);
         query_time_steps_ms.push(relation.step_ms);
     }
-    let mut tables = source_tables(plan);
+    let (sources, mut tables): (Vec<SourceTable>, Vec<String>) =
+        source_tables(plan).into_iter().unzip();
+    let mut stored_tables = Vec::new();
     let mut table_retention = source_retention(plan);
     let mut materialized_views = Vec::new();
     let mut substitutions = Vec::new();
     for chain in translator.chains.values() {
         tables.push(chain.table());
+        stored_tables.push(chain.table_name());
         materialized_views.push(chain.view());
         if let Some(retention_ms) = chain.retention_ms {
             table_retention.push(TableRetention {
@@ -161,6 +179,8 @@ pub fn translate(plan: &PlanFile) -> Result<ClickHouseDeployment, TranslationErr
         }
     }
     Ok(ClickHouseDeployment {
+        sources,
+        stored_tables,
         tables,
         materialized_views,
         queries,
@@ -366,7 +386,7 @@ fn over_values(function: &str) -> String {
 /// primary key; a `minmax` index on `ts` skips the granules outside a time
 /// range. A metric only stored chains read keeps no rows (`ENGINE = Null`):
 /// its materialized views still see every insert.
-fn source_tables(plan: &PlanFile) -> Vec<String> {
+fn source_tables(plan: &PlanFile) -> Vec<(SourceTable, String)> {
     struct SourceColumns<'a> {
         metric: &'a str,
         labels: Vec<&'a str>,
@@ -421,10 +441,18 @@ fn source_tables(plan: &PlanFile) -> Vec<String> {
                 .map(|label| format!(", {} {}", quoted(label), label_type(label)))
                 .collect();
             let table = source_table(source.metric);
+            let described = SourceTable {
+                metric: source.metric.to_string(),
+                table: table.clone(),
+                label_columns: source.labels.iter().map(|l| l.to_string()).collect(),
+            };
             if !source.keeps_rows {
-                return format!(
-                    "CREATE TABLE {table} (ts DateTime64(3, 'UTC'), value Float64{columns}) \
-                     ENGINE = Null"
+                return (
+                    described,
+                    format!(
+                        "CREATE TABLE {table} (ts DateTime64(3, 'UTC'), value Float64{columns}) \
+                         ENGINE = Null"
+                    ),
                 );
             }
             let sorting_key: Vec<String> = source
@@ -434,11 +462,14 @@ fn source_tables(plan: &PlanFile) -> Vec<String> {
                 .map(|label| quoted(label))
                 .chain(["ts".to_string()])
                 .collect();
-            format!(
-                "CREATE TABLE {table} (ts DateTime64(3, 'UTC'), value Float64{columns}, \
-                 INDEX ts_minmax ts TYPE minmax GRANULARITY 1) \
-                 ENGINE = MergeTree ORDER BY ({})",
-                sorting_key.join(", ")
+            (
+                described,
+                format!(
+                    "CREATE TABLE {table} (ts DateTime64(3, 'UTC'), value Float64{columns}, \
+                     INDEX ts_minmax ts TYPE minmax GRANULARITY 1) \
+                     ENGINE = MergeTree ORDER BY ({})",
+                    sorting_key.join(", ")
+                ),
             )
         })
         .collect()
