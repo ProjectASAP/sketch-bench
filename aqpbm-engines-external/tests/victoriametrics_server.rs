@@ -429,12 +429,27 @@ fn only_counter_plans_wait_for_the_previous_arms_samples_to_age_out() {
         PlanFile::from_value(fixture_value_public(workload, variant)).unwrap()
     };
     // Rollups over a window read only the window: no wait.
-    assert_eq!(previous_arm_gap_ms(&plan("q4c_sum_over_time__1m_1hz_10s", "victoriametrics.equivalent-only")), 0);
-    assert_eq!(previous_arm_gap_ms(&plan("sot__1h__1hz__60s", "victoriametrics.equivalent-only")), 0);
+    assert_eq!(
+        previous_arm_gap_ms(&plan(
+            "q4c_sum_over_time__1m_1hz_10s",
+            "victoriametrics.equivalent-only"
+        )),
+        0
+    );
+    assert_eq!(
+        previous_arm_gap_ms(&plan(
+            "sot__1h__1hz__60s",
+            "victoriametrics.equivalent-only"
+        )),
+        0
+    );
     // `rate` looks back for the sample before its range: 10 min plus the
     // longest range (60 s).
     assert_eq!(
-        previous_arm_gap_ms(&plan("q2_sum_rate__1m_1hz_10s", "victoriametrics.with-substitutes")),
+        previous_arm_gap_ms(&plan(
+            "q2_sum_rate__1m_1hz_10s",
+            "victoriametrics.with-substitutes"
+        )),
         660_000
     );
 }

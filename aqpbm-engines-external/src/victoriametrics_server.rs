@@ -27,9 +27,11 @@
 //! for each of its ticks in the chunk (failing if that lags by `h` or more,
 //! or if the server dropped a late sample), and makes the new rows
 //! searchable, so this work is ingest CPU and an evaluation runs only its
-//! queries. An arm's data starts at least 10 minutes plus its longest range
-//! after the previous arm's newest sample, so MetricsQL's look-back for the
-//! sample before a range never reaches another arm's data. One arm at a time per engine: the server's stream-aggregation
+//! queries. An arm that reads counters starts its data at least 10 minutes
+//! plus its longest range after the previous arm's newest sample, so
+//! MetricsQL's look-back for the sample before a range (`rate`, `increase`)
+//! never reaches another arm's data; other arms start right away, since a
+//! window rollup reads only its window, which holds only the arm's own data. One arm at a time per engine: the server's stream-aggregation
 //! config is one file, and wall-clock data cannot be replayed into a second
 //! arm, so run the lane with no warm-up and one measured run.
 //!
@@ -54,7 +56,7 @@ use aqpbm_core::harness::engine::{
 };
 use serde_json::Value;
 
-use crate::plan_file::{PlanFile, PlanOperator};
+use crate::plan_file::{PlanFile, PlanOperator, SummaryFamily};
 use crate::victoriametrics::{
     translate, MetricsQlQuery, StreamAggregation, VictoriaMetricsDeployment,
 };
@@ -206,11 +208,8 @@ impl EngineUnderTest for VictoriaMetricsEngine {
             .iter()
             .fold(lcm(1000, interval_ms), |step, a| lcm(step, a.interval_ms));
         let data_start = data_start_ms(workload);
-        let earliest_start = now_ms().max(
-            self.newest_sample_wall_ms.load(Ordering::SeqCst)
-                + PREVIOUS_SAMPLE_LOOKBACK_MS
-                + longest_range_ms(&plan),
-        );
+        let earliest_start = now_ms()
+            .max(self.newest_sample_wall_ms.load(Ordering::SeqCst) + previous_arm_gap_ms(&plan));
         installed.offset_ms = wall_offset_ms(earliest_start, data_start, step_ms);
         // Flushes are counted for the ticks after the data start; earlier
         // ones (empty windows) only add to the counts.
@@ -222,16 +221,34 @@ impl EngineUnderTest for VictoriaMetricsEngine {
     }
 }
 
-/// The longest range any `TimeRange` of `plan` reads, in ms.
-fn longest_range_ms(plan: &PlanFile) -> i64 {
-    plan.nodes
+/// How long after the previous arm's newest sample this arm's data must
+/// start, in ms: 0 for a plan that reads only its windows, and
+/// [`PREVIOUS_SAMPLE_LOOKBACK_MS`] plus the longest range for one that reads
+/// counters (`rate` and `increase` start from the sample before their
+/// range, which MetricsQL looks for that far back). Example: `sum by (job)
+/// (rate(m[1m]))`: 660,000 ms; `max_over_time(m[1m])`: 0.
+pub fn previous_arm_gap_ms(plan: &PlanFile) -> i64 {
+    let reads_counters = plan.nodes.iter().any(|node| match &node.operator {
+        PlanOperator::SummaryTumblingWindowChain { family, .. }
+        | PlanOperator::SummaryAgg { family, .. } => matches!(
+            family,
+            SummaryFamily::Exact(kind) if matches!(kind.as_str(), "Rate" | "Increase" | "IRate")
+        ),
+        _ => false,
+    });
+    if !reads_counters {
+        return 0;
+    }
+    let longest_range_ms = plan
+        .nodes
         .iter()
         .filter_map(|node| match node.operator {
             PlanOperator::TimeRange { range_ms, .. } => Some(range_ms as i64),
             _ => None,
         })
         .max()
-        .unwrap_or(0)
+        .unwrap_or(0);
+    PREVIOUS_SAMPLE_LOOKBACK_MS + longest_range_ms
 }
 
 /// The one evaluation interval of `workload`'s queries.
