@@ -1,0 +1,1 @@
+count(count by (instance) (count_over_time(latency[300s])))

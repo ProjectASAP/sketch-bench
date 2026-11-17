@@ -1,0 +1,1 @@
+max_over_time(latency:60s_max[300s] offset -29500ms)

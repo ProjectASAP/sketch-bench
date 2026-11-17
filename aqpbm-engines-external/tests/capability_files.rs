@@ -11,18 +11,7 @@ fn file(name: &str) -> Value {
     serde_json::from_str(&std::fs::read_to_string(path).expect("file")).expect("JSON")
 }
 
-fn sketches_all() -> Value {
-    json!([
-        {"summary_type": "Hll", "readouts": ["Distinct"]},
-        {"summary_type": "Kmv", "readouts": ["Distinct"]},
-        {"summary_type": "Kll", "readouts": ["Quantile"]},
-        {"summary_type": "DDSketch", "readouts": ["Quantile"]},
-        {"summary_type": "CmsWithHeap", "readouts": ["TopK"]},
-        {"summary_type": "CountSketchWithHeap", "readouts": ["TopK"]}
-    ])
-}
-
-fn clickhouse_irate_exclusions() -> Value {
+fn irate_exclusions() -> Value {
     json!([
         {"summary_family": {"exact": "IRate"}},
         {"operator": "Aggregate", "aggregate_measure": "i_rate"}
@@ -40,7 +29,7 @@ fn capability_files_match_the_design() {
             "query_time_results_retained": false,
             "counter_semantics": {"reset_handling": true, "extrapolation": true},
             "state_not_mergeable_across_windows": [{"exact": "Rate"}, {"exact": "Increase"}],
-            "excluded_candidates": clickhouse_irate_exclusions()
+            "excluded_candidates": irate_exclusions()
         })
     );
     assert_eq!(
@@ -51,7 +40,7 @@ fn capability_files_match_the_design() {
             "query_time_results_retained": false,
             "counter_semantics": {"reset_handling": true, "extrapolation": true},
             "state_not_mergeable_across_windows": [],
-            "excluded_candidates": clickhouse_irate_exclusions()
+            "excluded_candidates": irate_exclusions()
         })
     );
     assert_eq!(
@@ -68,15 +57,14 @@ fn capability_files_match_the_design() {
     assert_eq!(
         file("victoriametrics.with-substitutes.json"),
         json!({
-            "supported_summaries": sketches_all(),
+            // No sketch until the translator builds sketch states, and no
+            // stored counter chain until it has a rule for one.
+            "supported_summaries": [],
             "raw_data_retained": true,
             "query_time_results_retained": false,
             "counter_semantics": {"reset_handling": true, "extrapolation": true},
-            "state_not_mergeable_across_windows": [
-                {"exact": "IRate"}, {"sketch": "Hll"}, {"sketch": "Kmv"},
-                {"sketch": "CmsWithHeap"}, {"sketch": "CountSketchWithHeap"}
-            ],
-            "excluded_candidates": []
+            "state_not_mergeable_across_windows": [{"exact": "Rate"}, {"exact": "Increase"}],
+            "excluded_candidates": irate_exclusions()
         })
     );
 }

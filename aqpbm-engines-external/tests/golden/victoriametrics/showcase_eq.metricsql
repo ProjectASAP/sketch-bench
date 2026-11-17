@@ -1,0 +1,10 @@
+# q4c_sum_over_time__1m_1hz_10s
+sum by (job) (sum_over_time(latency[60s]))
+# q1_quantile__1m_1hz_10s
+quantile_over_time(0.99, latency[60s])
+# q3_avg_quantile__1m_1hz_10s
+avg by (job) (quantile_over_time(0.9, latency[60s]))
+# q4_count__1m_1hz_10s
+sum by (job) (count_over_time(latency[60s]))
+# q4b_max__1m_1hz_10s
+max_over_time(latency[60s])

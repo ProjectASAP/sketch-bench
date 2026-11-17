@@ -1,0 +1,6 @@
+- match: 'latency'
+  interval: 60s
+  outputs: [sum_samples, count_samples]
+  enable_windows: true
+  ignore_first_intervals: 0
+  flush_on_shutdown: false
