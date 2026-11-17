@@ -152,12 +152,35 @@ fn an_unknown_lane_names_the_known_lanes() {
         "--run-dir",
         run.to_str().unwrap(),
         "--lane",
-        "clickhouse",
+        "victoriametrics",
     ]);
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("clickhouse") && stderr.contains("fake"),
+        "{stderr}"
+    );
+    let _ = std::fs::remove_dir_all(run.parent().unwrap());
+}
+
+/// X3: the clickhouse lane needs the server and its cgroup agent.
+#[test]
+fn the_clickhouse_lane_needs_its_server() {
+    let run = fixture("x3");
+    let out = approxbench(&[
+        "bench-external",
+        "run",
+        "--run-dir",
+        run.to_str().unwrap(),
+        "--lane",
+        "clickhouse",
+        "--clickhouse-url",
+        "http://10.0.0.2:8123",
+    ]);
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--clickhouse-url") && stderr.contains("--cgroup-agent-url"),
         "{stderr}"
     );
     let _ = std::fs::remove_dir_all(run.parent().unwrap());
