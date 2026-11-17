@@ -4,7 +4,8 @@
 //! version 15). [`clickhouse`] translates it into ClickHouse tables,
 //! materialized views and one SQL query per query root;
 //! [`victoriametrics`] into VictoriaMetrics stream aggregation and one
-//! MetricsQL query per query root. A translator is the
+//! MetricsQL query per query root, which [`victoriametrics_server`] runs on a
+//! real server. A translator is the
 //! capability check: a node it has no rule for is refused with
 //! [`TranslationError::UnsupportedShape`], and a rule that changes the
 //! planner's guarantee is recorded as a [`Substitution`].
@@ -15,6 +16,7 @@
 pub mod clickhouse;
 pub mod plan_file;
 pub mod victoriametrics;
+pub mod victoriametrics_server;
 
 use plan_file::{PlanFile, Timing};
 

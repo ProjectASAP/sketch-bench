@@ -9,6 +9,9 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
+use aqpbm_engines_external::victoriametrics_server::{
+    VictoriaMetricsEngine, VictoriaMetricsServer,
+};
 use aqpbm_core::harness::bench_external::{report, run_lane, write_report, LaneSetup};
 use aqpbm_core::harness::cgroup::{agent_in_served_group, serve_agent};
 use aqpbm_core::harness::engine::EngineUnderTest;
@@ -20,7 +23,7 @@ use aqpbm_core::harness::rundir::RunDir;
 use clap::{Parser, Subcommand};
 
 /// The lanes this binary can run.
-pub const LANES: [&str; 1] = ["fake"];
+pub const LANES: [&str; 2] = ["fake", "victoriametrics"];
 
 #[derive(Parser, Debug)]
 pub struct BenchExternalArgs {
@@ -41,9 +44,18 @@ pub struct RunArgs {
     /// The run directory: workloads/, plans/<variant>/, results/.
     #[arg(long)]
     pub run_dir: PathBuf,
-    /// The lane: `fake` (the harness's own fake engine).
+    /// The lane: `fake` (the harness's own fake engine) or `victoriametrics`.
     #[arg(long)]
     pub lane: String,
+    /// The VictoriaMetrics server's HTTP interface, e.g. `http://10.0.0.1:8428`
+    /// (lane `victoriametrics`).
+    #[arg(long)]
+    pub victoriametrics_url: Option<String>,
+    /// The cgroup agent beside the server, e.g. `http://10.0.0.1:9101`
+    /// (lane `victoriametrics`; started with `--server-config` on the
+    /// server's `-streamAggr.config`).
+    #[arg(long)]
+    pub cgroup_agent_url: Option<String>,
     /// Only these variants (repeatable); every variant under plans/ by default.
     #[arg(long = "variant")]
     pub variants: Vec<String>,
@@ -79,9 +91,13 @@ pub struct CgroupAgentArgs {
     /// `/sys/fs/cgroup/system.slice/docker-<id>.scope`.
     #[arg(long)]
     pub cgroup_dir: PathBuf,
-    /// Address to listen on, such as `0.0.0.0:9101`.
+    /// Address to listen on, such as `10.0.0.2:9101`.
     #[arg(long)]
     pub listen: String,
+    /// A server config file the harness may replace (`PUT /server-config`),
+    /// such as a VictoriaMetrics `-streamAggr.config`.
+    #[arg(long)]
+    pub server_config: Option<PathBuf>,
 }
 
 pub fn run(args: BenchExternalArgs) -> Result<()> {
@@ -94,6 +110,23 @@ pub fn run(args: BenchExternalArgs) -> Result<()> {
 fn run_lane_cmd(args: RunArgs) -> Result<()> {
     let engine: Box<dyn EngineUnderTest> = match args.lane.as_str() {
         "fake" => Box::new(FakeEngine::default()),
+        "victoriametrics" => {
+            let (Some(url), Some(cgroup_agent_url)) = (
+                args.victoriametrics_url.clone(),
+                args.cgroup_agent_url.clone(),
+            ) else {
+                bail!("lane victoriametrics needs --victoriametrics-url and --cgroup-agent-url");
+            };
+            // Wall-clock data runs one arm at a time.
+            if args.warmup != 0 || args.runs != 1 {
+                bail!("lane victoriametrics runs one arm at a time: pass --warmup 0 --runs 1");
+            }
+            Box::new(VictoriaMetricsEngine::new(VictoriaMetricsServer {
+                url,
+                cgroup_agent_url,
+                request_timeout: std::time::Duration::from_secs(600),
+            })?)
+        }
         other => bail!("unknown lane '{other}'; known lanes: {}", LANES.join(", ")),
     };
     let run_dir = RunDir::open(&args.run_dir)?;
@@ -147,6 +180,11 @@ pub fn run_cgroup_agent(args: CgroupAgentArgs) -> Result<()> {
     }
     let listener =
         TcpListener::bind(&args.listen).with_context(|| format!("listening on {}", args.listen))?;
-    serve_agent(listener, &args.cgroup_dir, Path::new("/proc/stat"))?;
+    serve_agent(
+        listener,
+        &args.cgroup_dir,
+        Path::new("/proc/stat"),
+        args.server_config.as_deref(),
+    )?;
     Ok(())
 }
