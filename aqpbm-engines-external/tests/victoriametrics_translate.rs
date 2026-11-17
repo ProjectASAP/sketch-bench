@@ -142,7 +142,7 @@ fn nested_counts_over_raw_samples() {
 fn grouped_chain_uses_by() {
     let deployment = from_value(sot_with_reduction(json!({"Reduce": [2]}))).unwrap();
     let config = deployment.stream_aggregation_config();
-    assert!(config.contains("  by: [job]\n"), "{config}");
+    assert!(config.contains("  by: ['job']\n"), "{config}");
     assert_eq!(
         exprs(&deployment),
         vec![
@@ -600,7 +600,8 @@ fn grouped_shapes_of_a_mixed_workload() {
         .iter()
         .find(|s| s.node == 15)
         .expect("the checked division is recorded");
-    assert_eq!(division.rule, "victoriametrics.checked_division.plain");
+    assert_eq!(division.rule, "victoriametrics.division.nan_dropped");
+    assert!(division.guarantee_difference.contains("checked division"));
     // Root 33: a 10 s per-series Sum chain regrouped at query time.
     assert_eq!(
         exprs[0],
@@ -652,6 +653,7 @@ fn output_names_that_collide_are_refused() {
     payload_body(&mut value, 8)["children"] = json!([7]);
     payload_body(&mut value, 9)["child"] = json!(8);
     value["dag"]["roots"] = json!([4, 9]);
+    value["query_texts"] = json!(["q0", "q1"]);
     assert_eq!(
         from_value(value).unwrap_err(),
         shape(

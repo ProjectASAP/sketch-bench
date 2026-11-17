@@ -100,7 +100,8 @@ pub enum StreamOutput {
     Max,
 }
 
-/// One query: a MetricsQL instant query evaluated at the evaluation time.
+/// One query: a MetricsQL instant query evaluated at the evaluation time,
+/// sent with `nocache=1` (see the capability README's run contract).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MetricsQlQuery {
     pub expr: String,
@@ -134,21 +135,21 @@ impl StreamOutput {
         }
     }
 
+    /// The exact kind one window of this output holds.
+    fn kind(self) -> ExactKind {
+        match self {
+            StreamOutput::SumSamples => ExactKind::Sum,
+            StreamOutput::CountSamples => ExactKind::Count,
+            StreamOutput::Min => ExactKind::Min,
+            StreamOutput::Max => ExactKind::Max,
+        }
+    }
+
     /// The rollup that merges this output's windows: the sum of sums or of
     /// counts, the min of mins, the max of maxes.
     fn merge_rollup(self) -> &'static str {
         match self {
             StreamOutput::SumSamples | StreamOutput::CountSamples => "sum_over_time",
-            StreamOutput::Min => "min_over_time",
-            StreamOutput::Max => "max_over_time",
-        }
-    }
-
-    /// The rollup over raw samples that gives one window of this output.
-    fn window_rollup(self) -> &'static str {
-        match self {
-            StreamOutput::SumSamples => "sum_over_time",
-            StreamOutput::CountSamples => "count_over_time",
             StreamOutput::Min => "min_over_time",
             StreamOutput::Max => "max_over_time",
         }
@@ -165,11 +166,9 @@ impl StreamOutput {
 
     /// The aggregate that merges this output across series.
     fn merge_aggregate(self) -> &'static str {
-        match self {
-            StreamOutput::SumSamples | StreamOutput::CountSamples => "sum",
-            StreamOutput::Min => "min",
-            StreamOutput::Max => "max",
-        }
+        self.kind()
+            .merge_aggregate()
+            .expect("a stored output is of a plain kind")
     }
 }
 
@@ -195,7 +194,7 @@ impl StreamAggregation {
     fn window_expr(&self, output: StreamOutput) -> String {
         let rollup = format!(
             "{}({}[{}])",
-            output.window_rollup(),
+            output.kind().rollup(),
             self.selector,
             duration(self.interval_ms)
         );
@@ -221,6 +220,7 @@ impl VictoriaMetricsDeployment {
                 duration(aggregation.interval_ms)
             ));
             if let Some(labels) = &aggregation.by {
+                let labels: Vec<String> = labels.iter().map(|l| yaml_quoted(l)).collect();
                 yaml.push_str(&format!("  by: [{}]\n", labels.join(", ")));
             }
             let outputs: Vec<&str> = aggregation.outputs.iter().map(|o| o.name()).collect();
@@ -663,7 +663,7 @@ impl Translator<'_> {
         if predicates.is_empty() {
             return metric.clone();
         }
-        let matchers: Vec<String> = predicates
+        let mut matchers: Vec<String> = predicates
             .iter()
             .map(|predicate| {
                 let Predicate::LabelEquals { column, value } = predicate else {
@@ -676,6 +676,7 @@ impl Translator<'_> {
                 )
             })
             .collect();
+        matchers.sort();
         format!("{metric}{{{}}}", matchers.join(","))
     }
 
@@ -914,10 +915,10 @@ impl Translator<'_> {
         })
     }
 
-    /// Adds `stored`'s output to its stream aggregation (one per selector,
-    /// interval and grouping) and returns the output metric. Two
-    /// aggregations whose output metrics would be the same but whose
-    /// selectors differ are refused: their outputs would be one series.
+    /// Adds `output` of `stored` to its stream aggregation (one per
+    /// selector, interval and grouping) and returns the output metric. An
+    /// output whose name another aggregation already writes is refused:
+    /// both would write one series, e.g. `by [a_b]` and `by [a, b]`.
     fn add_stream_output(
         &mut self,
         chain: NodeId,
@@ -933,26 +934,24 @@ impl Translator<'_> {
             outputs: Vec::new(),
         };
         let output_metric = candidate.output_metric(output);
-        let same_names = |a: &StreamAggregation| {
+        let same_entry = |a: &StreamAggregation| {
             a.metric == candidate.metric
+                && a.selector == candidate.selector
                 && a.interval_ms == candidate.interval_ms
                 && a.by == candidate.by
         };
         if self.stream_aggregations.iter().any(|a| {
-            same_names(a) && a.selector != candidate.selector && a.outputs.contains(&output)
+            !same_entry(a)
+                && a.outputs
+                    .iter()
+                    .any(|&o| a.output_metric(o) == output_metric)
         }) {
             return Err(unsupported(
                 chain,
-                format!(
-                    "two stored chains with the output {output_metric} and different selectors"
-                ),
+                format!("two stored chains with the output {output_metric}"),
             ));
         }
-        let at = match self
-            .stream_aggregations
-            .iter()
-            .position(|a| same_names(a) && a.selector == candidate.selector)
-        {
+        let at = match self.stream_aggregations.iter().position(same_entry) {
             Some(at) => at,
             None => {
                 self.stream_aggregations.push(candidate);
@@ -1206,18 +1205,23 @@ impl Translator<'_> {
                 "binary operation across metrics per series",
             ));
         }
-        if operator.get("checked_finite_division") == Some(&Value::Bool(true)) {
+        if symbol == "/" {
+            let checked = operator.get("checked_finite_division") == Some(&Value::Bool(true));
             self.substitutions.insert(
                 id,
                 Substitution {
                     node: id,
-                    rule: "victoriametrics.checked_division.plain".into(),
-                    guarantee_difference: "a quotient whose operand or result is not finite \
-                                           (e.g. a sum that overflowed, or a count of 0) is \
-                                           answered as VictoriaMetrics divides (+Inf, or no \
-                                           series for NaN), where the planner's executor \
-                                           answers the original query exactly"
-                        .into(),
+                    rule: "victoriametrics.division.nan_dropped".into(),
+                    guarantee_difference: if checked {
+                        "VictoriaMetrics drops a series whose quotient is NaN (e.g. 0/0), where \
+                         PromQL keeps it; and a checked division (avg as sum / count) whose \
+                         operand or result is not finite is answered as VictoriaMetrics divides, \
+                         where the planner's executor answers the original query exactly"
+                    } else {
+                        "VictoriaMetrics drops a series whose quotient is NaN (e.g. 0/0), where \
+                         PromQL keeps it"
+                    }
+                    .into(),
                 },
             );
         }
@@ -1292,6 +1296,8 @@ fn string_literal(value: &str) -> String {
             '\\' => out.push_str("\\\\"),
             '"' => out.push_str("\\\""),
             '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
             c => out.push(c),
         }
     }
