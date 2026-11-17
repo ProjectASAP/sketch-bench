@@ -35,9 +35,9 @@
 //! config is one file, and wall-clock data cannot be replayed into a second
 //! arm, so run the lane with no warm-up and one measured run.
 //!
-//! Series: a per-series answer is keyed by its labels with `__name__` set
-//! to the input metric (as the harness keys answers); an aggregated answer
-//! by its labels without `__name__`.
+//! Series: an answer is keyed by its labels without `__name__`, as PromQL
+//! drops it in every function and aggregation; a bare selector's answer
+//! keeps it (as the other lanes key their answers).
 //!
 //! CPU: the server runs in its own cgroup, read through the cgroup agent,
 //! which also holds the server's `-streamAggr.config` file. VictoriaMetrics
@@ -56,10 +56,11 @@ use aqpbm_core::harness::engine::{
 };
 use serde_json::Value;
 
-use crate::plan_file::{PlanFile, PlanOperator, SummaryFamily};
+use crate::plan_file::{PlanFile, PlanOperator, RangeKind, SummaryFamily};
 use crate::victoriametrics::{
     translate, MetricsQlQuery, StreamAggregation, VictoriaMetricsDeployment,
 };
+use crate::NodeId;
 
 /// How to reach the server.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,7 +180,13 @@ impl EngineUnderTest for VictoriaMetricsEngine {
             flush_counts: (0, BTreeMap::new()),
             queries: query_ids
                 .into_iter()
-                .zip(deployment.queries.clone())
+                .zip(&deployment.queries)
+                .zip(&plan.roots)
+                .map(|((id, query), &root)| RootQuery {
+                    id,
+                    expr: query.expr.clone(),
+                    metric_name: answer_metric_name(&plan, root, query),
+                })
                 .collect(),
             aggregations: deployment.stream_aggregations.clone(),
             offset_ms: 0,
@@ -480,10 +487,11 @@ fn label(labels: &str, name: &str) -> Option<String> {
 }
 
 /// The series of one `/api/v1/query` answer: labels without `__name__`,
-/// plus `__name__ = metric` for a per-series answer (`per_series_of`).
+/// plus `__name__ = metric` when given (a bare selector's answer, see
+/// [`answer_metric_name`]).
 pub fn parse_answer(
     body: &str,
-    per_series_of: Option<&str>,
+    metric_name: Option<&str>,
 ) -> Result<BTreeMap<SeriesLabels, f64>, String> {
     let answer: Value = serde_json::from_str(body).map_err(|e| format!("answer: {e}"))?;
     if answer["status"] != "success" {
@@ -501,7 +509,7 @@ pub fn parse_answer(
             .filter(|(name, _)| name.as_str() != "__name__")
             .map(|(name, value)| (name.clone(), value.as_str().unwrap_or("").to_string()))
             .collect();
-        if let Some(metric) = per_series_of {
+        if let Some(metric) = metric_name {
             labels.insert("__name__".into(), metric.into());
         }
         let text = result["value"][1]
@@ -602,6 +610,30 @@ fn operator_kind(operator: &PlanOperator) -> String {
     .to_string()
 }
 
+/// One query of an arm: its workload query id, its MetricsQL, and the
+/// `__name__` its answers keep (see [`answer_metric_name`]).
+struct RootQuery {
+    id: String,
+    expr: String,
+    metric_name: Option<String>,
+}
+
+/// The `__name__` the answers of `query` (the translation of `root`) keep:
+/// the metric for a root that is a bare selector (an instant `TimeRange`,
+/// e.g. `latency`), and none otherwise, since PromQL drops it in every
+/// function and aggregation (e.g. `max_over_time(latency[1m])` answers
+/// `{job="a"}`). The other lanes key their answers the same way.
+pub fn answer_metric_name(plan: &PlanFile, root: NodeId, query: &MetricsQlQuery) -> Option<String> {
+    let bare_selector = matches!(
+        plan.nodes[root].operator,
+        PlanOperator::TimeRange {
+            kind: RangeKind::Instant,
+            ..
+        }
+    );
+    query.per_series_of.clone().filter(|_| bare_selector)
+}
+
 /// The installed arm: its stream aggregations, queries and wall offset.
 struct VictoriaMetricsArm {
     http: Http,
@@ -613,8 +645,8 @@ struct VictoriaMetricsArm {
     /// The flush counts per position, and the wall time (ms) whose later
     /// ticks they do not include yet: the data start, then each chunk end.
     flush_counts: (i64, BTreeMap<u32, u64>),
-    /// Per plan root: the workload query id and its query.
-    queries: Vec<(String, MetricsQlQuery)>,
+    /// Per plan root, in root order.
+    queries: Vec<RootQuery>,
     /// In config order: aggregation `i` has `position` `i + 1`.
     aggregations: Vec<StreamAggregation>,
     offset_ms: i64,
@@ -799,14 +831,14 @@ impl InstalledArm for VictoriaMetricsArm {
             wall_ms.rem_euclid(1000)
         );
         let mut answers = BTreeMap::new();
-        for (id, query) in &self.queries {
+        for query in &self.queries {
             let body = self.http.get(
                 "/api/v1/query",
                 &[("query", &query.expr), ("time", &time), ("nocache", "1")],
             )?;
-            let series = parse_answer(&body, query.per_series_of.as_deref())
-                .map_err(|e| EngineError(format!("query {id}: {e}")))?;
-            answers.insert(id.clone(), series);
+            let series = parse_answer(&body, query.metric_name.as_deref())
+                .map_err(|e| EngineError(format!("query {}: {e}", query.id)))?;
+            answers.insert(query.id.clone(), series);
         }
         Ok((Answers(answers), StepReport::default()))
     }

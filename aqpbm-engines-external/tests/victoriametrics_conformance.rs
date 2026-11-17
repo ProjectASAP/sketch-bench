@@ -699,7 +699,10 @@ fn query_time_rows_equal_the_hand_computed_answers() {
         // Only the bare selector keeps `__name__`.
         assert!(got.0["q6"].keys().all(|l| l.contains_key("__name__")));
         for other in ["q1", "q4", "q5", "q7", "q8", "q10", "q11"] {
-            assert!(got.0[other].keys().all(|l| !l.contains_key("__name__")), "{other}");
+            assert!(
+                got.0[other].keys().all(|l| !l.contains_key("__name__")),
+                "{other}"
+            );
         }
         let mut maxes: Vec<(SeriesLabels, f64)> =
             per_series(t, &|v| Some(max(v))).into_iter().collect();

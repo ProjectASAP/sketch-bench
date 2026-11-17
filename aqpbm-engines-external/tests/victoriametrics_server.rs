@@ -14,8 +14,8 @@ use std::time::Duration;
 
 use aqpbm_engines_external::victoriametrics::{StreamAggregation, StreamOutput};
 use aqpbm_engines_external::victoriametrics_server::{
-    answer_metric_name, import_body, lead_ms, parse_answer, previous_arm_gap_ms, slices, wall_offset_ms, ServerMetrics,
-    VictoriaMetricsEngine, VictoriaMetricsServer, SLICE_MS,
+    answer_metric_name, import_body, lead_ms, parse_answer, previous_arm_gap_ms, slices,
+    wall_offset_ms, ServerMetrics, VictoriaMetricsEngine, VictoriaMetricsServer, SLICE_MS,
 };
 use aqpbm_core::harness::cgroup::serve_agent;
 use aqpbm_core::harness::data::Sample;
@@ -463,7 +463,10 @@ fn only_a_bare_selector_answer_keeps_the_metric_name() {
     let value = fixture_value_public("q4b_max__1m_1hz_10s", "victoriametrics.equivalent-only");
     let plan = PlanFile::from_value(value.clone()).unwrap();
     let deployment = translate(&plan).unwrap();
-    assert_eq!(answer_metric_name(&plan, plan.roots[0], &deployment.queries[0]), None);
+    assert_eq!(
+        answer_metric_name(&plan, plan.roots[0], &deployment.queries[0]),
+        None
+    );
     // A root that is the instant selector `latency` keeps it.
     let mut instant = value;
     payload_body(&mut instant, 1)["kind"] = json!("instant");
