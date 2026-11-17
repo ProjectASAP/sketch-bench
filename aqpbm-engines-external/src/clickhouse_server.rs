@@ -8,10 +8,11 @@
 //! queries with `param_t=<t>`.
 //!
 //! Series: a sample's series identity is its full label map as compact
-//! JSON with sorted keys, e.g. `{"__name__":"latency","job":"a"}`. A
-//! per-series answer is keyed by that map (`__name__` kept, as the harness
-//! keys answers). An aggregated answer is keyed by its label columns, with
-//! empty values left out, as PromQL leaves out an empty label.
+//! JSON with sorted keys, e.g. `{"__name__":"latency","job":"a"}`. Answers
+//! carry PromQL's output labels: a per-series answer is keyed by that map,
+//! and an aggregated one by its label columns with empty values left out,
+//! as PromQL leaves out an empty label; `__name__` is kept only by a root
+//! that is a bare selector, since a function or aggregation drops it.
 //!
 //! CPU: the server runs in its own cgroup, read through the cgroup agent.
 //! The server's HTTP summary header has no CPU counter, so
@@ -30,7 +31,7 @@ use aqpbm_core::harness::engine::{
 };
 
 use crate::clickhouse::{quoted, translate, SourceTable, INSERT_SETTINGS, SERIES_IDENTITY};
-use crate::plan_file::{PlanFile, PlanOperator};
+use crate::plan_file::{PlanFile, PlanOperator, RangeKind};
 
 /// How to reach the server and how to run its queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,7 +165,19 @@ impl EngineUnderTest for ClickHouseEngine {
                 .collect(),
             queries: query_ids
                 .into_iter()
-                .zip(deployment.queries.clone())
+                .zip(&deployment.queries)
+                .zip(&plan.roots)
+                .map(|((id, sql), &root)| RootQuery {
+                    id,
+                    sql: sql.clone(),
+                    keeps_metric_name: matches!(
+                        plan.nodes[root].operator,
+                        PlanOperator::TimeRange {
+                            kind: RangeKind::Instant,
+                            ..
+                        }
+                    ),
+                })
                 .collect(),
             stored_tables: deployment.stored_tables.clone(),
             summary: plan_summary(&plan, &deployment),
@@ -288,10 +301,21 @@ struct ClickHouseArm {
     max_threads: u32,
     /// Each source table and the statement that inserts into it.
     sources: Vec<SourceInsert>,
-    /// Per plan root: the workload query id and its SQL.
-    queries: Vec<(String, String)>,
+    /// Per plan root: the workload query id, its SQL, and whether its
+    /// answers keep `__name__`.
+    queries: Vec<RootQuery>,
     stored_tables: Vec<String>,
     summary: PlanSummary,
+}
+
+/// One query root as the arm runs it.
+struct RootQuery {
+    id: String,
+    sql: String,
+    /// PromQL's output labels: only a bare selector keeps `__name__`; a
+    /// function or aggregation drops it, e.g. `quantile_over_time(0.99,
+    /// latency[1m])` answers `{instance="i1", job="a"}`.
+    keeps_metric_name: bool,
 }
 
 /// A source table and its `INSERT … FORMAT TabSeparated` statement.
@@ -388,7 +412,12 @@ impl InstalledArm for ClickHouseArm {
         let t = at_ms.to_string();
         let mut answers = BTreeMap::new();
         let mut scanned_bytes = 0;
-        for (id, sql) in &self.queries {
+        for RootQuery {
+            id,
+            sql,
+            keeps_metric_name,
+        } in &self.queries
+        {
             let (text, read_bytes) = self.run(
                 &format!("{sql} FORMAT TabSeparatedWithNames"),
                 &[("param_t", &t)],
@@ -397,7 +426,8 @@ impl InstalledArm for ClickHouseArm {
             scanned_bytes += read_bytes;
             answers.insert(
                 id.clone(),
-                parse_answer(&text).map_err(|e| EngineError(format!("query {id}: {e}")))?,
+                parse_answer(&text, *keeps_metric_name)
+                    .map_err(|e| EngineError(format!("query {id}: {e}")))?,
             );
         }
         Ok((
@@ -513,7 +543,10 @@ fn tsv_unescaped(value: &str) -> String {
 
 /// The rows of one query answer (`TabSeparatedWithNames`, the value
 /// column last) as series and values.
-fn parse_answer(text: &str) -> Result<BTreeMap<SeriesLabels, f64>, String> {
+fn parse_answer(
+    text: &str,
+    keeps_metric_name: bool,
+) -> Result<BTreeMap<SeriesLabels, f64>, String> {
     let mut lines = text.lines();
     let Some(header) = lines.next() else {
         return Ok(BTreeMap::new());
@@ -527,7 +560,7 @@ fn parse_answer(text: &str) -> Result<BTreeMap<SeriesLabels, f64>, String> {
             return Err(format!("row '{line}' does not match the header '{header}'"));
         }
         let (value, labels) = fields.split_last().expect("at least the value");
-        let key: SeriesLabels = match identity {
+        let mut key: SeriesLabels = match identity {
             Some(at) => serde_json::from_str(&labels[at])
                 .map_err(|e| format!("series identity '{}': {e}", labels[at]))?,
             None => names
@@ -537,6 +570,9 @@ fn parse_answer(text: &str) -> Result<BTreeMap<SeriesLabels, f64>, String> {
                 .map(|(name, value)| (name.clone(), value.clone()))
                 .collect(),
         };
+        if !keeps_metric_name {
+            key.remove("__name__");
+        }
         let value = parse_float(value).ok_or_else(|| format!("value '{value}' is not a number"))?;
         if series.insert(key.clone(), value).is_some() {
             return Err(format!("two rows for the series {key:?}"));
