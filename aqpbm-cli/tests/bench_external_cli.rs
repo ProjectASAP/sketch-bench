@@ -162,3 +162,34 @@ fn an_unknown_lane_names_the_known_lanes() {
     );
     let _ = std::fs::remove_dir_all(run.parent().unwrap());
 }
+
+/// X3: lane `victoriametrics` needs the server and agent URLs, and runs one
+/// arm at a time (wall-clock data): only with `--warmup 0 --runs 1`.
+#[test]
+fn the_victoriametrics_lane_needs_its_urls_and_one_run() {
+    let run = fixture("x3");
+    let base = [
+        "bench-external",
+        "run",
+        "--run-dir",
+        run.to_str().unwrap(),
+        "--lane",
+        "victoriametrics",
+    ];
+    let out = approxbench(&base);
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--victoriametrics-url"), "{stderr}");
+    let mut with_urls = base.to_vec();
+    with_urls.extend([
+        "--victoriametrics-url",
+        "http://127.0.0.1:1",
+        "--cgroup-agent-url",
+        "http://127.0.0.1:1",
+    ]);
+    let out = approxbench(&with_urls);
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--warmup 0 --runs 1"), "{stderr}");
+    let _ = std::fs::remove_dir_all(run.parent().unwrap());
+}
