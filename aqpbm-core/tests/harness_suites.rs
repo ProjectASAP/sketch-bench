@@ -53,18 +53,167 @@ fn suite_workloads_match_their_planning_workloads() {
             let ids: Vec<String> = (1..=spec.queries.len()).map(|i| format!("q{i}")).collect();
             let spec_ids: Vec<String> = spec.queries.iter().map(|q| q.id.clone()).collect();
             assert_eq!(spec_ids, ids, "{name}");
-            for (query, planned) in spec.queries.iter().zip(
-                planner["query_workload"]["repeating_queries"].as_array().unwrap(),
-            ) {
+            let schedule = ArmSchedule::for_workload(&spec).unwrap();
+            for ((query, planned), text) in spec
+                .queries
+                .iter()
+                .zip(
+                    planner["query_workload"]["repeating_queries"]
+                        .as_array()
+                        .unwrap(),
+                )
+                .zip(&specified)
+            {
+                let at = &planned["demand"]["fixed_interval_at"];
+                let interval = at["interval"].as_u64().unwrap();
                 assert_eq!(
-                    query.evaluation_interval_ms,
-                    planned["demand"]["fixed_interval_at"]["interval"].as_u64().unwrap(),
+                    query.evaluation_interval_ms, interval,
                     "{name} {}",
                     query.id
                 );
+                // Evaluations land on the planner's phase.
+                let phase = at["evaluation_phase"].as_i64().unwrap();
+                assert_eq!(
+                    schedule.evaluate_at_ms[0].rem_euclid(interval as i64),
+                    phase.rem_euclid(interval as i64),
+                    "{name} {}",
+                    query.id
+                );
+                // Every range in the text is the query's window.
+                let ranges = range_ms(text);
+                assert!(!ranges.is_empty(), "{name}: no range in {text}");
+                assert!(
+                    ranges.iter().all(|&ms| ms == query.window_ms),
+                    "{name}: {text} vs {}",
+                    query.window_ms
+                );
+                // Grouping labels are labels the data has.
+                for label in grouping_labels(text) {
+                    assert!(
+                        spec.data.iter().all(|record| record
+                            .description
+                            .labels
+                            .iter()
+                            .any(|spec| spec.name == label)),
+                        "{name}: {text} groups by {label}, which the data lacks"
+                    );
+                }
+                // The metrics it reads have data.
+                for record_metric in metrics_read(text, &spec) {
+                    assert!(
+                        spec.data.iter().any(|r| r.metric == record_metric),
+                        "{name}: {record_metric}"
+                    );
+                }
+            }
+            // The data is what the planner was told: per source, the
+            // series count, sample interval, counter kind, distinct label
+            // values and value sign; and no source without data.
+            let sources = planner["data_workload"]["sources"].as_object().unwrap();
+            assert_eq!(
+                sources.len(),
+                spec.data.len(),
+                "{name}: sources vs data records"
+            );
+            for record in &spec.data {
+                let facts = &sources[&record.metric];
+                let description = &record.description;
+                assert_eq!(
+                    description.series_num,
+                    facts["series_count"].as_u64().unwrap(),
+                    "{name}"
+                );
+                assert_eq!(
+                    description.sample_interval_ms,
+                    facts["sample_interval"].as_u64().unwrap(),
+                    "{name}"
+                );
+                assert_eq!(
+                    description.counter,
+                    facts["metric_type"] == "counter",
+                    "{name} {}",
+                    record.metric
+                );
+                let product: u64 = description
+                    .labels
+                    .iter()
+                    .map(|label| label.cardinality)
+                    .product();
+                assert_eq!(
+                    product, description.series_num,
+                    "{name}: label sets vs series"
+                );
+                for label in &description.labels {
+                    assert_eq!(
+                        facts["distinct_values_per_label"][&label.name].as_u64(),
+                        Some(label.cardinality),
+                        "{name} {} {}",
+                        record.metric,
+                        label.name
+                    );
+                }
+                if facts["column_signs"]["value"] == "non_negative" {
+                    let lower = serde_json::to_value(&description.value_distribution).unwrap()
+                        ["lower_bound"]
+                        .as_f64()
+                        .unwrap();
+                    assert!(lower >= 0.0, "{name} {}: negative values", record.metric);
+                }
             }
             checked += 1;
         }
     }
     assert!(checked >= 8, "only {checked} suite workloads");
+}
+
+/// Every `[<n>m]` / `[<n>s]` range of a PromQL text, in ms.
+fn range_ms(text: &str) -> Vec<u64> {
+    text.split('[')
+        .skip(1)
+        .filter_map(|rest| rest.split_once(']'))
+        .map(|(range, _)| {
+            let (number, unit) = range.split_at(range.len() - 1);
+            let number: u64 = number.parse().unwrap_or_else(|_| panic!("range {range}"));
+            match unit {
+                "s" => number * 1_000,
+                "m" => number * 60_000,
+                "h" => number * 3_600_000,
+                _ => panic!("range {range}"),
+            }
+        })
+        .collect()
+}
+
+/// The labels of every `by (...)` / `without (...)` clause.
+fn grouping_labels(text: &str) -> Vec<String> {
+    let mut labels = Vec::new();
+    for keyword in ["by (", "without ("] {
+        for rest in text.split(keyword).skip(1) {
+            let (list, _) = rest.split_once(')').unwrap();
+            labels.extend(list.split(',').map(|label| label.trim().to_string()));
+        }
+    }
+    labels
+}
+
+/// The data metrics whose names appear in the text.
+fn metrics_read<'a>(text: &str, spec: &'a WorkloadSpec) -> Vec<&'a str> {
+    let read: Vec<&str> = spec
+        .data
+        .iter()
+        .map(|record| record.metric.as_str())
+        .filter(|metric| {
+            text.contains(&format!("{metric}[")) || text.contains(&format!("{metric}{{"))
+        })
+        .collect();
+    assert!(!read.is_empty(), "{text} reads no metric with data");
+    read
+}
+
+/// `"MetricsQl"` is a query language of a workload spec.
+#[test]
+fn metricsql_is_a_workload_language() {
+    let language: aqpbm_core::harness::engine::QueryLanguage =
+        serde_json::from_str("\"MetricsQl\"").unwrap();
+    assert_eq!(language, QueryLanguage::MetricsQl);
 }
