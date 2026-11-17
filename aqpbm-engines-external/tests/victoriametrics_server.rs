@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use aqpbm_engines_external::victoriametrics::{StreamAggregation, StreamOutput};
 use aqpbm_engines_external::victoriametrics_server::{
-    import_body, lead_ms, parse_answer, previous_arm_gap_ms, slices, wall_offset_ms, ServerMetrics,
+    answer_metric_name, import_body, lead_ms, parse_answer, previous_arm_gap_ms, slices, wall_offset_ms, ServerMetrics,
     VictoriaMetricsEngine, VictoriaMetricsServer, SLICE_MS,
 };
 use aqpbm_core::harness::cgroup::serve_agent;
@@ -451,5 +451,28 @@ fn only_counter_plans_wait_for_the_previous_arms_samples_to_age_out() {
             "victoriametrics.with-substitutes"
         )),
         660_000
+    );
+}
+
+#[test]
+fn only_a_bare_selector_answer_keeps_the_metric_name() {
+    use aqpbm_engines_external::plan_file::PlanFile;
+    use aqpbm_engines_external::victoriametrics::translate;
+    // PromQL drops `__name__` in every function and aggregation, e.g.
+    // `max_over_time(latency[1m])` answers `{job="a", instance="i"}`.
+    let value = fixture_value_public("q4b_max__1m_1hz_10s", "victoriametrics.equivalent-only");
+    let plan = PlanFile::from_value(value.clone()).unwrap();
+    let deployment = translate(&plan).unwrap();
+    assert_eq!(answer_metric_name(&plan, plan.roots[0], &deployment.queries[0]), None);
+    // A root that is the instant selector `latency` keeps it.
+    let mut instant = value;
+    payload_body(&mut instant, 1)["kind"] = json!("instant");
+    payload_body(&mut instant, 1)["range"] = json!({"secs": 0, "nanos": 5_000_000});
+    instant["dag"]["roots"] = json!([1]);
+    let plan = PlanFile::from_value(instant).unwrap();
+    let deployment = translate(&plan).unwrap();
+    assert_eq!(
+        answer_metric_name(&plan, plan.roots[0], &deployment.queries[0]).as_deref(),
+        Some("latency")
     );
 }

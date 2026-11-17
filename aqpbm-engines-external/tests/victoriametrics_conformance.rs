@@ -139,9 +139,23 @@ fn run(
 
 /// Asserts `answers` of query `q<index>` equal `expected` to 1e-9 relative,
 /// series by series; NaN equals NaN.
+/// Answers are keyed as PromQL keys them: only a bare selector (query
+/// `q{INSTANT_QUERY}` of the query-time case) keeps `__name__`.
 fn assert_answers(t: i64, answers: &Answers, index: usize, expected: &BTreeMap<SeriesLabels, f64>) {
     let id = format!("q{index}");
     let got = answers.0.get(&id).cloned().unwrap_or_default();
+    let keeps_name = got.keys().any(|labels| labels.contains_key("__name__"));
+    let expected: BTreeMap<SeriesLabels, f64> = expected
+        .iter()
+        .map(|(labels, &v)| {
+            let mut labels = labels.clone();
+            if !keeps_name {
+                labels.remove("__name__");
+            }
+            (labels, v)
+        })
+        .collect();
+    let expected = &expected;
     let keys = |m: &BTreeMap<SeriesLabels, f64>| m.keys().cloned().collect::<Vec<_>>();
     assert_eq!(keys(&got), keys(expected), "{id} at {t}: series");
     for (labels, &want) in expected {
@@ -374,6 +388,11 @@ fn stored_windows_equal_the_exact_windows() {
         20_000,
     );
     assert_eq!(answers.len(), 3);
+    for (_, got) in &answers {
+        for series in got.0.values() {
+            assert!(series.keys().all(|l| !l.contains_key("__name__")));
+        }
+    }
     for (t, got) in &answers {
         for (i, (kind, _, range, reduction)) in reads.iter().enumerate() {
             let fold = |values: &[f64]| -> f64 {
@@ -677,6 +696,11 @@ fn query_time_rows_equal_the_hand_computed_answers() {
             })
             .collect();
         assert_answers(t, got, 6, &at_t);
+        // Only the bare selector keeps `__name__`.
+        assert!(got.0["q6"].keys().all(|l| l.contains_key("__name__")));
+        for other in ["q1", "q4", "q5", "q7", "q8", "q10", "q11"] {
+            assert!(got.0[other].keys().all(|l| !l.contains_key("__name__")), "{other}");
+        }
         let mut maxes: Vec<(SeriesLabels, f64)> =
             per_series(t, &|v| Some(max(v))).into_iter().collect();
         maxes.sort_by(|a, b| b.1.total_cmp(&a.1));
