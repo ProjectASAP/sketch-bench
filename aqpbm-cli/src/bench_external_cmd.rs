@@ -9,7 +9,6 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use aqpbm_engines_external::clickhouse_server::{ClickHouseEngine, ClickHouseServer};
 use aqpbm_core::harness::bench_external::{report, run_lane, write_report, LaneSetup};
 use aqpbm_core::harness::cgroup::{agent_in_served_group, serve_agent};
 use aqpbm_core::harness::engine::EngineUnderTest;
@@ -18,6 +17,7 @@ use aqpbm_core::harness::protocol::{
     load_probe_for, MeasurementClocks, OsCpuClock, ProcessCpuFiles, Protocol,
 };
 use aqpbm_core::harness::rundir::RunDir;
+use aqpbm_engines_external::clickhouse_server::{ClickHouseEngine, ClickHouseServer};
 use clap::{Parser, Subcommand};
 
 /// The lanes this binary can run.

@@ -9,14 +9,14 @@ use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use aqpbm_engines_external::clickhouse_server::{
-    series_identity, ClickHouseEngine, ClickHouseServer,
-};
 use aqpbm_core::harness::cgroup::CgroupSource;
 use aqpbm_core::harness::data::{DataRecord, Sample};
 use aqpbm_core::harness::engine::{
     ArmSpec, CpuAccounting, EngineUnderTest, QueryLanguage, QueryText, SampleChunk, SeriesLabels,
     WorkloadQuery, WorkloadSpec,
+};
+use aqpbm_engines_external::clickhouse_server::{
+    series_identity, ClickHouseEngine, ClickHouseServer,
 };
 use common::{fixture_path, fixture_value, payload_body};
 use serde_json::json;

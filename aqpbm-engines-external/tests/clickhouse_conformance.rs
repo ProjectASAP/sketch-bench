@@ -15,14 +15,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aqpbm_engines_external::clickhouse::translate;
-use aqpbm_engines_external::clickhouse_server::{ClickHouseEngine, ClickHouseServer};
-use aqpbm_engines_external::plan_file::PlanFile;
 use aqpbm_core::harness::data::{workload_chunks, DataRecord, Sample};
 use aqpbm_core::harness::engine::{
     Answers, ArmSpec, CpuAccounting, EngineDescription, EngineError, EngineUnderTest, InstalledArm,
     QueryLanguage, QueryText, SampleChunk, SeriesLabels, WorkloadQuery, WorkloadSpec,
 };
+use aqpbm_engines_external::clickhouse::translate;
+use aqpbm_engines_external::clickhouse_server::{ClickHouseEngine, ClickHouseServer};
+use aqpbm_engines_external::plan_file::PlanFile;
 use common::{fixture_path, fixture_value, fixture_value_public, lcm, payload_body};
 use serde_json::{json, Value};
 
@@ -626,7 +626,9 @@ fn the_harness_conformance_kit_passes() {
     let report = aqpbm_core::harness::conformance::check(&mut engine, &clocks);
     println!("harness kit: {report:?}");
     let passed = report.expect("the kit passes").passed;
-    assert!(passed.contains(&aqpbm_core::harness::conformance::ConformanceCheck::DeterministicAnswers));
+    assert!(
+        passed.contains(&aqpbm_core::harness::conformance::ConformanceCheck::DeterministicAnswers)
+    );
     assert!(passed.contains(&aqpbm_core::harness::conformance::ConformanceCheck::LeftOpenWindow));
 }
 
