@@ -774,3 +774,17 @@ fn public_plan_translations_match_the_snapshot() {
     }
     assert_eq!(snapshot, std::fs::read_to_string(path).expect("snapshot"));
 }
+
+#[test]
+fn a_named_config_names_every_entry() {
+    let deployment = translated("sot__1h__1hz__60s", EQ);
+    let named = deployment.stream_aggregation_config_named("install-7");
+    assert_eq!(
+        named,
+        golden("sot_1h.yaml").replace(
+            "- match: 'latency'\n",
+            "- match: 'latency'\n  name: 'install-7'\n"
+        )
+    );
+    assert_eq!(translated("q4c_sum_over_time__1m_1hz_10s", EQ).stream_aggregation_config_named("x"), "[]\n");
+}

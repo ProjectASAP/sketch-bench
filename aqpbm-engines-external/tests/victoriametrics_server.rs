@@ -23,7 +23,7 @@ use aqpbm_core::harness::engine::{
     ArmSpec, EngineUnderTest, QueryLanguage, QueryText, SampleChunk, SeriesLabels, WorkloadQuery,
     WorkloadSpec,
 };
-use common::fixture_value_public;
+use common::{fixture_value_public, payload_body};
 use serde_json::json;
 
 fn aggregation(interval_ms: u64) -> StreamAggregation {
@@ -136,24 +136,30 @@ fn server_metrics_are_read_from_the_exposition() {
 vm_app_version{version=\"victoria-metrics-20251019-v1.154.1\", short_version=\"v1.154.1\"} 1\n\
 vminsert_streamagg_config_reloads_total 3\n\
 vminsert_streamagg_config_last_reload_successful 1\n\
+vminsert_streamagg_config_reloads_errors_total 1\n\
 vm_streamaggr_flush_duration_seconds_count{outputs=\"max\",name=\"none\",path=\"/w/a.yaml\",url=\"global\",position=\"1\"} 7\n\
 vm_streamaggr_flush_duration_seconds_count{outputs=\"sum_samples,count_samples\",name=\"none\",path=\"/w/a.yaml\",url=\"global\",position=\"2\"} 4\n\
-vm_streamaggr_ignored_samples_total{reason=\"nan\",outputs=\"max\",position=\"1\"} 9\n\
-vm_streamaggr_ignored_samples_total{reason=\"too_old\",outputs=\"max\",position=\"1\"} 2\n\
-vm_streamaggr_ignored_samples_total{reason=\"too_old\",outputs=\"max\",position=\"2\"} 1\n\
+vm_streamaggr_ignored_samples_total{reason=\"nan\",outputs=\"max\",name=\"none\",position=\"1\"} 9\n\
+vm_streamaggr_ignored_samples_total{reason=\"too_old\",outputs=\"max\",name=\"none\",position=\"1\"} 2\n\
+vm_streamaggr_ignored_samples_total{reason=\"too_old\",outputs=\"max\",name=\"none\",position=\"2\"} 1\n\
 vm_data_size_bytes{type=\"storage/small\"} 100\n\
 vm_data_size_bytes{type=\"indexdb/file\"} 20\n";
     assert_eq!(
-        ServerMetrics::parse(text),
+        ServerMetrics::parse(text, "none"),
         ServerMetrics {
             app_version: Some("victoria-metrics-20251019-v1.154.1".into()),
             config_reloads: 3,
-            last_reload_successful: true,
+            config_reload_errors: 1,
+            running_positions: [1, 2].into(),
             flushes_by_position: BTreeMap::from([(1, 7), (2, 4)]),
             too_old_samples: 3,
             data_size_bytes: 120,
         }
     );
+    // Another install's aggregations are not counted.
+    let other = ServerMetrics::parse(text, "install-1-0");
+    assert!(other.flushes_by_position.is_empty() && other.running_positions.is_empty());
+    assert_eq!(other.too_old_samples, 0);
 }
 
 #[test]
@@ -189,8 +195,10 @@ fn answers_are_keyed_like_the_harness() {
 }
 
 /// A fake VictoriaMetrics: `/metrics` with a version, a reload counter that
-/// grows on `POST /-/reload`, and `/internal/force_flush`.
-fn fake_server() -> String {
+/// grows on `POST /-/reload`, an ignored-samples counter per entry of the
+/// stream-aggregation config at `config` (named as the config names it),
+/// `/api/v1/query` with no series, and `/internal/force_flush`.
+fn fake_server(config: PathBuf) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let reloads = Arc::new(AtomicU64::new(0));
@@ -214,12 +222,28 @@ fn fake_server() -> String {
             let answer = if path.starts_with("/-/reload") {
                 reloads.fetch_add(1, Ordering::SeqCst);
                 String::new()
+            } else if path.starts_with("/api/v1/query") {
+                "{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[]}}"
+                    .to_string()
             } else if path.starts_with("/metrics") {
+                let entries: String = std::fs::read_to_string(&config)
+                    .unwrap_or_default()
+                    .lines()
+                    .filter_map(|line| line.strip_prefix("  name: "))
+                    .enumerate()
+                    .map(|(i, name)| {
+                        format!(
+                            "vm_streamaggr_ignored_samples_total{{reason=\"too_old\",name=\"{}\",position=\"{}\"}} 0\n",
+                            name.trim_matches('\''),
+                            i + 1
+                        )
+                    })
+                    .collect();
                 format!(
                     "vm_app_version{{version=\"victoria-metrics-fake-v1.154.1\"}} 1\n\
                      vminsert_streamagg_config_reloads_total {}\n\
-                     vminsert_streamagg_config_last_reload_successful 1\n\
-                     vm_data_size_bytes{{type=\"storage/small\"}} 0\n",
+                     vminsert_streamagg_config_reloads_errors_total 0\n\
+                     vm_data_size_bytes{{type=\"storage/small\"}} 0\n{entries}",
                     reloads.load(Ordering::SeqCst)
                 )
             } else {
@@ -287,7 +311,7 @@ fn arm(dir: &std::path::Path, plan: &serde_json::Value) -> ArmSpec {
 fn one_arm_at_a_time_and_its_config_reaches_the_agent() {
     let dir = temp_dir("one-arm");
     let engine = VictoriaMetricsEngine::new(VictoriaMetricsServer {
-        url: fake_server(),
+        url: fake_server(dir.join("stream-aggregation.yaml")),
         cgroup_agent_url: fake_agent(&dir),
         request_timeout: Duration::from_secs(10),
     })
@@ -297,26 +321,29 @@ fn one_arm_at_a_time_and_its_config_reaches_the_agent() {
         engine.description().version,
         "victoria-metrics-fake-v1.154.1"
     );
-    // A query-time plan: no stream aggregation, so the install waits at
-    // most the margin plus a step of 10 s.
-    let plan = fixture_value_public(
-        "q4c_sum_over_time__1m_1hz_10s",
-        "victoriametrics.equivalent-only",
-    );
-    let texts = ["sum by (job) (sum_over_time(latency[1m]))"];
+    // A stored plan with 10 s windows: the install waits at most the
+    // margin plus one step of 10 s.
+    let mut plan = fixture_value_public("sot__1h__1hz__60s", "victoriametrics.equivalent-only");
+    payload_body(&mut plan, 1)["tumbling_window_width_ms"] = json!(10_000);
+    let texts = ["sum by (job) (sum_over_time(latency[1h]))"];
     let first = engine
         .install(&workload(&texts, 10_000), &arm(&dir, &plan))
         .unwrap();
     let config = std::fs::read_to_string(dir.join("stream-aggregation.yaml")).unwrap();
-    assert!(config.starts_with("# install "), "{config}");
-    assert!(config.ends_with("[]\n"), "{config}");
+    assert!(config.contains("  name: 'install-"), "{config}");
+    assert!(config.contains("  interval: 10s\n"), "{config}");
     let error = engine
         .install(&workload(&texts, 10_000), &arm(&dir, &plan))
         .err()
         .expect("a second arm is refused");
     assert!(error.0.contains("--warmup 0 --runs 1"), "{error}");
     drop(first);
-    // Dropping the arm frees the engine, and the next config differs.
+    // Dropping the arm unloads its config and frees the engine; the next
+    // install's config has another name.
+    assert_eq!(
+        std::fs::read_to_string(dir.join("stream-aggregation.yaml")).unwrap(),
+        "[]\n"
+    );
     let second = engine
         .install(&workload(&texts, 10_000), &arm(&dir, &plan))
         .unwrap();
@@ -329,7 +356,7 @@ fn one_arm_at_a_time_and_its_config_reaches_the_agent() {
 fn plans_are_checked_against_the_workload_before_anything_loads() {
     let dir = temp_dir("checks");
     let engine = VictoriaMetricsEngine::new(VictoriaMetricsServer {
-        url: fake_server(),
+        url: fake_server(dir.join("stream-aggregation.yaml")),
         cgroup_agent_url: fake_agent(&dir),
         request_timeout: Duration::from_secs(10),
     })
@@ -358,4 +385,39 @@ fn plans_are_checked_against_the_workload_before_anything_loads() {
         std::fs::read_to_string(dir.join("stream-aggregation.yaml")).unwrap(),
         "[]\n"
     );
+}
+
+#[test]
+fn a_query_time_arm_ingests_then_evaluates() {
+    // No stream aggregation: the ingest of the chunk ending at t still
+    // returns only once wall time reached t, so the evaluation at t follows.
+    let dir = temp_dir("query-time");
+    let engine = VictoriaMetricsEngine::new(VictoriaMetricsServer {
+        url: fake_server(dir.join("stream-aggregation.yaml")),
+        cgroup_agent_url: fake_agent(&dir),
+        request_timeout: Duration::from_secs(10),
+    })
+    .unwrap();
+    let plan = fixture_value_public(
+        "q4c_sum_over_time__1m_1hz_10s",
+        "victoriametrics.equivalent-only",
+    );
+    let texts = ["sum by (job) (sum_over_time(latency[1m]))"];
+    let mut installed = engine
+        .install(&workload(&texts, 10_000), &arm(&dir, &plan))
+        .unwrap();
+    let series = labels(&[("__name__", "latency"), ("job", "a")]);
+    let chunk = SampleChunk {
+        end_ms: 10_000,
+        samples: (1..=10)
+            .map(|s| Sample {
+                labels: Arc::clone(&series),
+                ts_ms: s * 1000,
+                value: s as f64,
+            })
+            .collect(),
+    };
+    installed.ingest(&chunk).unwrap();
+    let (answers, _) = installed.evaluate(10_000).unwrap();
+    assert!(answers.0["q0"].is_empty());
 }
