@@ -622,3 +622,153 @@ fn project_keeps_labels_under_their_names() {
         shape(16, "projected label rename")
     );
 }
+
+#[test]
+fn output_names_that_collide_are_refused() {
+    // `by [a_b]` and `by [a, b]` both name their output `..._by_a_b_...`.
+    let mut value = fixture_value_public("sot__1h__1hz__60s", EQ);
+    for node in [0, 1, 2, 3, 4] {
+        let fields = value["dag"]["nodes"][node]["output_schema"]["fields"]
+            .as_array_mut()
+            .unwrap();
+        let mut a = fields[2].clone();
+        a["name"] = json!("a");
+        let mut b = fields[2].clone();
+        b["name"] = json!("b");
+        fields[2]["name"] = json!("a_b");
+        fields.insert(3, b);
+        fields.insert(3, a);
+    }
+    // Columns: [ts|window_end, value|state, a_b, a, b, identity].
+    payload_body(&mut value, 1)["reduction"] = json!({"Reduce": [3, 4]});
+    let nodes = value["dag"]["nodes"].as_array_mut().unwrap();
+    let copies: Vec<Value> = (1..=4).map(|id| nodes[id].clone()).collect();
+    for (offset, mut node) in copies.into_iter().enumerate() {
+        node["id"] = json!(6 + offset);
+        nodes.push(node);
+    }
+    payload_body(&mut value, 6)["reduction"] = json!({"Reduce": [2]});
+    payload_body(&mut value, 7)["child"] = json!(6);
+    payload_body(&mut value, 8)["children"] = json!([7]);
+    payload_body(&mut value, 9)["child"] = json!(8);
+    value["dag"]["roots"] = json!([4, 9]);
+    assert_eq!(
+        from_value(value).unwrap_err(),
+        shape(
+            6,
+            "two stored chains with the output latency:60s_by_a_b_sum_samples"
+        )
+    );
+}
+
+#[test]
+fn label_values_and_names_are_quoted() {
+    let mut value = fixture_value_public("s1000__maxf__5m__1hz__60s", WS);
+    payload_body(&mut value, 0)["predicates"][0]["Compare"]["right"] =
+        json!({"Literal": {"Utf8": "a\tb\rc"}});
+    let deployment = from_value(value).unwrap();
+    assert_eq!(
+        deployment.stream_aggregations[0].selector,
+        r#"latency{job="a\tb\rc"}"#
+    );
+    // A label named like a YAML keyword stays a string in `by`.
+    let mut value = sot_with_reduction(json!({"Reduce": [2]}));
+    for node in 0..=4 {
+        value["dag"]["nodes"][node]["output_schema"]["fields"][2]["name"] = json!("on");
+    }
+    let config = from_value(value).unwrap().stream_aggregation_config();
+    assert!(config.contains("  by: ['on']\n"), "{config}");
+}
+
+#[test]
+fn matchers_are_in_label_order() {
+    // Predicates `job="j3"` then `a="x"` (a new label column 4 of the Scan):
+    // the selector lists `a` first, so equal selectors compare equal.
+    let mut value = fixture_value_public("s1000__maxf__5m__1hz__60s", WS);
+    let fields = value["dag"]["nodes"][0]["output_schema"]["fields"]
+        .as_array_mut()
+        .unwrap();
+    let mut label = fields[2].clone();
+    label["name"] = json!("a");
+    fields.push(label);
+    let mut predicate = payload_body(&mut value, 0)["predicates"][0].clone();
+    predicate["Compare"]["left"] = json!({"Column": 4});
+    predicate["Compare"]["right"] = json!({"Literal": {"Utf8": "x"}});
+    payload_body(&mut value, 0)["predicates"]
+        .as_array_mut()
+        .unwrap()
+        .push(predicate);
+    let deployment = from_value(value).unwrap();
+    assert_eq!(
+        deployment.stream_aggregations[0].selector,
+        r#"latency{a="x",job="j3"}"#
+    );
+}
+
+#[test]
+fn division_records_that_nan_series_are_dropped() {
+    let deployment = translated("rangeheavy", WS);
+    let plan = public_fixture("rangeheavy", WS);
+    let divisions: Vec<usize> = plan
+        .nodes
+        .iter()
+        .filter(|n| {
+            matches!(&n.operator, aqpbm_engines_external::plan_file::PlanOperator::BinaryOp { operator, .. }
+                if operator["kind"] == json!({"Arithmetic": "Div"}))
+        })
+        .map(|n| n.id)
+        .collect();
+    assert!(!divisions.is_empty());
+    for node in divisions {
+        let substitution = deployment
+            .substitutions
+            .iter()
+            .find(|s| s.node == node)
+            .unwrap_or_else(|| panic!("division at node {node} is recorded"));
+        assert_eq!(substitution.rule, "victoriametrics.division.nan_dropped");
+    }
+}
+
+/// Every committed VictoriaMetrics public plan's config and queries, as
+/// reviewed: a regression snapshot (`golden/victoriametrics/public_plans.txt`).
+#[test]
+fn public_plan_translations_match_the_snapshot() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/plans/public");
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|n| n.contains(".victoriametrics."))
+        .collect();
+    names.sort();
+    let mut snapshot = String::new();
+    for name in names {
+        let stem = name.strip_suffix(".plan.json").unwrap();
+        let (workload, variant) = stem.split_once(".victoriametrics.").unwrap();
+        let variant = format!("victoriametrics.{variant}");
+        snapshot.push_str(&format!("== {stem}\n"));
+        match translate(&public_fixture(workload, &variant)) {
+            Err(error) => snapshot.push_str(&format!("refused: {error}\n")),
+            Ok(deployment) => {
+                snapshot.push_str(&deployment.stream_aggregation_config());
+                for query in &deployment.queries {
+                    snapshot.push_str(&format!(
+                        "{} | step {} | per series {:?}\n",
+                        query.expr, query.time_step_ms, query.per_series_of
+                    ));
+                }
+                for substitution in &deployment.substitutions {
+                    snapshot.push_str(&format!(
+                        "substitution {} at node {}\n",
+                        substitution.rule, substitution.node
+                    ));
+                }
+            }
+        }
+    }
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/golden/victoriametrics/public_plans.txt");
+    if std::env::var_os("AQPBM_WRITE_SNAPSHOT").is_some() {
+        std::fs::write(&path, &snapshot).unwrap();
+    }
+    assert_eq!(snapshot, std::fs::read_to_string(path).expect("snapshot"));
+}
