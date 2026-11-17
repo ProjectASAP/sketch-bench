@@ -490,8 +490,11 @@ fn evaluate_parses_series_and_values() {
         )
         .unwrap();
     let (answers, report) = installed.evaluate(600_000).unwrap();
-    let series: SeriesLabels = serde_json::from_str(identity).unwrap();
-    assert!(answers.get("q0", &series).unwrap().is_nan());
+    // The root applies a function (max_over_time), so the answer drops
+    // `__name__`, as PromQL's output does.
+    let mut series: SeriesLabels = serde_json::from_str(identity).unwrap();
+    series.remove("__name__");
+    assert!(answers.get("q0", &series).unwrap().is_nan(), "{answers:?}");
     assert_eq!(report.scanned_bytes, Some(48));
     assert_eq!(report.engine_reported_cpu_ns, None);
     let query = stub
@@ -685,4 +688,44 @@ fn a_failed_install_drops_its_database() {
         .expect("a database was created")
         .to_string();
     assert!(statements.contains(&format!("DROP DATABASE IF EXISTS {database} SYNC")));
+}
+
+#[test]
+fn only_a_bare_selector_keeps_the_metric_name() {
+    // rangeheavy node 1 is the instant selector `data` (5 ms lookback): a
+    // root that is only that selector keeps `__name__`, as PromQL does.
+    let identity = r#"{"__name__":"data","job":"a"}"#;
+    let answer = format!("job\t$promql_series_identity\tvalue\na\t{identity}\t3\n");
+    let stub = start_stub(vec![Box::new(move |request: &Request| {
+        request
+            .statement()
+            .contains("FORMAT TabSeparatedWithNames")
+            .then(|| (200, vec![], answer.clone()))
+    })]);
+    let mut plan = common::fixture_value_public("rangeheavy", "clickhouse.equivalent-only");
+    plan["dag"]["roots"] = json!([1]);
+    plan["query_texts"] = json!(["data"]);
+    let dir = std::env::temp_dir().join(format!("ch-server-selector-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("selector.plan.json");
+    std::fs::write(&path, plan.to_string()).unwrap();
+    let workload = WorkloadSpec {
+        name: "selector".into(),
+        queries: vec![WorkloadQuery {
+            id: "q0".into(),
+            texts: vec![QueryText {
+                language: QueryLanguage::PromQl,
+                text: "data".into(),
+            }],
+            window_ms: 60_000,
+            evaluation_interval_ms: 60_000,
+        }],
+        data: vec![data_record(0)],
+    };
+    let mut selector_arm = arm("sot_1h_stored_sum");
+    selector_arm.engine_options = json!({ "plan_file": path });
+    let mut installed = engine(&stub).install(&workload, &selector_arm).unwrap();
+    let (answers, _) = installed.evaluate(60_000).unwrap();
+    let series: SeriesLabels = serde_json::from_str(identity).unwrap();
+    assert_eq!(answers.get("q0", &series), Some(3.0), "{answers:?}");
 }
