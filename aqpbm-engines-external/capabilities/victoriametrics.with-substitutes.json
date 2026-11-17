@@ -1,42 +1,5 @@
 {
-  "supported_summaries": [
-    {
-      "summary_type": "Hll",
-      "readouts": [
-        "Distinct"
-      ]
-    },
-    {
-      "summary_type": "Kmv",
-      "readouts": [
-        "Distinct"
-      ]
-    },
-    {
-      "summary_type": "Kll",
-      "readouts": [
-        "Quantile"
-      ]
-    },
-    {
-      "summary_type": "DDSketch",
-      "readouts": [
-        "Quantile"
-      ]
-    },
-    {
-      "summary_type": "CmsWithHeap",
-      "readouts": [
-        "TopK"
-      ]
-    },
-    {
-      "summary_type": "CountSketchWithHeap",
-      "readouts": [
-        "TopK"
-      ]
-    }
-  ],
+  "supported_summaries": [],
   "raw_data_retained": true,
   "query_time_results_retained": false,
   "counter_semantics": {
@@ -45,20 +8,21 @@
   },
   "state_not_mergeable_across_windows": [
     {
-      "exact": "IRate"
+      "exact": "Rate"
     },
     {
-      "sketch": "Hll"
-    },
-    {
-      "sketch": "Kmv"
-    },
-    {
-      "sketch": "CmsWithHeap"
-    },
-    {
-      "sketch": "CountSketchWithHeap"
+      "exact": "Increase"
     }
   ],
-  "excluded_candidates": []
+  "excluded_candidates": [
+    {
+      "summary_family": {
+        "exact": "IRate"
+      }
+    },
+    {
+      "operator": "Aggregate",
+      "aggregate_measure": "i_rate"
+    }
+  ]
 }
