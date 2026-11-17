@@ -443,6 +443,8 @@ fn interval_must_divide_a_day() {
         (3_600_000, true),
         (2_000, true),
         (7_000, false),
+        // A 7-minute window: 86,400 s is not a whole number of them.
+        (420_000, false),
         (1_500, false),
         (1_000, false),
     ] {
@@ -458,6 +460,7 @@ fn interval_must_divide_a_day() {
         } else {
             let reason = match width_ms {
                 7_000 => "window width 7000 ms does not divide 86,400 s",
+                420_000 => "window width 420000 ms does not divide 86,400 s",
                 1_500 => "window width 1500 ms is not whole seconds",
                 _ => "window width 1000 ms is below 2 s",
             };
