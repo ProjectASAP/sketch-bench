@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use aqpbm_engines_external::victoriametrics::{StreamAggregation, StreamOutput};
 use aqpbm_engines_external::victoriametrics_server::{
-    import_body, lead_ms, parse_answer, slices, wall_offset_ms, ServerMetrics,
+    import_body, lead_ms, parse_answer, previous_arm_gap_ms, slices, wall_offset_ms, ServerMetrics,
     VictoriaMetricsEngine, VictoriaMetricsServer, SLICE_MS,
 };
 use aqpbm_core::harness::cgroup::serve_agent;
@@ -420,4 +420,21 @@ fn a_query_time_arm_ingests_then_evaluates() {
     installed.ingest(&chunk).unwrap();
     let (answers, _) = installed.evaluate(10_000).unwrap();
     assert!(answers.0["q0"].is_empty());
+}
+
+#[test]
+fn only_counter_plans_wait_for_the_previous_arms_samples_to_age_out() {
+    use aqpbm_engines_external::plan_file::PlanFile;
+    let plan = |workload: &str, variant: &str| {
+        PlanFile::from_value(fixture_value_public(workload, variant)).unwrap()
+    };
+    // Rollups over a window read only the window: no wait.
+    assert_eq!(previous_arm_gap_ms(&plan("q4c_sum_over_time__1m_1hz_10s", "victoriametrics.equivalent-only")), 0);
+    assert_eq!(previous_arm_gap_ms(&plan("sot__1h__1hz__60s", "victoriametrics.equivalent-only")), 0);
+    // `rate` looks back for the sample before its range: 10 min plus the
+    // longest range (60 s).
+    assert_eq!(
+        previous_arm_gap_ms(&plan("q2_sum_rate__1m_1hz_10s", "victoriametrics.with-substitutes")),
+        660_000
+    );
 }
