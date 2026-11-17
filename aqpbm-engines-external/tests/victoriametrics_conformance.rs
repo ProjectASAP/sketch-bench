@@ -75,13 +75,27 @@ fn workload(plan: &Value, interval_ms: u64) -> WorkloadSpec {
     }
 }
 
+/// A series with `pairs` and a `conformance_run` label unique to this
+/// process, so a rerun never reads an earlier run's samples of the series
+/// (MetricsQL looks up to 10 minutes back for the sample before a range).
 fn series(pairs: &[(&str, &str)]) -> Arc<SeriesLabels> {
-    Arc::new(
-        pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect(),
-    )
+    let mut labels: SeriesLabels = pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    labels.insert("conformance_run".into(), RUN.with(|run| run.clone()));
+    Arc::new(labels)
+}
+
+thread_local! {
+    static RUN: String = format!(
+        "{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    );
 }
 
 /// `samples` cut into chunks ending at multiples of `chunk_ms` from

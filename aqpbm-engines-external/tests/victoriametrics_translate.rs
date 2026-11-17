@@ -786,5 +786,8 @@ fn a_named_config_names_every_entry() {
             "- match: 'latency'\n  name: 'install-7'\n"
         )
     );
-    assert_eq!(translated("q4c_sum_over_time__1m_1hz_10s", EQ).stream_aggregation_config_named("x"), "[]\n");
+    assert_eq!(
+        translated("q4c_sum_over_time__1m_1hz_10s", EQ).stream_aggregation_config_named("x"),
+        "[]\n"
+    );
 }

@@ -209,14 +209,31 @@ impl VictoriaMetricsDeployment {
     /// The `-streamAggr.config` YAML: one list entry per stream aggregation;
     /// `[]` when there is none.
     pub fn stream_aggregation_config(&self) -> String {
+        self.config_yaml(None)
+    }
+
+    /// The same config with every entry named `name` (the `name` label of the
+    /// server's stream-aggregation metrics), e.g. one name per install, so
+    /// an install can tell its aggregators' metrics from earlier ones.
+    pub fn stream_aggregation_config_named(&self, name: &str) -> String {
+        self.config_yaml(Some(name))
+    }
+
+    fn config_yaml(&self, name: Option<&str>) -> String {
         if self.stream_aggregations.is_empty() {
             return "[]\n".into();
         }
         let mut yaml = String::new();
         for aggregation in &self.stream_aggregations {
             yaml.push_str(&format!(
-                "- match: {}\n  interval: {}\n",
-                yaml_quoted(&aggregation.selector),
+                "- match: {}\n",
+                yaml_quoted(&aggregation.selector)
+            ));
+            if let Some(name) = name {
+                yaml.push_str(&format!("  name: {}\n", yaml_quoted(name)));
+            }
+            yaml.push_str(&format!(
+                "  interval: {}\n",
                 duration(aggregation.interval_ms)
             ));
             if let Some(labels) = &aggregation.by {

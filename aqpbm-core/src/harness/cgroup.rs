@@ -344,10 +344,17 @@ fn answer(
             (Some(path), Some(length)) => {
                 let mut body = Vec::with_capacity(length);
                 (&mut reader).take(length as u64).read_to_end(&mut body)?;
-                if body.len() == length && replace_file(path, &body).is_ok() {
-                    "204 No Content"
-                } else {
+                if body.len() != length {
                     "400 Bad Request"
+                } else if let Err(error) = replace_file(path, &body) {
+                    let message = error.to_string();
+                    return write!(
+                        stream,
+                        "HTTP/1.0 500 Internal Server Error\r\nContent-Length: {}\r\n\r\n{message}",
+                        message.len()
+                    );
+                } else {
+                    "204 No Content"
                 }
             }
         };
@@ -385,8 +392,22 @@ fn replace_file(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     temporary_name.push(name);
     temporary_name.push(".partial");
     let temporary = path.with_file_name(temporary_name);
-    std::fs::write(&temporary, contents)?;
-    std::fs::rename(&temporary, path)
+    // A leftover (or planted) temporary file, even a symbolic link, is
+    // removed, never followed: the new one is created afresh.
+    match std::fs::remove_file(&temporary) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+        _ => {}
+    }
+    let written = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .and_then(|mut file| file.write_all(contents))
+        .and_then(|()| std::fs::rename(&temporary, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    written
 }
 
 /// How long the client waits to connect to the agent.

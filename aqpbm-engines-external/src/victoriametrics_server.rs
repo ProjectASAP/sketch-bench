@@ -16,15 +16,20 @@
 //!
 //! Feeding: each refresh chunk is cut into 1 s slices, and each slice is
 //! sent a lead early: `max(1 s, h)`, `h = (w − 1 s) / 2` the narrowest
-//! window's read shift. So no sample lags behind the wall clock even when
-//! the harness's own work between steps delays a slice (a lag would delay
-//! the server's flush), and every sample still lands in its own window
-//! (the lead stays below the width). A slice sent at or after its window's
-//! end fails the step. The ingest of the chunk ending at `t` then waits
-//! until every stream aggregation with a window ending at `t` has flushed
-//! (failing if a flush lags by `h` or more) and makes the new rows
+//! window's read shift. Every sample still lands in its own window (the
+//! lead stays below the width), and a sample lags behind the wall clock
+//! (which delays the server's flush by the lag) only when the harness's own
+//! work between two chunks (the evaluation, the idle probe) takes longer
+//! than the gap to the next chunk's first sample; the flush-lag check below
+//! catches that. A slice that reaches the server less than 100 ms before
+//! its window's end fails the step. The ingest of the chunk ending at `t`
+//! then waits until `t`, then until every stream aggregation flushed once
+//! for each of its ticks in the chunk (failing if that lags by `h` or more,
+//! or if the server dropped a late sample), and makes the new rows
 //! searchable, so this work is ingest CPU and an evaluation runs only its
-//! queries. One arm at a time per engine: the server's stream-aggregation
+//! queries. An arm's data starts at least 10 minutes plus its longest range
+//! after the previous arm's newest sample, so MetricsQL's look-back for the
+//! sample before a range never reaches another arm's data. One arm at a time per engine: the server's stream-aggregation
 //! config is one file, and wall-clock data cannot be replayed into a second
 //! arm, so run the lane with no warm-up and one measured run.
 //!
@@ -37,7 +42,7 @@
 //! keeps no per-query CPU counter, so [`StepReport`] carries none.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -73,6 +78,9 @@ pub struct VictoriaMetricsEngine {
     description: EngineDescription,
     /// Set while an arm is installed.
     arm_installed: Arc<AtomicBool>,
+    /// The wall time of the newest sample any arm of this engine sent, in
+    /// ms (0 before any).
+    newest_sample_wall_ms: Arc<AtomicI64>,
 }
 
 /// Installs so far in this process, for each install's config nonce.
@@ -82,8 +90,15 @@ static INSTALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::ne
 const RELOAD_TIMEOUT: Duration = Duration::from_secs(10);
 /// How often a wait polls the server's `/metrics`.
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
-/// The latest a chunk's flush counts may be read before the tick at its end.
-const BEFORE_TICK_MARGIN_MS: i64 = 50;
+/// The least time a slice reaches the server before its window ends.
+const BEFORE_WINDOW_END_MARGIN_MS: i64 = 100;
+/// How far before a range MetricsQL reads a series for an instant query:
+/// its silence interval (5 min) plus the larger of the range and the step
+/// (5 min by default), where it finds the sample before the range that
+/// `rate` and `increase` start from. An arm's data starts at least this
+/// plus its longest range after the previous arm's newest sample, so no arm
+/// reads another arm's samples of the same series.
+const PREVIOUS_SAMPLE_LOOKBACK_MS: i64 = 600_000;
 /// The least time between installing an arm and its first data, so the
 /// data starts after the reloaded config's first tick.
 const START_MARGIN_MS: i64 = 2_000;
@@ -92,7 +107,7 @@ impl VictoriaMetricsEngine {
     /// Connects to the server and reads its version.
     pub fn new(server: VictoriaMetricsServer) -> Result<VictoriaMetricsEngine, EngineError> {
         let http = Http::new(&server.url, server.request_timeout);
-        let metrics = ServerMetrics::parse(&http.get("/metrics", &[])?);
+        let metrics = ServerMetrics::parse(&http.get("/metrics", &[])?, "");
         let version = metrics
             .app_version
             .ok_or_else(|| EngineError("the server's /metrics has no vm_app_version".into()))?;
@@ -106,6 +121,7 @@ impl VictoriaMetricsEngine {
             server,
             http,
             arm_installed: Arc::new(AtomicBool::new(false)),
+            newest_sample_wall_ms: Arc::new(AtomicI64::new(0)),
         })
     }
 }
@@ -156,6 +172,9 @@ impl EngineUnderTest for VictoriaMetricsEngine {
             http: self.http.clone(),
             agent_url: self.server.cgroup_agent_url.clone(),
             arm_installed: Arc::clone(&self.arm_installed),
+            newest_sample_wall_ms: Arc::clone(&self.newest_sample_wall_ms),
+            aggregation_name: String::new(),
+            flush_counts: (0, BTreeMap::new()),
             queries: query_ids
                 .into_iter()
                 .zip(deployment.queries.clone())
@@ -167,29 +186,52 @@ impl EngineUnderTest for VictoriaMetricsEngine {
             data_bytes_at_install: 0,
             summary: plan_summary(&plan, &deployment),
         };
-        // A reload whose config bytes are unchanged keeps the old
-        // aggregators and their state, so each install's config differs.
-        let nonce = format!(
-            "# install {} {}\n",
+        // Each install names its aggregators, so its config always differs
+        // from the last one (a reload with unchanged bytes keeps the old
+        // aggregators) and its metrics are told apart from earlier ones.
+        installed.aggregation_name = format!(
+            "install-{}-{}",
             std::process::id(),
             INSTALLS.fetch_add(1, Ordering::Relaxed)
         );
-        installed.load_config(&(nonce + &deployment.stream_aggregation_config()))?;
+        let config = deployment.stream_aggregation_config_named(&installed.aggregation_name);
+        installed.load_config(&config, deployment.stream_aggregations.len())?;
         installed.http.get("/internal/force_flush", &[])?;
         let metrics = installed.metrics()?;
         installed.too_old_at_install = metrics.too_old_samples;
         installed.data_bytes_at_install = metrics.data_size_bytes;
+        let flushes_at_install = metrics.flushes_by_position;
         let step_ms = deployment
             .stream_aggregations
             .iter()
             .fold(lcm(1000, interval_ms), |step, a| lcm(step, a.interval_ms));
         let data_start = data_start_ms(workload);
-        installed.offset_ms = wall_offset_ms(now_ms(), data_start, step_ms);
+        let earliest_start = now_ms().max(
+            self.newest_sample_wall_ms.load(Ordering::SeqCst)
+                + PREVIOUS_SAMPLE_LOOKBACK_MS
+                + longest_range_ms(&plan),
+        );
+        installed.offset_ms = wall_offset_ms(earliest_start, data_start, step_ms);
+        // Flushes are counted for the ticks after the data start; earlier
+        // ones (empty windows) only add to the counts.
+        installed.flush_counts = (data_start + installed.offset_ms, flushes_at_install);
         // The wait for the data start is the install's, not the first
         // chunk's.
         sleep_until_wall_ms(data_start + installed.offset_ms - installed.lead_ms);
         Ok(Box::new(installed))
     }
+}
+
+/// The longest range any `TimeRange` of `plan` reads, in ms.
+fn longest_range_ms(plan: &PlanFile) -> i64 {
+    plan.nodes
+        .iter()
+        .filter_map(|node| match node.operator {
+            PlanOperator::TimeRange { range_ms, .. } => Some(range_ms as i64),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 /// The one evaluation interval of `workload`'s queries.
@@ -346,20 +388,27 @@ pub struct ServerMetrics {
     pub app_version: Option<String>,
     /// `vminsert_streamagg_config_reloads_total`.
     pub config_reloads: u64,
-    /// `vminsert_streamagg_config_last_reload_successful == 1`.
-    pub last_reload_successful: bool,
-    /// Per stream aggregation, by its 1-based `position` in the config:
-    /// `vm_streamaggr_flush_duration_seconds_count`, the flushes so far.
+    /// `vminsert_streamagg_config_reloads_errors_total`.
+    pub config_reload_errors: u64,
+    /// The positions of the aggregations named `aggregation_name` the server
+    /// runs (they have an ignored-samples counter from their start).
+    pub running_positions: std::collections::BTreeSet<u32>,
+    /// Per stream aggregation named `aggregation_name`, by its 1-based
+    /// `position` in the config: `vm_streamaggr_flush_duration_seconds_count`,
+    /// the flushes so far.
     pub flushes_by_position: BTreeMap<u32, u64>,
-    /// `vm_streamaggr_ignored_samples_total{reason="too_old"}`, summed: samples
-    /// that arrived after their window had flushed.
+    /// `vm_streamaggr_ignored_samples_total{reason="too_old"}` of the
+    /// aggregations named `aggregation_name`, summed: samples that arrived
+    /// after their window had flushed.
     pub too_old_samples: u64,
     /// `vm_data_size_bytes`, summed over every type: the server's whole data.
     pub data_size_bytes: u64,
 }
 
 impl ServerMetrics {
-    pub fn parse(text: &str) -> ServerMetrics {
+    /// The metrics of `/metrics` text; the stream-aggregation counters of the
+    /// aggregations named `aggregation_name` only.
+    pub fn parse(text: &str, aggregation_name: &str) -> ServerMetrics {
         let mut metrics = ServerMetrics::default();
         for line in text.lines() {
             let (name_and_labels, value) = match line.rsplit_once(' ') {
@@ -371,21 +420,25 @@ impl ServerMetrics {
                 None => (name_and_labels, ""),
             };
             let count = || value.parse::<f64>().map(|v| v as u64).unwrap_or(0);
+            let ours = || label(labels, "name").as_deref() == Some(aggregation_name);
             match name {
                 "vm_app_version" => metrics.app_version = label(labels, "version"),
                 "vminsert_streamagg_config_reloads_total" => metrics.config_reloads = count(),
-                "vminsert_streamagg_config_last_reload_successful" => {
-                    metrics.last_reload_successful = value == "1"
+                "vminsert_streamagg_config_reloads_errors_total" => {
+                    metrics.config_reload_errors = count()
                 }
-                "vm_streamaggr_flush_duration_seconds_count" => {
+                "vm_streamaggr_flush_duration_seconds_count" if ours() => {
                     if let Some(position) = label(labels, "position").and_then(|p| p.parse().ok()) {
                         *metrics.flushes_by_position.entry(position).or_default() += count();
                     }
                 }
-                "vm_streamaggr_ignored_samples_total"
-                    if label(labels, "reason").as_deref() == Some("too_old") =>
-                {
-                    metrics.too_old_samples += count()
+                "vm_streamaggr_ignored_samples_total" if ours() => {
+                    if let Some(position) = label(labels, "position").and_then(|p| p.parse().ok()) {
+                        metrics.running_positions.insert(position);
+                    }
+                    if label(labels, "reason").as_deref() == Some("too_old") {
+                        metrics.too_old_samples += count();
+                    }
                 }
                 "vm_data_size_bytes" => metrics.data_size_bytes += count(),
                 _ => {}
@@ -395,11 +448,18 @@ impl ServerMetrics {
     }
 }
 
-/// The value of `name="value"` in a Prometheus label list.
+/// The value of `name="value"` in a Prometheus label list such as
+/// `a="1",name="x"` (not the `name` inside `short_name`).
 fn label(labels: &str, name: &str) -> Option<String> {
-    let start = labels.find(&format!("{name}=\""))? + name.len() + 2;
-    let end = labels[start..].find('"')? + start;
-    Some(labels[start..end].to_string())
+    let mut rest = labels;
+    loop {
+        let (key, after) = rest.split_once("=\"")?;
+        let end = after.find('"')?;
+        if key.trim_start_matches([',', ' ']) == name {
+            return Some(after[..end].to_string());
+        }
+        rest = &after[end + 1..];
+    }
 }
 
 /// The series of one `/api/v1/query` answer: labels without `__name__`,
@@ -530,6 +590,12 @@ struct VictoriaMetricsArm {
     http: Http,
     agent_url: String,
     arm_installed: Arc<AtomicBool>,
+    newest_sample_wall_ms: Arc<AtomicI64>,
+    /// The `name` of this install's stream aggregations, e.g. `install-41-0`.
+    aggregation_name: String,
+    /// The flush counts per position, and the wall time (ms) whose later
+    /// ticks they do not include yet: the data start, then each chunk end.
+    flush_counts: (i64, BTreeMap<u32, u64>),
     /// Per plan root: the workload query id and its query.
     queries: Vec<(String, MetricsQlQuery)>,
     /// In config order: aggregation `i` has `position` `i + 1`.
@@ -545,12 +611,17 @@ struct VictoriaMetricsArm {
 
 impl VictoriaMetricsArm {
     fn metrics(&self) -> Result<ServerMetrics, EngineError> {
-        Ok(ServerMetrics::parse(&self.http.get("/metrics", &[])?))
+        Ok(ServerMetrics::parse(
+            &self.http.get("/metrics", &[])?,
+            &self.aggregation_name,
+        ))
     }
 
-    /// Writes `config` as the server's `-streamAggr.config` and reloads it.
-    fn load_config(&self, config: &str) -> Result<(), EngineError> {
-        let before = self.metrics()?.config_reloads;
+    /// Writes `config` as the server's `-streamAggr.config`, reloads it, and
+    /// waits until the server runs its `aggregations` aggregations (named
+    /// [`Self::aggregation_name`]); a refused config is an error.
+    fn load_config(&self, config: &str, aggregations: usize) -> Result<(), EngineError> {
+        let before = self.metrics()?;
         put_server_config(&self.agent_url, config).map_err(|error| {
             EngineError(format!("writing the stream-aggregation config: {error}"))
         })?;
@@ -558,11 +629,20 @@ impl VictoriaMetricsArm {
         let deadline = Instant::now() + RELOAD_TIMEOUT;
         loop {
             let metrics = self.metrics()?;
-            if metrics.config_reloads > before {
-                if !metrics.last_reload_successful {
-                    return Err(EngineError(
-                        "the server refused the stream-aggregation config (see its log)".into(),
-                    ));
+            if metrics.config_reload_errors > before.config_reload_errors {
+                return Err(EngineError(
+                    "the server refused the stream-aggregation config (see its log)".into(),
+                ));
+            }
+            // The reload counter grows when a reload starts; the named
+            // aggregations' counters appear once it has loaded them.
+            if metrics.config_reloads > before.config_reloads
+                && metrics.running_positions.len() == aggregations
+            {
+                if aggregations == 0 {
+                    // Nothing to see for an empty config: give the reload
+                    // its few milliseconds.
+                    std::thread::sleep(POLL_INTERVAL);
                 }
                 return Ok(());
             }
@@ -573,19 +653,66 @@ impl VictoriaMetricsArm {
         }
     }
 
-    /// The aggregations (1-based positions) with a window ending at wall
-    /// time `wall_ms`, and the read shift of the narrowest, in ms.
-    fn flushing_at(&self, wall_ms: i64) -> (Vec<u32>, Option<i64>) {
-        let mut positions = Vec::new();
-        let mut shift = None::<i64>;
-        for (i, aggregation) in self.aggregations.iter().enumerate() {
-            if wall_ms.rem_euclid(aggregation.interval_ms as i64) == 0 {
-                positions.push(i as u32 + 1);
-                let h = (aggregation.interval_ms as i64 - 1000) / 2;
-                shift = Some(shift.map_or(h, |s| s.min(h)));
+    /// The read shift `h` of the narrowest window, in ms: the most a flush
+    /// may lag.
+    fn narrowest_shift_ms(&self) -> Option<i64> {
+        self.aggregations
+            .iter()
+            .map(|a| (a.interval_ms as i64 - 1000) / 2)
+            .min()
+    }
+
+    /// Waits until every aggregation flushed once for each of its ticks in
+    /// `(counted up to, tick]`, failing if that takes `h` or more after
+    /// `tick`.
+    fn wait_for_flushes(&mut self, tick: i64) -> Result<(), EngineError> {
+        let Some(shift_ms) = self.narrowest_shift_ms() else {
+            return Ok(());
+        };
+        let (counted_at, before) = self.flush_counts.clone();
+        let expected: Vec<(u32, u64)> = self
+            .aggregations
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                let width = a.interval_ms as i64;
+                let ticks = tick.div_euclid(width) - counted_at.div_euclid(width);
+                let position = i as u32 + 1;
+                (
+                    position,
+                    before.get(&position).copied().unwrap_or(0) + ticks.max(0) as u64,
+                )
+            })
+            .collect();
+        loop {
+            let metrics = self.metrics()?;
+            let flushed = expected.iter().all(|(position, count)| {
+                metrics
+                    .flushes_by_position
+                    .get(position)
+                    .copied()
+                    .unwrap_or(0)
+                    >= *count
+            });
+            let lag = now_ms() - tick;
+            if lag >= shift_ms {
+                return Err(EngineError(format!(
+                    "the stream flushes up to wall time {tick} ms took {lag} ms, at least the \
+                     read's shift {shift_ms} ms"
+                )));
             }
+            if flushed {
+                if metrics.too_old_samples > self.too_old_at_install {
+                    return Err(EngineError(format!(
+                        "the server dropped {} samples that arrived after their window",
+                        metrics.too_old_samples - self.too_old_at_install
+                    )));
+                }
+                self.flush_counts = (tick, metrics.flushes_by_position);
+                return Ok(());
+            }
+            std::thread::sleep(POLL_INTERVAL);
         }
-        (positions, shift)
     }
 }
 
@@ -593,7 +720,7 @@ impl Drop for VictoriaMetricsArm {
     fn drop(&mut self) {
         // Best effort: stop the aggregators, so the next arm's server does
         // no work for this one.
-        let _ = self.load_config("[]\n");
+        let _ = self.load_config("[]\n", 0);
         self.arm_installed.store(false, Ordering::SeqCst);
     }
 }
@@ -613,12 +740,12 @@ impl InstalledArm for VictoriaMetricsArm {
             for aggregation in &self.aggregations {
                 let width = aggregation.interval_ms as i64;
                 let window_end = (wall_end + width - 1).div_euclid(width) * width;
-                if now >= window_end {
+                if now >= window_end - BEFORE_WINDOW_END_MARGIN_MS {
                     return Err(EngineError(format!(
-                        "pacing: the slice ending at data time {} ms was sent {} ms after its \
-                         {width} ms window ended",
+                        "pacing: the slice ending at data time {} ms was sent {} ms before its \
+                         {width} ms window ended, under {BEFORE_WINDOW_END_MARGIN_MS} ms",
                         slice.end_ms,
-                        now - window_end
+                        window_end - now
                     )));
                 }
             }
@@ -627,51 +754,15 @@ impl InstalledArm for VictoriaMetricsArm {
                     "/api/v1/import",
                     &import_body(&slice.samples, self.offset_ms),
                 )?;
+                self.newest_sample_wall_ms
+                    .fetch_max(wall_end, Ordering::SeqCst);
             }
         }
+        // The chunk's windows end at its end: wait for it, then for their
+        // flushes (the flush is ingest work).
         let tick = chunk.end_ms + self.offset_ms;
-        let (positions, shift_ms) = self.flushing_at(tick);
-        if let Some(shift_ms) = shift_ms {
-            let before = self.metrics()?.flushes_by_position;
-            let read_at = now_ms();
-            if read_at >= tick - BEFORE_TICK_MARGIN_MS {
-                return Err(EngineError(format!(
-                    "pacing: the chunk ending at data time {} ms was sent {} ms before its \
-                     windows' end, under {BEFORE_TICK_MARGIN_MS} ms",
-                    chunk.end_ms,
-                    tick - read_at
-                )));
-            }
-            sleep_until_wall_ms(tick);
-            loop {
-                let metrics = self.metrics()?;
-                let flushed = positions.iter().all(|p| {
-                    metrics.flushes_by_position.get(p).copied().unwrap_or(0)
-                        > before.get(p).copied().unwrap_or(0)
-                });
-                let lag = now_ms() - tick;
-                if flushed && lag < shift_ms {
-                    break;
-                }
-                if lag >= shift_ms {
-                    return Err(EngineError(format!(
-                        "the stream flush of the windows ending at data time {} ms lagged \
-                         {lag} ms, at least the read's shift {shift_ms} ms",
-                        chunk.end_ms
-                    )));
-                }
-                std::thread::sleep(POLL_INTERVAL);
-            }
-        }
-        if !self.aggregations.is_empty() {
-            let too_old = self.metrics()?.too_old_samples;
-            if too_old > self.too_old_at_install {
-                return Err(EngineError(format!(
-                    "the server dropped {} samples that arrived after their window",
-                    too_old - self.too_old_at_install
-                )));
-            }
-        }
+        sleep_until_wall_ms(tick);
+        self.wait_for_flushes(tick)?;
         // Make the new rows and stream outputs searchable.
         self.http.get("/internal/force_flush", &[])?;
         Ok(StepReport::default())
