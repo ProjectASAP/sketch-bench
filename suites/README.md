@@ -3,7 +3,7 @@
 A suite is a directory with, per workload `<w>`:
 
 - `<w>.workload.json`: the harness `WorkloadSpec`. It holds the queries `q1..qN`, in the order the planner numbers them, and the `aqpbm-datagen` description of each metric's data.
-- `<w>.planner.json`: the ASAPPlanner `PlanningWorkload` of the same queries. Its source facts describe the generated data: `series_count`, `sample_interval`, `metric_type`, `distinct_values_per_label`, and the summed `rows_per_second`.
+- `<w>.planner.json`: the ASAPPlanner `PlanningWorkload` of the same queries. Its source facts describe the generated data: `series_count`, `sample_interval`, `metric_type`, `distinct_values_per_label`, `column_signs`, and the summed `rows_per_second`.
 
 `scripts/plan-suite.sh <suite> <run-dir>` plans every workload once per variant and writes a bench-external run directory. The variants are:
 
@@ -32,4 +32,4 @@ Both suites have the same eight shapes:
 - q4c: `sum by (job)` of `sum_over_time`
 - q5: five of the above together
 
-At 1,000 series, every `showcase-1m` workload plans as a query-time scan in every variant. In `showcase-1h`, sum, count, max and rate plan as stored windows. The exception is rate under `clickhouse.equivalent-only`: a stored rate is a substitute there, so it is computed at query time.
+At 1,000 series, every `showcase-1m` workload plans as a query-time scan in every variant. In both suites `asap.default` selects the same plans as `asap.exact`, and quantiles are query-time scans in every variant: no sketch is chosen at this scale. In `showcase-1h`, sum, count, max and rate plan as stored windows. The exception is rate under `clickhouse.equivalent-only`: a stored rate is a substitute there, so it is computed at query time.

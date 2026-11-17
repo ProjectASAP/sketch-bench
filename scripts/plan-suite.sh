@@ -28,6 +28,8 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 caps="$repo/aqpbm-engines-external/capabilities"
 
 [ -e "$run" ] && { echo "$run exists; runs are never overwritten" >&2; exit 1; }
+compgen -G "$suite/*.workload.json" >/dev/null || { echo "$suite has no *.workload.json" >&2; exit 1; }
+# planner-logs/ holds each planner run's log and the rewritten exact inputs.
 mkdir -p "$run"/{workloads,data,plans,results,planner-logs}
 
 variants=(
@@ -38,7 +40,7 @@ variants=(
 )
 
 for variant_line in "${variants[@]}"; do
-  IFS='|' read -r variant cap check substitutions accuracy <<<"$variant_line"
+  IFS='|' read -r variant _ _ substitutions _ <<<"$variant_line"
   mkdir -p "$run/plans/$variant"
   printf '{"substitutions_allowed": %s}\n' "$substitutions" > "$run/plans/$variant/variant.json"
 done
@@ -67,12 +69,12 @@ PY
       echo "$w $variant: plan"
     else
       # The planner's error line when there is one, else its last line.
-      reason=$(grep -iE '^(error|Error:)' "$log" | tail -n 1 || true)
+      reason=$(grep -iE '^error[: ]' "$log" | tail -n 1 || true)
       [ -n "$reason" ] || reason=$(grep -v '^[[:space:]]*$' "$log" | tail -n 1 || true)
       python3 -c 'import json,sys; print(json.dumps({"reason": sys.argv[1]}))' "${reason:-no plan file written}" \
         > "$run/plans/$variant/$w.no-plan.json"
       rm -f "$run/plans/$variant/$w.plan.json"
-      echo "$w $variant: no plan ($reason)"
+      echo "$w $variant: no plan (${reason:-no plan file written})"
     fi
   done
 done

@@ -15,6 +15,9 @@ fn suite_workloads_match_their_planning_workloads() {
     let mut checked = 0;
     for suite in std::fs::read_dir(&suites).unwrap() {
         let suite = suite.unwrap().path();
+        if !suite.is_dir() {
+            continue;
+        }
         let mut names: Vec<_> = std::fs::read_dir(&suite)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
@@ -28,7 +31,6 @@ fn suite_workloads_match_their_planning_workloads() {
             };
             let spec: WorkloadSpec = serde_json::from_str(&read("workload")).unwrap();
             assert_eq!(spec.name, name);
-            ArmSchedule::for_workload(&spec).unwrap_or_else(|error| panic!("{name}: {error}"));
             let planner: serde_json::Value = serde_json::from_str(&read("planner")).unwrap();
             let planned: Vec<&str> = planner["query_workload"]["repeating_queries"]
                 .as_array()
@@ -53,7 +55,8 @@ fn suite_workloads_match_their_planning_workloads() {
             let ids: Vec<String> = (1..=spec.queries.len()).map(|i| format!("q{i}")).collect();
             let spec_ids: Vec<String> = spec.queries.iter().map(|q| q.id.clone()).collect();
             assert_eq!(spec_ids, ids, "{name}");
-            let schedule = ArmSchedule::for_workload(&spec).unwrap();
+            let schedule =
+                ArmSchedule::for_workload(&spec).unwrap_or_else(|error| panic!("{name}: {error}"));
             for ((query, planned), text) in spec
                 .queries
                 .iter()
@@ -110,6 +113,19 @@ fn suite_workloads_match_their_planning_workloads() {
             // series count, sample interval, counter kind, distinct label
             // values and value sign; and no source without data.
             let sources = planner["data_workload"]["sources"].as_object().unwrap();
+            let rows_per_second: f64 = spec
+                .data
+                .iter()
+                .map(|r| {
+                    r.description.series_num as f64 * 1_000.0
+                        / r.description.sample_interval_ms as f64
+                })
+                .sum();
+            assert_eq!(
+                planner["data_workload"]["arrival"]["ingesting"]["rows_per_second"].as_f64(),
+                Some(rows_per_second),
+                "{name}: rows_per_second"
+            );
             assert_eq!(
                 sources.len(),
                 spec.data.len(),
