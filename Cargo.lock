@@ -110,6 +110,7 @@ dependencies = [
  "anyhow",
  "aqpbm-core",
  "aqpbm-datagen",
+ "aqpbm-engines-external",
  "clap",
  "serde",
  "serde_json",
@@ -159,8 +160,10 @@ dependencies = [
 name = "aqpbm-engines-external"
 version = "0.1.0"
 dependencies = [
+ "aqpbm-core",
  "serde_json",
  "thiserror 2.0.18",
+ "ureq",
 ]
 
 [[package]]

@@ -16,13 +16,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aqpbm_engines_external::victoriametrics_server::{
-    VictoriaMetricsEngine, VictoriaMetricsServer,
-};
 use aqpbm_core::harness::data::Sample;
 use aqpbm_core::harness::engine::{
     Answers, ArmSpec, EngineUnderTest, InstalledArm, QueryLanguage, QueryText, SampleChunk,
     SeriesLabels, WorkloadQuery, WorkloadSpec,
+};
+use aqpbm_engines_external::victoriametrics_server::{
+    VictoriaMetricsEngine, VictoriaMetricsServer,
 };
 use common::{fixture_value_public, payload_body};
 use serde_json::{json, Value};

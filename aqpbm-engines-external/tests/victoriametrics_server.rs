@@ -12,16 +12,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use aqpbm_engines_external::victoriametrics::{StreamAggregation, StreamOutput};
-use aqpbm_engines_external::victoriametrics_server::{
-    answer_metric_name, import_body, lead_ms, parse_answer, previous_arm_gap_ms, slices,
-    wall_offset_ms, ServerMetrics, VictoriaMetricsEngine, VictoriaMetricsServer, SLICE_MS,
-};
 use aqpbm_core::harness::cgroup::serve_agent;
 use aqpbm_core::harness::data::Sample;
 use aqpbm_core::harness::engine::{
     ArmSpec, EngineUnderTest, QueryLanguage, QueryText, SampleChunk, SeriesLabels, WorkloadQuery,
     WorkloadSpec,
+};
+use aqpbm_engines_external::victoriametrics::{StreamAggregation, StreamOutput};
+use aqpbm_engines_external::victoriametrics_server::{
+    answer_metric_name, import_body, lead_ms, parse_answer, previous_arm_gap_ms, slices,
+    wall_offset_ms, ServerMetrics, VictoriaMetricsEngine, VictoriaMetricsServer, SLICE_MS,
 };
 use common::{fixture_value_public, payload_body};
 use serde_json::json;
