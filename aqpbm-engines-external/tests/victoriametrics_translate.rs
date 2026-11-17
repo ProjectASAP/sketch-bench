@@ -443,6 +443,8 @@ fn interval_must_divide_a_day() {
         (3_600_000, true),
         (2_000, true),
         (7_000, false),
+        // A 7-minute window: 86,400 s is not a whole number of them.
+        (420_000, false),
         (1_500, false),
         (1_000, false),
     ] {
@@ -458,6 +460,7 @@ fn interval_must_divide_a_day() {
         } else {
             let reason = match width_ms {
                 7_000 => "window width 7000 ms does not divide 86,400 s",
+                420_000 => "window width 420000 ms does not divide 86,400 s",
                 1_500 => "window width 1500 ms is not whole seconds",
                 _ => "window width 1000 ms is below 2 s",
             };
@@ -773,4 +776,21 @@ fn public_plan_translations_match_the_snapshot() {
         std::fs::write(&path, &snapshot).unwrap();
     }
     assert_eq!(snapshot, std::fs::read_to_string(path).expect("snapshot"));
+}
+
+#[test]
+fn a_named_config_names_every_entry() {
+    let deployment = translated("sot__1h__1hz__60s", EQ);
+    let named = deployment.stream_aggregation_config_named("install-7");
+    assert_eq!(
+        named,
+        golden("sot_1h.yaml").replace(
+            "- match: 'latency'\n",
+            "- match: 'latency'\n  name: 'install-7'\n"
+        )
+    );
+    assert_eq!(
+        translated("q4c_sum_over_time__1m_1hz_10s", EQ).stream_aggregation_config_named("x"),
+        "[]\n"
+    );
 }

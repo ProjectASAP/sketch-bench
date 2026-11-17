@@ -64,6 +64,7 @@ asap_sketchlib = { git = "https://github.com/ProjectASAP/asap_sketchlib", rev = 
 # Internal workspace crates.
 aqpbm-datagen = { path = "aqpbm-datagen" }
 aqpbm-core = { path = "aqpbm-core", default-features = false }
+aqpbm-engines-external = { path = "aqpbm-engines-external" }
 sketch-bench = { path = "sketch-bench" }
 aqpbm-usecase = { path = "aqpbm-usecase" }
 # sketch-runtime = { path = "sketch-runtime" }  # parked;

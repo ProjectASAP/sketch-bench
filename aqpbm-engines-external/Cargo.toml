@@ -7,5 +7,7 @@ repository.workspace = true
 description = "Runs ASAPPlanner plan files on external engines: reads an InstallablePlan file (wire version 15) and translates it into ClickHouse materialized views and SQL, or VictoriaMetrics stream aggregation and MetricsQL. The translator is the capability check: a node it has no rule for is refused. Depends on no ASAPPlanner crate."
 
 [dependencies]
+aqpbm-core.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+ureq = { version = "2", default-features = false }

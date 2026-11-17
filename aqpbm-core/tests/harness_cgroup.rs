@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use aqpbm_core::harness::arm_run::{run_arm, ArmSchedule};
 use aqpbm_core::harness::cgroup::{
-    agent_in_served_group, serve_agent, CgroupCpu, CgroupMemory, CgroupSource,
+    agent_in_served_group, put_server_config, serve_agent, CgroupCpu, CgroupMemory, CgroupSource,
 };
 use aqpbm_core::harness::data::DataRecord;
 use aqpbm_core::harness::engine::{
@@ -101,7 +101,7 @@ fn start_agent(dir: &Path) -> String {
     let url = format!("http://{}", listener.local_addr().unwrap());
     let dir = dir.to_path_buf();
     let proc_stat = dir.join("host-proc-stat");
-    std::thread::spawn(move || serve_agent(listener, &dir, &proc_stat));
+    std::thread::spawn(move || serve_agent(listener, &dir, &proc_stat, None));
     url
 }
 
@@ -422,4 +422,71 @@ fn a_group_with_a_foreign_process_is_not_the_server_cpu() {
         .clock_for(&CpuAccounting::Processes(vec![40]))
         .unwrap();
     assert_eq!(shared.cpu_source(), "schedstat");
+}
+
+fn start_agent_with_server_config(dir: &Path, config: &Path) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let dir = dir.to_path_buf();
+    let config = config.to_path_buf();
+    let proc_stat = dir.join("host-proc-stat");
+    std::thread::spawn(move || serve_agent(listener, &dir, &proc_stat, Some(&config)));
+    url
+}
+
+/// A1: with a server config path, the agent replaces that file on
+/// `PUT /server-config` and serves it on `GET`; the cgroup files stay
+/// read-only, and without a path the name is 404.
+#[test]
+fn agent_writes_only_the_server_config() {
+    let temp = TempDir::new("agent-config");
+    group(&temp.0, 2500);
+    let config = temp.0.join("stream-aggregation.yaml");
+    std::fs::write(&config, "[]\n").unwrap();
+    let url = start_agent_with_server_config(&temp.0, &config);
+    let agent = CgroupSource::Agent { url: url.clone() };
+    assert_eq!(agent.read("server-config").unwrap(), "[]\n");
+    let yaml = "- match: 'm'\n  interval: 10s\n  outputs: [max]\n";
+    put_server_config(&url, yaml).unwrap();
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), yaml);
+    assert_eq!(agent.read("server-config").unwrap(), yaml);
+    // No temporary file is left beside it.
+    let names: Vec<String> = std::fs::read_dir(&temp.0)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|n| n.starts_with("stream-aggregation"))
+        .collect();
+    assert_eq!(names, vec!["stream-aggregation.yaml"]);
+    // A config over 1 MiB is refused and the file is unchanged.
+    let error = put_server_config(&url, &"x".repeat(1024 * 1024 + 1)).unwrap_err();
+    assert!(error.to_string().contains("413"), "{error}");
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), yaml);
+    // The cgroup files are still served, and cannot be written.
+    assert_eq!(agent.cpu().unwrap().usage_ns, 2_500_000);
+    assert!(put_raw(&url, "cpu.stat", "usage_usec 1\n").starts_with("HTTP/1.0 404"));
+    assert!(std::fs::read_to_string(temp.0.join("cpu.stat"))
+        .unwrap()
+        .contains("usage_usec 2500"));
+    // Without a server config path there is none to read or write.
+    let plain = start_agent(&temp.0);
+    assert!(put_server_config(&plain, yaml).is_err());
+    assert!(CgroupSource::Agent { url: plain }
+        .read("server-config")
+        .is_err());
+}
+
+/// A PUT of `body` to `url/<file>` without the client; the raw answer.
+fn put_raw(url: &str, file: &str, body: &str) -> String {
+    use std::io::{Read, Write};
+    let address = url.strip_prefix("http://").unwrap();
+    let mut stream = std::net::TcpStream::connect(address).unwrap();
+    write!(
+        stream,
+        "PUT /{file} HTTP/1.0\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    let mut answer = String::new();
+    stream.read_to_string(&mut answer).unwrap();
+    answer
 }
