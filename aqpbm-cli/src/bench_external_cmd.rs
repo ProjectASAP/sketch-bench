@@ -17,10 +17,11 @@ use aqpbm_core::harness::protocol::{
     load_probe_for, MeasurementClocks, OsCpuClock, ProcessCpuFiles, Protocol,
 };
 use aqpbm_core::harness::rundir::RunDir;
+use aqpbm_engines_external::clickhouse_server::{ClickHouseEngine, ClickHouseServer};
 use clap::{Parser, Subcommand};
 
 /// The lanes this binary can run.
-pub const LANES: [&str; 1] = ["fake"];
+pub const LANES: [&str; 2] = ["fake", "clickhouse"];
 
 #[derive(Parser, Debug)]
 pub struct BenchExternalArgs {
@@ -41,9 +42,23 @@ pub struct RunArgs {
     /// The run directory: workloads/, plans/<variant>/, results/.
     #[arg(long)]
     pub run_dir: PathBuf,
-    /// The lane: `fake` (the harness's own fake engine).
+    /// The lane: `fake` (the harness's own fake engine) or `clickhouse`.
     #[arg(long)]
     pub lane: String,
+    /// The ClickHouse server's HTTP interface, e.g. `http://10.0.0.1:8123`
+    /// (lane `clickhouse`).
+    #[arg(long)]
+    pub clickhouse_url: Option<String>,
+    /// The cgroup agent beside the server, e.g. `http://10.0.0.1:9101`
+    /// (lane `clickhouse`).
+    #[arg(long)]
+    pub cgroup_agent_url: Option<String>,
+    /// `max_threads` of every ClickHouse statement; 1 for the main figures.
+    #[arg(long, default_value_t = 1)]
+    pub clickhouse_max_threads: u32,
+    /// How long one ClickHouse statement may run, in seconds.
+    #[arg(long, default_value_t = 600)]
+    pub clickhouse_statement_timeout_s: u64,
     /// Only these variants (repeatable); every variant under plans/ by default.
     #[arg(long = "variant")]
     pub variants: Vec<String>,
@@ -93,7 +108,27 @@ pub fn run(args: BenchExternalArgs) -> Result<()> {
 
 fn run_lane_cmd(args: RunArgs) -> Result<()> {
     let engine: Box<dyn EngineUnderTest> = match args.lane.as_str() {
-        "fake" => Box::new(FakeEngine::default()),
+        "fake" => {
+            if args.clickhouse_url.is_some() || args.cgroup_agent_url.is_some() {
+                bail!("--clickhouse-url and --cgroup-agent-url are for lane clickhouse only");
+            }
+            Box::new(FakeEngine::default())
+        }
+        "clickhouse" => {
+            let (Some(url), Some(cgroup_agent_url)) =
+                (args.clickhouse_url.clone(), args.cgroup_agent_url.clone())
+            else {
+                bail!("lane clickhouse needs --clickhouse-url and --cgroup-agent-url");
+            };
+            Box::new(ClickHouseEngine::new(ClickHouseServer {
+                url,
+                cgroup_agent_url,
+                max_threads: args.clickhouse_max_threads,
+                statement_timeout: std::time::Duration::from_secs(
+                    args.clickhouse_statement_timeout_s,
+                ),
+            })?)
+        }
         other => bail!("unknown lane '{other}'; known lanes: {}", LANES.join(", ")),
     };
     let run_dir = RunDir::open(&args.run_dir)?;

@@ -18,6 +18,11 @@ Named fixtures (pretty-printed):
   joint_5m               five 5m queries over latency and requests_total             capabilities/clickhouse.equivalent-only.json
                          (workloads/grid/joint__5m__1hz__60s.json)
 
+  probe_sum_10s          sum_over_time(probe[10s]), every 10 s (the harness conformance probe)   capabilities/clickhouse.equivalent-only.json
+                         (workloads/probe/probe_sum_10s.json)
+  probe_count_10s        count_over_time(probe[10s]), every 10 s                              capabilities/clickhouse.equivalent-only.json
+                         (workloads/probe/probe_count_10s.json)
+
 Public plans (`public/<workload>.<variant>.plan.json`, compact): the workload
 `workloads/<set>/<workload>.json` planned with `capabilities/<variant>.json`. They are
 the eight RUN-1 showcase shapes (1 m windows, 1 Hz, every 10 s), `mixed-03`,

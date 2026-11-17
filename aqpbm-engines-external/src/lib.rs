@@ -11,6 +11,7 @@
 //! what each engine can run; their README gives the evidence per entry.
 
 pub mod clickhouse;
+pub mod clickhouse_server;
 pub mod plan_file;
 
 /// A node's position in the plan file's DAG.

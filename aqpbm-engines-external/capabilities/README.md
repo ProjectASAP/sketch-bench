@@ -46,6 +46,22 @@ Prometheus `extrapolatedRate` is cited at v3.15.1.
 
 A stored read is right only at a window end, so a query that reads stored windows fails (`throwIf`) at any other evaluation time. Every insert uses `INSERT_SETTINGS`, so a NULL value is an error instead of 0. The sketch rows above give each sketch's class. The ClickHouse files list no sketch yet, because the translator does not build sketch states yet; each sketch joins `supported_summaries` in the PR that adds its translation rule.
 
+**Conformance on a server.** `tests/clickhouse_conformance.rs` (`#[ignore]`, `AQPBM_CLICKHOUSE_URL` and `AQPBM_CGROUP_AGENT_URL`) runs one case per row through the engine adapter (`clickhouse_server`) against a real server, with hand-computed answers:
+
+| Row | Case |
+|---|---|
+| stored Sum / Count / Min / Max | `stored_sum_count_min_max` |
+| stored Rate / Increase (b) | `stored_rate_is_promql_minus_the_first_value_after_each_reset` (three installs fed in turn, max_threads 1 and 16) |
+| query-time Rate / Increase; raw samples retained | `query_time_rate_is_promql` |
+| query-time grouped sums; `Aggregate` | `grouped_sums_quantiles_and_aggregates` |
+| instant selector | `instant_selector` |
+| top_k | `top_k_ties_and_nan` |
+| regrouping merges, `Project`, `BinaryOp`, checked division | `average_as_sum_over_count_and_checked_division` |
+| IRate; query-time results kept across evaluations (c) | `class_c_rows_are_refused` |
+| raw samples retained (stored-only metric); retention | `storage_and_retention` |
+| window boundary (left-open) | `the_harness_conformance_kit_passes` |
+| sketches | not yet: no sketch rule |
+
 ## VictoriaMetrics
 
 The VictoriaMetrics translator comes in a later PR. Until then, these files are the planned capabilities and are checked only by the planner run in the PR's manual check.
