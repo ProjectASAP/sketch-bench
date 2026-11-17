@@ -1447,7 +1447,7 @@ fn column_list(labels: &[String]) -> String {
         .join(", ")
 }
 
-fn quoted(identifier: &str) -> String {
+pub(crate) fn quoted(identifier: &str) -> String {
     format!("`{}`", identifier.replace('\\', "\\\\").replace('`', "\\`"))
 }
 

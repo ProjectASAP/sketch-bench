@@ -26,9 +26,6 @@ use aqpbm_core::harness::engine::{
 use common::{fixture_path, fixture_value, fixture_value_public, lcm, payload_body};
 use serde_json::{json, Value};
 
-const IGNORE: &str =
-    "needs a ClickHouse 26.8.39.13 server (AQPBM_CLICKHOUSE_URL, AQPBM_CGROUP_AGENT_URL)";
-
 fn server(max_threads: u32) -> ClickHouseServer {
     ClickHouseServer {
         url: std::env::var("AQPBM_CLICKHOUSE_URL").expect("AQPBM_CLICKHOUSE_URL"),
@@ -161,7 +158,6 @@ fn assert_rows(got: &BTreeMap<String, f64>, expected: &[(&str, f64)]) {
 #[test]
 #[ignore = "needs a ClickHouse server"]
 fn the_server_is_the_pinned_binary() {
-    let _ = IGNORE;
     let description: EngineDescription = engine(1).description();
     assert_eq!(
         description.version,
@@ -524,7 +520,7 @@ fn average_as_sum_over_count_and_checked_division() {
             30_000,
         ),
     );
-    let error = overflow.evaluate(120_000).err().expect("an error");
+    let error = overflow.evaluate(120_000).expect_err("an error");
     assert!(error.0.contains("checked division"), "{error}");
 }
 
@@ -580,6 +576,7 @@ fn storage_and_retention() {
             .query("database", "conformance_ttl")
             .send_string(sql)
             .map(|r| r.into_string().unwrap())
+            .map_err(|e| e.to_string())
     };
     ureq::post(&format!("{url}/"))
         .send_string("CREATE DATABASE IF NOT EXISTS conformance_ttl")

@@ -42,3 +42,32 @@ fn only_private_listen_addresses_are_accepted() {
         assert_eq!(out.status.success(), accepted, "{address}");
     }
 }
+
+#[test]
+fn a_data_dir_the_script_did_not_make_is_never_wiped() {
+    let dir = std::env::temp_dir().join(format!("extbench-guard-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("keep"), "data").unwrap();
+    let binary = "/bin/true";
+    let sha256 = Command::new("sha256sum").arg(binary).output().unwrap();
+    let sha256 = String::from_utf8(sha256.stdout).unwrap();
+    let out = Command::new("bash")
+        .arg(script())
+        .args(["clickhouse", "up"])
+        .arg(&dir)
+        .args(["2,22", "0", "18123", "19101"])
+        .env("LISTEN_HOST", "127.0.0.1")
+        .env("CLICKHOUSE_BINARY", binary)
+        .env(
+            "CLICKHOUSE_SHA256",
+            sha256.split_whitespace().next().unwrap(),
+        )
+        .env("BASE_IMAGE", "unused")
+        .env("APPROXBENCH", "unused")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("was not made by this script"));
+    assert!(dir.join("keep").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}

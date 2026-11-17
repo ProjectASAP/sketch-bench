@@ -16,7 +16,8 @@
 //! CPU: the server runs in its own cgroup, read through the cgroup agent.
 //! The server's HTTP summary header has no CPU counter, so
 //! [`StepReport::engine_reported_cpu_ns`] is `None`; `scanned_bytes` is the
-//! summed `read_bytes` of the step's statements.
+//! summed `read_bytes` of the step's statements (for an insert, the bytes
+//! of input it parsed).
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -28,7 +29,7 @@ use aqpbm_core::harness::engine::{
     InstalledArm, PlanSummary, SampleChunk, SeriesLabels, StepReport, WorkloadSpec,
 };
 
-use crate::clickhouse::{translate, SourceTable, INSERT_SETTINGS, SERIES_IDENTITY};
+use crate::clickhouse::{quoted, translate, SourceTable, INSERT_SETTINGS, SERIES_IDENTITY};
 use crate::plan_file::{PlanFile, PlanOperator};
 
 /// How to reach the server and how to run its queries.
@@ -49,10 +50,14 @@ pub struct ClickHouseEngine {
     server: ClickHouseServer,
     http: Http,
     description: EngineDescription,
-    /// Each install's database is `<database_prefix>_<n>`.
+    /// Each install's database is `<database_prefix>_<n>`, with `n` from
+    /// [`INSTALL_COUNT`].
     database_prefix: String,
-    installs: AtomicU64,
 }
+
+/// Installs made by this process, over every engine: numbers each install's
+/// database.
+static INSTALL_COUNT: AtomicU64 = AtomicU64::new(0);
 
 impl ClickHouseEngine {
     /// Connects to the server and reads its version and git hash. A
@@ -92,7 +97,6 @@ impl ClickHouseEngine {
             server,
             http,
             description,
-            installs: AtomicU64::new(0),
         })
     }
 }
@@ -141,7 +145,7 @@ impl EngineUnderTest for ClickHouseEngine {
         let database = format!(
             "{}_{}",
             self.database_prefix,
-            self.installs.fetch_add(1, Ordering::Relaxed)
+            INSTALL_COUNT.fetch_add(1, Ordering::Relaxed)
         );
         self.http
             .run(&format!("CREATE DATABASE {database}"), &[], None)?;
@@ -150,7 +154,14 @@ impl EngineUnderTest for ClickHouseEngine {
             http: self.http.clone(),
             database,
             max_threads: self.server.max_threads,
-            sources: deployment.sources.clone(),
+            sources: deployment
+                .sources
+                .iter()
+                .map(|source| SourceInsert {
+                    statement: insert_statement(source),
+                    source: source.clone(),
+                })
+                .collect(),
             queries: query_ids
                 .into_iter()
                 .zip(deployment.queries.clone())
@@ -275,11 +286,18 @@ struct ClickHouseArm {
     http: Http,
     database: String,
     max_threads: u32,
-    sources: Vec<SourceTable>,
+    /// Each source table and the statement that inserts into it.
+    sources: Vec<SourceInsert>,
     /// Per plan root: the workload query id and its SQL.
     queries: Vec<(String, String)>,
     stored_tables: Vec<String>,
     summary: PlanSummary,
+}
+
+/// A source table and its `INSERT … FORMAT TabSeparated` statement.
+struct SourceInsert {
+    source: SourceTable,
+    statement: String,
 }
 
 impl ClickHouseArm {
@@ -287,7 +305,7 @@ impl ClickHouseArm {
     fn run(
         &self,
         sql: &str,
-        extra: &[(&str, &str)],
+        url_params: &[(&str, &str)],
         insert_rows: Option<&str>,
     ) -> Result<(String, u64), EngineError> {
         let threads = self.max_threads.to_string();
@@ -295,7 +313,7 @@ impl ClickHouseArm {
             ("database", self.database.as_str()),
             ("max_threads", threads.as_str()),
         ];
-        params.extend_from_slice(extra);
+        params.extend_from_slice(url_params);
         self.http.run(sql, &params, insert_rows)
     }
 }
@@ -317,37 +335,47 @@ impl InstalledArm for ClickHouseArm {
     }
 
     fn ingest(&mut self, chunk: &SampleChunk) -> Result<StepReport, EngineError> {
-        let mut scanned_bytes = 0;
-        for source in &self.sources {
-            let mut rows = String::new();
-            for sample in &chunk.samples {
-                if sample.labels.get("__name__") != Some(&source.metric) {
-                    continue;
+        // A stored window's key is `(intDiv(ts - 1, w) + 1) * w`, and
+        // `intDiv` truncates toward zero, so a sample at or before 0 would
+        // land in the wrong window. Checked before any insert, so a refused
+        // chunk inserts nothing.
+        if let Some(sample) = chunk.samples.iter().find(|sample| sample.ts_ms <= 0) {
+            return Err(EngineError(format!(
+                "a sample at {} ms: timestamps must be after 0",
+                sample.ts_ms
+            )));
+        }
+        // One pass over the chunk: each sample's rows go to its metric's
+        // source table; a metric the plan does not read is skipped.
+        let mut rows: Vec<String> = vec![String::new(); self.sources.len()];
+        for sample in &chunk.samples {
+            let Some(at) = sample.labels.get("__name__").and_then(|metric| {
+                self.sources
+                    .iter()
+                    .position(|insert| &insert.source.metric == metric)
+            }) else {
+                continue;
+            };
+            let out = &mut rows[at];
+            out.push_str(&sample.ts_ms.to_string());
+            out.push('\t');
+            out.push_str(&float_text(sample.value));
+            for label in &self.sources[at].source.label_columns {
+                out.push('\t');
+                if label == SERIES_IDENTITY {
+                    push_tsv_escaped(out, &series_identity(&sample.labels));
+                } else {
+                    push_tsv_escaped(out, sample.labels.get(label).map_or("", String::as_str));
                 }
-                if sample.ts_ms <= 0 {
-                    return Err(EngineError(format!(
-                        "a sample at {} ms: timestamps must be after 0",
-                        sample.ts_ms
-                    )));
-                }
-                rows.push_str(&sample.ts_ms.to_string());
-                rows.push('\t');
-                rows.push_str(&float_text(sample.value));
-                for label in &source.label_columns {
-                    rows.push('\t');
-                    let value = if label == SERIES_IDENTITY {
-                        series_identity(&sample.labels)
-                    } else {
-                        sample.labels.get(label).cloned().unwrap_or_default()
-                    };
-                    push_tsv_escaped(&mut rows, &value);
-                }
-                rows.push('\n');
             }
+            out.push('\n');
+        }
+        let mut scanned_bytes = 0;
+        for (insert, rows) in self.sources.iter().zip(&rows) {
             if rows.is_empty() {
                 continue;
             }
-            let (_, read_bytes) = self.run(&insert_statement(source), &[], Some(&rows))?;
+            let (_, read_bytes) = self.run(&insert.statement, &[], Some(rows))?;
             scanned_bytes += read_bytes;
         }
         Ok(StepReport {
@@ -401,7 +429,11 @@ impl InstalledArm for ClickHouseArm {
                 .map_err(|_| EngineError(format!("unexpected parts row '{line}'")))?;
             if self.stored_tables.iter().any(|t| t == table) {
                 footprint.view_bytes += bytes;
-            } else if self.sources.iter().any(|s| s.table == table) {
+            } else if self
+                .sources
+                .iter()
+                .any(|insert| insert.source.table == table)
+            {
                 footprint.raw_retained_bytes += bytes;
             }
         }
@@ -418,11 +450,7 @@ fn insert_statement(source: &SourceTable) -> String {
     let selected: Vec<String> = (0..source.label_columns.len())
         .map(|i| format!("c{i}"))
         .collect();
-    let columns: Vec<String> = source
-        .label_columns
-        .iter()
-        .map(|label| format!("`{}`", label.replace('`', "\\`")))
-        .collect();
+    let columns: Vec<String> = source.label_columns.iter().map(|l| quoted(l)).collect();
     format!(
         "INSERT INTO {table} (ts, value, {columns}) SETTINGS {INSERT_SETTINGS} \
          SELECT fromUnixTimestamp64Milli(ts_ms), value, {selected} \
@@ -455,6 +483,7 @@ fn push_tsv_escaped(out: &mut String, value: &str) {
             '\\' => out.push_str("\\\\"),
             '\t' => out.push_str("\\t"),
             '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
             c => out.push(c),
         }
     }
@@ -471,6 +500,9 @@ fn tsv_unescaped(value: &str) -> String {
         match chars.next() {
             Some('t') => out.push('\t'),
             Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('b') => out.push('\u{8}'),
+            Some('f') => out.push('\u{c}'),
             Some('0') => out.push('\0'),
             Some(other) => out.push(other),
             None => out.push('\\'),
@@ -487,6 +519,7 @@ fn parse_answer(text: &str) -> Result<BTreeMap<SeriesLabels, f64>, String> {
         return Ok(BTreeMap::new());
     };
     let names: Vec<String> = header.split('\t').map(tsv_unescaped).collect();
+    let identity = names.iter().position(|name| name == SERIES_IDENTITY);
     let mut series = BTreeMap::new();
     for line in lines {
         let fields: Vec<String> = line.split('\t').map(tsv_unescaped).collect();
@@ -494,7 +527,6 @@ fn parse_answer(text: &str) -> Result<BTreeMap<SeriesLabels, f64>, String> {
             return Err(format!("row '{line}' does not match the header '{header}'"));
         }
         let (value, labels) = fields.split_last().expect("at least the value");
-        let identity = names.iter().position(|name| name == SERIES_IDENTITY);
         let key: SeriesLabels = match identity {
             Some(at) => serde_json::from_str(&labels[at])
                 .map_err(|e| format!("series identity '{}': {e}", labels[at]))?,

@@ -564,7 +564,7 @@ fn evaluate_parses_series_and_values() {
                 .contains("FORMAT TabSeparatedWithNames")
                 .then(|| reply.clone())
         })]);
-        let error = engine_for(&stub).evaluate(600_000).err().expect("an error");
+        let error = engine_for(&stub).evaluate(600_000).expect_err("an error");
         assert!(error.0.contains("not a window end"), "{error}");
     }
 }
@@ -654,4 +654,35 @@ fn leftover_databases_are_refused() {
     .err()
     .expect("refused");
     assert!(error.0.contains("bench_1_0, bench_1_1"), "{error}");
+}
+
+#[test]
+fn a_failed_install_drops_its_database() {
+    // The database exists once CREATE DATABASE ran; a table that fails
+    // drops it again.
+    let stub = start_stub(vec![Box::new(|request: &Request| {
+        request.statement().starts_with("CREATE TABLE").then(|| {
+            (
+                500,
+                vec![],
+                "Code: 57. DB::Exception: table exists".to_string(),
+            )
+        })
+    })]);
+    let engine = engine(&stub);
+    let error = engine
+        .install(
+            &workload_of("sot_1h_stored_sum", 60_000, 0),
+            &arm("sot_1h_stored_sum"),
+        )
+        .err()
+        .expect("refused");
+    assert!(error.0.contains("table exists"), "{error}");
+    let statements = statements(&stub);
+    let database = statements
+        .iter()
+        .find_map(|s| s.strip_prefix("CREATE DATABASE "))
+        .expect("a database was created")
+        .to_string();
+    assert!(statements.contains(&format!("DROP DATABASE IF EXISTS {database} SYNC")));
 }

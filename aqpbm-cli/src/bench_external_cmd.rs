@@ -108,7 +108,12 @@ pub fn run(args: BenchExternalArgs) -> Result<()> {
 
 fn run_lane_cmd(args: RunArgs) -> Result<()> {
     let engine: Box<dyn EngineUnderTest> = match args.lane.as_str() {
-        "fake" => Box::new(FakeEngine::default()),
+        "fake" => {
+            if args.clickhouse_url.is_some() || args.cgroup_agent_url.is_some() {
+                bail!("--clickhouse-url and --cgroup-agent-url are for lane clickhouse only");
+            }
+            Box::new(FakeEngine::default())
+        }
         "clickhouse" => {
             let (Some(url), Some(cgroup_agent_url)) =
                 (args.clickhouse_url.clone(), args.cgroup_agent_url.clone())
