@@ -1,0 +1,6 @@
+- match: 'latency{job="j3"}'
+  interval: 60s
+  outputs: [max]
+  enable_windows: true
+  ignore_first_intervals: 0
+  flush_on_shutdown: false

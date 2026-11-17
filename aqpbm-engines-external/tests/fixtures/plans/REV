@@ -40,3 +40,13 @@ with `serde_json::to_string_pretty` (named) or `serde_json::to_string` (public).
 
 Regenerate with `asap_planner --plan-file` once it exists; never edit these files by hand.
 Edge cases are made in test code by changing one field of a loaded fixture.
+
+VictoriaMetrics public plans (`public/<workload>.victoriametrics.<variant>.plan.json`, compact),
+written the same way at the same rev, with `capabilities/victoriametrics.<variant>.json`: the
+eight RUN-1 showcase shapes (every variant that has a plan; the equivalent-only file has none for
+the rate shapes), `sot__1h__1hz__60s` (equivalent-only), plus a greedy cover of every node shape
+of the full sweep (all 206 public PromQL workloads with both VictoriaMetrics files: 332 plans).
+Of the full sweep, every plan translates except the ones with a window chain narrower than 2 s
+(the README states why); none of those is equivalent-only, and no equivalent-only plan has a
+substitution. `mixed-08` and `mixed-09` keep such a chain, and `public_plans_translate` lists
+their refusals.

@@ -167,7 +167,7 @@ pub fn translate(plan: &PlanFile) -> Result<ClickHouseDeployment, TranslationErr
         query_time_steps_ms,
         table_retention,
         substitutions,
-        sharing_lost: sharing_lost(plan),
+        sharing_lost: SharingLost::of_plan(plan),
     })
 }
 
@@ -500,21 +500,6 @@ fn label_type(label: &str) -> &'static str {
     } else {
         "LowCardinality(String)"
     }
-}
-
-/// Query-time nodes two or more readers share.
-fn sharing_lost(plan: &PlanFile) -> Vec<SharingLost> {
-    plan.nodes
-        .iter()
-        .filter(|node| node.timing == Timing::QueryTime)
-        .filter_map(|node| {
-            let readers = plan.readers_of(node.id);
-            (readers.len() >= 2).then_some(SharingLost {
-                node: node.id,
-                readers,
-            })
-        })
-        .collect()
 }
 
 /// A query relation: SQL whose result has the label columns, then `value`.

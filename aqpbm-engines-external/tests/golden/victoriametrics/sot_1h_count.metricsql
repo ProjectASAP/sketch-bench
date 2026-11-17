@@ -1,0 +1,1 @@
+sum by (job) (sum_over_time(latency:60s_count_samples[3600s] offset -29500ms))

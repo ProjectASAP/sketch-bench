@@ -2,7 +2,9 @@
 //!
 //! [`plan_file`] reads an ASAPPlanner plan file (`InstallablePlan`, wire
 //! version 15). [`clickhouse`] translates it into ClickHouse tables,
-//! materialized views and one SQL query per query root. A translator is the
+//! materialized views and one SQL query per query root;
+//! [`victoriametrics`] into VictoriaMetrics stream aggregation and one
+//! MetricsQL query per query root. A translator is the
 //! capability check: a node it has no rule for is refused with
 //! [`TranslationError::UnsupportedShape`], and a rule that changes the
 //! planner's guarantee is recorded as a [`Substitution`].
@@ -12,6 +14,9 @@
 
 pub mod clickhouse;
 pub mod plan_file;
+pub mod victoriametrics;
+
+use plan_file::{PlanFile, Timing};
 
 /// A node's position in the plan file's DAG.
 pub type NodeId = usize;
@@ -46,4 +51,22 @@ pub struct Substitution {
 pub struct SharingLost {
     pub node: NodeId,
     pub readers: Vec<NodeId>,
+}
+
+impl SharingLost {
+    /// The query-time nodes of `plan` that two or more readers share, e.g.
+    /// node 1 (a raw-sample range) read by three quantile nodes.
+    pub fn of_plan(plan: &PlanFile) -> Vec<SharingLost> {
+        plan.nodes
+            .iter()
+            .filter(|node| node.timing == Timing::QueryTime)
+            .filter_map(|node| {
+                let readers = plan.readers_of(node.id);
+                (readers.len() >= 2).then_some(SharingLost {
+                    node: node.id,
+                    readers,
+                })
+            })
+            .collect()
+    }
 }
