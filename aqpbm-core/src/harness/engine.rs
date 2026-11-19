@@ -106,6 +106,9 @@ pub struct QueryText {
 pub enum QueryLanguage {
     PromQl,
     Sql,
+    /// MetricsQL: read natively by VictoriaMetrics and planned by
+    /// ASAPPlanner's MetricsQL frontend.
+    MetricsQl,
 }
 
 /// One installed arm. The harness calls `ingest` per refresh chunk and

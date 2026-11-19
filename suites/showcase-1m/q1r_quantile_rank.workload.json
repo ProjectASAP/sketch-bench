@@ -1,0 +1,47 @@
+{
+ "name": "q1r_quantile_rank",
+ "queries": [
+  {
+   "id": "q1",
+   "texts": [
+    {
+     "language": "PromQl",
+     "text": "quantile_over_time(0.99, latency[1m])"
+    }
+   ],
+   "window_ms": 60000,
+   "evaluation_interval_ms": 10000
+  }
+ ],
+ "data": [
+  {
+   "metric": "latency",
+   "description": {
+    "labels": [
+     {
+      "name": "job",
+      "cardinality": 10,
+      "skewness": 0.0
+     },
+     {
+      "name": "instance",
+      "cardinality": 100,
+      "skewness": 0.0
+     }
+    ],
+    "series_num": 1000,
+    "start_ms": 1700000040000,
+    "sample_interval_ms": 1000,
+    "duration_ms": 600000,
+    "value_distribution": {
+     "kind": "uniform",
+     "lower_bound": 0.0,
+     "upper_bound": 1000.0,
+     "seed": 7
+    },
+    "counter": false,
+    "seed": 13
+   }
+  }
+ ]
+}
